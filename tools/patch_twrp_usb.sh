@@ -1,7 +1,7 @@
 #!/bin/bash
-# Make an adb-only copy of the phone's TWRP for use as the chained fallback kernel.
-# With userdata given to iOS there is no /data/media, MTP never becomes ready and this
-# TWRP never binds its USB gadget at all (no adb either). Force sys.usb.config to adb.
+# Make a headless, adb-only copy of the phone's TWRP for use as the chained fallback kernel.
+# On this raw-iOS userdata the TWRP program crashes and restarts in a loop, re-initialising USB
+# each time, so adb never stays up (only sideload works). This copy never starts it: init + adbd.
 # The recovery partition is never touched: only private/twrp/recovery-adb.img is written.
 #
 #   tools/patch_twrp_usb.sh   (in WSL/Linux, as root so cpio keeps ownership; needs unpack_bootimg)
@@ -13,15 +13,19 @@ unpack_bootimg --boot_img "$T/recovery.img" --out "$W/img" >/dev/null
 mkdir "$W/rd" && (cd "$W/rd" && gzip -dc "$W/img/ramdisk" | cpio -idm --quiet)
 rc=$W/rd/init.recovery.usb.rc
 grep -q 'property:sys.usb.ffs.ready=1 && property:sys.usb.config=adb' "$rc" || { echo "unexpected TWRP usb rc" >&2; exit 1; }
+# Headless: TWRP's own program (service recovery) crashes on this raw-iOS userdata (its FBE
+# decryption) and every restart re-initialises USB, so adbd's connection is torn down every
+# ~50 ms and the host never sees the phone. Keep init, the USB gadget script and adbd; do not
+# start the TWRP program. The phone's real TWRP (recovery partition) is unchanged.
+svc=$W/rd/init.recovery.service.rc
+grep -q '^service recovery /system/bin/recovery' "$svc" || { echo "unexpected TWRP service rc" >&2; exit 1; }
+sed -i '/^service recovery \/system\/bin\/recovery/a\    disabled' "$svc"
 cat >> "$rc" <<'RC'
 
-# begonia-ios: userdata holds raw iOS images, so MTP can never come up; keep adb alive.
-on property:sys.usb.config=mtp,adb
-    setprop sys.usb.config adb
-on property:sys.usb.config=mtp
-    setprop sys.usb.config adb
+# begonia-ios headless fallback: adb only, nothing else touches the gadget.
 on boot
     setprop sys.usb.controller musb-hdrc
+    setprop sys.usb.config adb
 RC
 (cd "$W/rd" && find . | LC_ALL=C sort | cpio -o -H newc --quiet | gzip -9 -n) > "$W/ramdisk.new"
 python3 - "$T/recovery.img" "$W/ramdisk.new" "$T/recovery-adb.img" <<'PY'
