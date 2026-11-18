@@ -1,7 +1,7 @@
 #!/bin/bash
-# Make a headless, adb-only copy of the phone's TWRP for use as the chained fallback kernel.
-# On this raw-iOS userdata the TWRP program crashes and restarts in a loop, re-initialising USB
-# each time, so adb never stays up (only sideload works). This copy never starts it: init + adbd.
+# Make a headless copy of the phone's TWRP for use as the chained fallback kernel: TWRP's kernel
+# and init, no TWRP program (it crashes and restarts in a loop on raw-iOS userdata) and no adbd
+# (its FunctionFS link never stays up here), but a USB CDC-ACM serial port with a root shell.
 # The recovery partition is never touched: only private/twrp/recovery-adb.img is written.
 #
 #   tools/patch_twrp_usb.sh   (in WSL/Linux, as root so cpio keeps ownership; needs unpack_bootimg)
@@ -20,12 +20,48 @@ grep -q 'property:sys.usb.ffs.ready=1 && property:sys.usb.config=adb' "$rc" || {
 svc=$W/rd/init.recovery.service.rc
 grep -q '^service recovery /system/bin/recovery' "$svc" || { echo "unexpected TWRP service rc" >&2; exit 1; }
 sed -i '/^service recovery \/system\/bin\/recovery/a\    disabled' "$svc"
+# adbd's FunctionFS connection never stays up on this setup either, so the fallback offers a
+# USB CDC-ACM serial port instead (Windows binds its inbox usbser driver: a COM port) with a
+# root shell on it. TWRP's own adb triggers are neutralised so nothing else binds the gadget.
+sed -i 's/^\(\s*\)setprop sys.usb.config adb$/\1# begonia: no adb (serial fallback)/' "$rc"
 cat >> "$rc" <<'RC'
 
-# begonia-ios headless fallback: adb only, nothing else touches the gadget.
+# begonia-ios serial fallback: one CDC-ACM function, a root shell on /dev/ttyGS0.
+on property:sys.usb.config=begonia
+    write /config/usb_gadget/g1/UDC "none"
+    mkdir /config/usb_gadget/g1/functions/acm.gs0
+    rm /config/usb_gadget/g1/configs/b.1/f1
+    rm /config/usb_gadget/g1/configs/b.1/f2
+    rm /config/usb_gadget/g1/configs/b.1/f3
+    rm /config/usb_gadget/g1/configs/b.1/f4
+    rm /config/usb_gadget/g1/configs/b.1/f5
+    write /config/usb_gadget/g1/os_desc/use 0
+    write /config/usb_gadget/g1/idVendor 0x1d6b
+    write /config/usb_gadget/g1/idProduct 0x0104
+    write /config/usb_gadget/g1/bDeviceClass 0xef
+    write /config/usb_gadget/g1/bDeviceSubClass 0x02
+    write /config/usb_gadget/g1/bDeviceProtocol 0x01
+    write /config/usb_gadget/g1/strings/0x409/product "begonia-ios serial fallback"
+    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "acm"
+    symlink /config/usb_gadget/g1/functions/acm.gs0 /config/usb_gadget/g1/configs/b.1/f1
+    write /sys/devices/platform/mt_usb/saving 0
+    write /config/usb_gadget/g1/UDC musb-hdrc
+    setprop sys.usb.state begonia
+    start begonia_serial
+
+on property:sys.boot_completed=1
+    setprop sys.usb.config begonia
+
 on boot
     setprop sys.usb.controller musb-hdrc
-    setprop sys.usb.config adb
+    setprop sys.usb.config begonia
+
+service begonia_serial /system/bin/sh -c "while true; do /system/bin/sh -i </dev/ttyGS0 >/dev/ttyGS0 2>&1; sleep 1; done"
+    user root
+    group root
+    seclabel u:r:su:s0
+    disabled
+    oneshot
 RC
 (cd "$W/rd" && find . | LC_ALL=C sort | cpio -o -H newc --quiet | gzip -9 -n) > "$W/ramdisk.new"
 python3 - "$T/recovery.img" "$W/ramdisk.new" "$T/recovery-adb.img" <<'PY'
