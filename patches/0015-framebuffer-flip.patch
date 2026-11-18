@@ -1,0 +1,126 @@
+--- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
++++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+@@ -279,6 +279,26 @@
+  * to take between 5 and 40 ms; otherwise frames stay on their beat, as without it.
+  */
+ static TUNABLE(uint64_t, gLinePhysical, "fb_line", 0);
++/*
++ * begonia, boot-arg fb_flip=1: frames are drawn into a buffer the panel is not reading, and MediaTek's
++ * overlay (DISP_OVL0 at 0x14008000, the layer the boot loader left on: layer 1's address at 0xf60, layer
++ * 0's at 0xf40) is pointed at it once it is whole -- no frame torn by the copy racing the scan. Three
++ * buffers in the boot loader's display reservation (fb_flip_base=, fb_flip_size=; 0x7d9b0000 + 0x2250000
++ * on begonia): the one being shown, the one before it (the overlay may still be reading it this scan),
++ * and the one drawn into. The address is written at most once a refresh, so a buffer drawn into was
++ * last shown at least a whole scan ago. The overlay's addresses are 32 bits: the buffers stay below 4 GiB.
++ */
++static TUNABLE(uint32_t, gFlip, "fb_flip", 0);
++static TUNABLE(uint64_t, gFlipBase, "fb_flip_base", 0x7d9b0000);
++static TUNABLE(uint64_t, gFlipSize, "fb_flip_size", 0x2250000);
++#define FLIP_BUFFERS    3
++static volatile uint32_t * gFlipAddress;        /* the overlay layer's address register; NULL: no flipping */
++static uint8_t *        gFlipVirtual[FLIP_BUFFERS];
++static uint32_t         gFlipPhysical[FLIP_BUFFERS];
++static unsigned         gFlipShown;             /* the buffer the overlay was last pointed at */
++static uint64_t         gFlipLast;              /* when */
++static uint32_t         gFlips, gFlipCopies, gFlipWaits;
++extern "C" vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
+ extern "C" void begonia_perf_note(const char * format, ...) __printflike(1, 2);
+ 
+ static vm_offset_t
+@@ -614,6 +634,46 @@
+ 	fPanelWidth = vinfo.v_width;
+ 	fPanelHeight = vinfo.v_height;
+ 	fRowBytes = vinfo.v_rowbytes;
++	if (gFlip) {
++		volatile uint32_t * ovl = (volatile uint32_t *) ml_io_map(0x14008000, 0x1000);
++		uint32_t layerOffset = 0, shown = 0, frame = (uint32_t) (((uint64_t) fRowBytes * fPanelHeight + 0x3fff) & ~0x3fffULL);
++		uint64_t end = gFlipBase + gFlipSize;
++		unsigned n = 0;
++
++		if (ovl != NULL && (ovl[0x2c / 4] & 2) && ovl[0xf60 / 4] >= gFlipBase && ovl[0xf60 / 4] + (uint64_t) frame <= end) {
++			layerOffset = 0xf60;
++		} else if (ovl != NULL && (ovl[0x2c / 4] & 1) && ovl[0xf40 / 4] >= gFlipBase && ovl[0xf40 / 4] + (uint64_t) frame <= end) {
++			layerOffset = 0xf40;
++		}
++		if (layerOffset != 0) {
++			shown = ovl[layerOffset / 4];
++			gFlipPhysical[n] = shown;
++			gFlipVirtual[n++] = fBase;
++			/* the others: whole frames in the reservation, clear of the one shown */
++			for (uint64_t at = gFlipBase; n < FLIP_BUFFERS && at + frame <= end; at += frame) {
++				if (at < (uint64_t) shown + frame && at + frame > shown) {
++					at = (uint64_t) shown;  /* (then past it) */
++					continue;
++				}
++				uint8_t * mapped = (uint8_t *) ml_io_map_wcomb((vm_offset_t) at, frame);
++				if (mapped == NULL) {
++					break;
++				}
++				memcpy(mapped, fBase, (size_t) fRowBytes * fPanelHeight);       /* (what is on the panel now) */
++				gFlipPhysical[n] = (uint32_t) at;
++				gFlipVirtual[n++] = mapped;
++			}
++		}
++		if (n == FLIP_BUFFERS) {
++			gFlipAddress = ovl + layerOffset / 4;
++			gFlipShown = 0;
++			begonia_perf_note("fb_flip: overlay layer %u, buffers %#x %#x %#x: frames are drawn off the panel and flipped",
++			    layerOffset == 0xf60 ? 1 : 0, gFlipPhysical[0], gFlipPhysical[1], gFlipPhysical[2]);
++		} else {
++			begonia_perf_note("fb_flip: no overlay layer in %#llx+%#llx to flip (found %u buffers): frames are drawn on the panel",
++			    gFlipBase, gFlipSize, n);
++		}
++	}
+ 	fWidth = gFBWidth ? gFBWidth : fPanelWidth;
+ 	fHeight = gFBHeight ? gFBHeight : fPanelHeight;
+ 	if (gFBScale != 0 && gFBScale != kFBDefaultScale) {
+@@ -1539,6 +1599,23 @@
+ 		    swapWord(swap, SWAP_ID), fSwapsShown, swapWord(swap, SWAP_SURFACE(0)), swapWord(swap, SWAP_SURFACE(1)),
+ 		    swapWord(swap, SWAP_SURFACE(2)), swapWord(swap, SWAP_SURFACE(3)), set, swapWord(swap, SWAP_LAYERS_CLEARED));
+ 	}
++	unsigned back = gFlipShown;
++	if (gFlipAddress != NULL) {
++		int32_t whole[4];
++		uint8_t * front = gFlipVirtual[gFlipShown];
++
++		back = (gFlipShown + 1) % FLIP_BUFFERS;
++		fBase = gFlipVirtual[back];
++		/* a bottom layer that does not cover the panel leaves parts of it as they were: start from what is shown */
++		memcpy(whole, swap + SWAP_DEST(0), sizeof(whole));
++		if (swapWord(swap, SWAP_SURFACE(0)) == 0 || surfaces[0] == NULL || whole[0] != 0 || whole[1] != 0 ||
++		    whole[2] != (int32_t) fPanelWidth || whole[3] != (int32_t) fPanelHeight) {
++			for (uint32_t y = 0; y < fPanelHeight; y++) {
++				memcpy(fBase + (size_t) y * fRowBytes, front + (size_t) y * fRowBytes, (size_t) fPanelWidth * 4);
++			}
++			gFlipCopies++;
++		}
++	}
+ 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+ 		uint32_t sid = swapWord(swap, SWAP_SURFACE(layer));
+ 		int32_t src[4], dst[4];
+@@ -1603,6 +1680,25 @@
+ 			}
+ 		}
+ 	}
++	if (gFlipAddress != NULL) {
++		uint64_t period, now;
++
++		__asm__ volatile ("dsb sy" ::: "memory");
++		nanoseconds_to_absolutetime(NSEC_PER_SEC / refreshHz(), &period);
++		now = mach_absolute_time();
++		if (gFlipLast != 0 && now - gFlipLast < period) {
++			clock_delay_until(gFlipLast + period);
++			gFlipWaits++;
++		}
++		*gFlipAddress = gFlipPhysical[back];
++		__asm__ volatile ("dsb sy" ::: "memory");
++		gFlipLast = mach_absolute_time();
++		gFlipShown = back;
++		if (++gFlips % 600 == 0) {
++			IOLog("MiniIOMobileFramebuffer: fb_flip: %u flips, %u started from the shown frame, %u waited for the refresh\n",
++			    gFlips, gFlipCopies, gFlipWaits);
++		}
++	}
+ 	drawn = mach_absolute_time();
+ 	if (recorded != NULL) {
+ 		record(recorded);
