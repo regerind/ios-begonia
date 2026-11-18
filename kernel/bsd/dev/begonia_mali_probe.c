@@ -17,13 +17,14 @@ extern void FlushPoC_DcacheRegion(vm_offset_t,size_t);
 #include <pexpert/pexpert.h>
 #include <sys/systm.h>
 extern vm_offset_t ml_io_map(vm_offset_t,vm_size_t);
+extern void begonia_perf_note(const char *format,...) __printflike(1,2);
 static uint32_t rd(vm_offset_t b,unsigned o) { return *(volatile uint32_t *)(b+o); }
 static void wr(vm_offset_t b,unsigned o,uint32_t v) {
  *(volatile uint32_t *)(b+o)=v;__asm__ volatile("dsb sy":::"memory");
 }
 static int wait_bits(vm_offset_t b,unsigned o,uint32_t mask,uint32_t value) {
  for(unsigned i=0;i<5000;i++) {if((rd(b,o)&mask)==value)return 0;delay(10);}
- printf("BEGONIA GPU: timeout offset %x mask %x value %x got %x\n",o,mask,value,rd(b,o));return -1;
+ begonia_perf_note("BEGONIA GPU: timeout offset %x mask %x value %x got %x",o,mask,value,rd(b,o));return -1;
 }
 /* A self-test's own boot-arg, or begonia_gpu_service=1, which needs all three to pass and so implies
  * them: the kernel's command line is 608 characters, and the three names alone were 69 of them. */
@@ -34,7 +35,7 @@ static int test_wanted(const char *name) {
  return PE_parse_boot_argn("begonia_gpu_service",&enabled,sizeof(enabled)) && enabled==1;
 }
 static int domain_on(vm_offset_t spm,unsigned control,uint32_t status,unsigned srams) {
- printf("BEGONIA GPU: power control %x status-bit %x\n",control,status);
+ begonia_perf_note("BEGONIA GPU: power control %x status-bit %x",control,status);
  wr(spm,control,rd(spm,control)|4);
  wr(spm,control,rd(spm,control)|8);
  if(wait_bits(spm,0x160,status,status) || wait_bits(spm,0x164,status,status))return -1;
@@ -57,7 +58,7 @@ static int write_value_test(vm_offset_t gpu) {
  if(kmem_alloc(kernel_map,&page,PAGE_SIZE,KMA_KOBJECT|KMA_ZERO|KMA_DATA,VM_KERN_MEMORY_DIAG)!=KERN_SUCCESS)return 0;
  uint64_t physical=kvtophys(page);
  if(begonia_gpu_write_descriptor((uint32_t *)page,PAGE_SIZE,physical)) {
-  printf("BEGONIA GPU: selftest page outside owned managed RAM bounds\n");
+  begonia_perf_note("BEGONIA GPU: selftest page outside owned managed RAM bounds");
   kmem_free(kernel_map,page,PAGE_SIZE);return 0;
  }
  FlushPoC_DcacheRegion(page,PAGE_SIZE);
@@ -70,20 +71,20 @@ static int write_value_test(vm_offset_t gpu) {
  wr(gpu,0x18c0,(uint32_t)physical);wr(gpu,0x18c4,physical>>32);
  wr(gpu,0x18d0,15);wr(gpu,0x18d4,0);
  wr(gpu,0x18d8,(3u<<8)|(3u<<12)|(8u<<16));
- printf("BEGONIA GPU: submitting isolated WRITE_VALUE job\n");
+ begonia_perf_note("BEGONIA GPU: submitting isolated WRITE_VALUE job");
  wr(gpu,0x18e0,1);
  (void)wait_bits(gpu,0x1000,(1u<<1)|(1u<<17),1u<<1);
  FlushPoC_DcacheRegion(page,PAGE_SIZE);
  succeeded=*(volatile uint32_t *)(page+0x800)==0xbec07601 &&
    (rd(gpu,0x1000)&((1u<<1)|(1u<<17)))==(1u<<1) && !rd(gpu,0x241c);
- printf("BEGONIA GPU: selftest irq=%x slot=%x mmu=%x word=%08x expected=bec07601\n",
+ begonia_perf_note("BEGONIA GPU: selftest irq=%x slot=%x mmu=%x word=%08x expected=bec07601",
   rd(gpu,0x1000),rd(gpu,0x18a4),rd(gpu,0x241c),*(volatile uint32_t *)(page+0x800));
 reset:
  /* A timed-out GPU must not retain DMA access to a freed page. */
  wr(gpu,0x24,0xffffffff);wr(gpu,0x30,1);
  if(!wait_bits(gpu,0x20,1u<<8,1u<<8)) {
   kmem_free(kernel_map,page,PAGE_SIZE);
- } else {printf("BEGONIA GPU: reset timeout; retaining selftest page until SoC reset\n");return 0;}
+ } else {begonia_perf_note("BEGONIA GPU: reset timeout; retaining selftest page until SoC reset");return 0;}
  return succeeded;
 }
 
@@ -115,18 +116,18 @@ static int mapped_write_test(vm_offset_t gpu) {
  wr(gpu,0x2004,0xffffffff);wr(gpu,0x1008,0);wr(gpu,0x1004,0xffffffff);
  wr(gpu,0x18c0,(uint32_t)address);wr(gpu,0x18c4,0);
  wr(gpu,0x18d0,15);wr(gpu,0x18d4,0);wr(gpu,0x18d8,(3u<<8)|(3u<<12)|(8u<<16));
- printf("BEGONIA GPU: submitting VA48 four-level mapped WRITE_VALUE job\n");
+ begonia_perf_note("BEGONIA GPU: submitting VA48 four-level mapped WRITE_VALUE job");
  wr(gpu,0x18e0,1);(void)wait_bits(gpu,0x1000,(1u<<1)|(1u<<17),1u<<1);
  FlushPoC_DcacheRegion(pages[4],PAGE_SIZE);
  succeeded=*(volatile uint32_t *)(pages[4]+0x800)==0xbec07601 &&
    (rd(gpu,0x1000)&((1u<<1)|(1u<<17)))==(1u<<1) && !rd(gpu,0x241c);
- printf("BEGONIA GPU: mapped selftest irq=%x slot=%x mmu=%x faultaddr=%x/%x word=%08x expected=bec07601\n",
+ begonia_perf_note("BEGONIA GPU: mapped selftest irq=%x slot=%x mmu=%x faultaddr=%x/%x word=%08x expected=bec07601",
   rd(gpu,0x1000),rd(gpu,0x18a4),rd(gpu,0x241c),rd(gpu,0x2424),rd(gpu,0x2420),*(volatile uint32_t *)(pages[4]+0x800));
 finish:
  if(armed) {
   wr(gpu,0x24,0xffffffff);wr(gpu,0x30,1);
   if(wait_bits(gpu,0x20,1u<<8,1u<<8)) {
-   printf("BEGONIA GPU: mapped reset timeout; retaining %u pages until SoC reset\n",allocated);return 0;
+   begonia_perf_note("BEGONIA GPU: mapped reset timeout; retaining %u pages until SoC reset",allocated);return 0;
   }
  }
  for(unsigned i=0;i<allocated;i++)kmem_free(kernel_map,pages[i],PAGE_SIZE);
@@ -187,11 +188,11 @@ static int shader_compute_test(vm_offset_t gpu) {
  wr(gpu,0x2004,0xffffffff);wr(gpu,0x1008,0);wr(gpu,0x1004,0xffffffff);
  wr(gpu,0x18c0,(uint32_t)BEG_GPU_FIXTURE_JC);wr(gpu,0x18c4,BEG_GPU_FIXTURE_JC>>32);
  wr(gpu,0x18d0,15);wr(gpu,0x18d4,0);wr(gpu,0x18d8,(3u<<8)|(3u<<12)|(8u<<16));
- printf("BEGONIA GPU: submitting own compute shader,64 results expected i*3+7\n");
+ begonia_perf_note("BEGONIA GPU: submitting own compute shader,64 results expected i*3+7");
  wr(gpu,0x18e0,1);(void)wait_bits(gpu,0x1000,(1u<<1)|(1u<<17),1u<<1);
  for(unsigned i=0;i<count;i++)FlushPoC_DcacheRegion(pages[i],PAGE_SIZE);
  unsigned matches=0;for(unsigned i=0;i<64;i++)if(((volatile uint32_t *)output)[i]==i*3+7)matches++;
- printf("BEGONIA GPU: shader irq=%x slot=%x mmu=%x faultaddr=%x/%x exception=%x matches=%u/64 first=%x last=%x\n",
+ begonia_perf_note("BEGONIA GPU: shader irq=%x slot=%x mmu=%x faultaddr=%x/%x exception=%x matches=%u/64 first=%x last=%x",
   rd(gpu,0x1000),rd(gpu,0x18a4),rd(gpu,0x241c),rd(gpu,0x2424),rd(gpu,0x2420),
   *(volatile uint32_t *)job,matches,*(volatile uint32_t *)output,((volatile uint32_t *)output)[63]);
  succeeded=matches==64 && rd(gpu,0x1000)==2 && !rd(gpu,0x241c) && *(volatile uint32_t *)job==1;
@@ -199,12 +200,12 @@ finish:
  if(armed) {
   wr(gpu,0x24,0xffffffff);wr(gpu,0x30,1);
   if(wait_bits(gpu,0x20,1u<<8,1u<<8)) {
-   printf("BEGONIA GPU: shader reset timeout; retaining %u pages until SoC reset\n",allocated);return 0;
+   begonia_perf_note("BEGONIA GPU: shader reset timeout; retaining %u pages until SoC reset",allocated);return 0;
   }
  }
  for(unsigned i=0;i<allocated;i++)kmem_free(kernel_map,pages[i],PAGE_SIZE);
 #else
- printf("BEGONIA GPU: own-source shader fixture absent; test skipped\n");
+ begonia_perf_note("BEGONIA GPU: own-source shader fixture absent; test skipped");
 #endif
  return succeeded;
 }
@@ -214,16 +215,16 @@ void begonia_mali_probe(uint32_t gpu_uv,uint32_t sram_uv,int rails_enabled) {
  if(!PE_parse_boot_argn("begonia_gpu_probe",&enabled,sizeof(enabled)) || enabled!=1)return;
  if(!rails_enabled || gpu_uv<575000 || gpu_uv>850000 || sram_uv<850000 ||
     sram_uv>1000000 || sram_uv<gpu_uv+100000 || sram_uv>gpu_uv+300000) {
-  printf("BEGONIA GPU: rail precondition failed (%u/%u enabled%d); untouched\n",gpu_uv,sram_uv,rails_enabled);return;
+  begonia_perf_note("BEGONIA GPU: rail precondition failed (%u/%u enabled%d); untouched",gpu_uv,sram_uv,rails_enabled);return;
  }
  vm_offset_t spm=ml_io_map(0x10006000,0x1000),top=ml_io_map(0x10000000,0x1000);
  vm_offset_t infra=ml_io_map(0x10001000,0x1000);
  if(!spm || !top || !infra)return;
  const uint32_t mask=(1u<<4)|(1u<<7)|(1u<<20)|(1u<<22)|(1u<<23)|(1u<<13);
  if((rd(spm,0x160)|rd(spm,0x164))&mask) {
-  printf("BEGONIA GPU: inherited MFG state %08x/%08x differs; untouched\n",rd(spm,0x160),rd(spm,0x164));return;
+  begonia_perf_note("BEGONIA GPU: inherited MFG state %08x/%08x differs; untouched",rd(spm,0x160),rd(spm,0x164));return;
  }
- printf("BEGONIA GPU: inherited protection %08x/%08x; normalizing owned MFG bits\n",rd(infra,0x228),rd(infra,0x258));
+ begonia_perf_note("BEGONIA GPU: inherited protection %08x/%08x; normalizing owned MFG bits",rd(infra,0x228),rd(infra,0x258));
  /* Domains are confirmed off. The loader leaves only part of the GPU's
   * protection asserted. Normalize those GPU-only requests before power-up. */
  wr(infra,0x2a8,7u<<19);
@@ -258,7 +259,7 @@ void begonia_mali_probe(uint32_t gpu_uv,uint32_t sram_uv,int rails_enabled) {
   wr(top,0x58,(3u<<16)|(1u<<23));
   wr(top,0x4,1u<<14);
  }
- printf("BEGONIA GPU: CLK_CFG_3=%08x (parent=%u)\n", rd(top,0x50), (rd(top,0x50)>>16)&3);
+ begonia_perf_note("BEGONIA GPU: CLK_CFG_3=%08x (parent=%u)", rd(top,0x50), (rd(top,0x50)>>16)&3);
  wr(spm,0,0x0b160001);
  if(domain_on(spm,0x328,1u<<4,0) || domain_on(spm,0x32c,1u<<7,2))return;
  wr(infra,0x2a4,3u<<21);wr(infra,0x2ac,7u<<19);
@@ -268,17 +269,17 @@ void begonia_mali_probe(uint32_t gpu_uv,uint32_t sram_uv,int rails_enabled) {
  for(unsigned i=0;i<4;i++)if(domain_on(spm,controls[i],1u<<statusbits[i],1))return;
  vm_offset_t cfg=ml_io_map(0x13fbf000,0x1000),gpu=ml_io_map(0x13040000,0x4000);
  if(!cfg || !gpu)return;
- printf("BEGONIA GPU: domains ready, ungating BG3D before ID read\n");
+ begonia_perf_note("BEGONIA GPU: domains ready, ungating BG3D before ID read");
  wr(cfg,8,1);
  uint32_t id=rd(gpu,0);
- printf("BEGONIA GPU: ID=%08x shader=%x tiler=%x L2=%x at %s (%u kHz)\n",
+ begonia_perf_note("BEGONIA GPU: ID=%08x shader=%x tiler=%x L2=%x at %s (%u kHz)",
     id,rd(gpu,0x100),rd(gpu,0x110),rd(gpu,0x120),
     (gpu_uv >= 612500) ? "MFGPLL" : "crystal clock",(gpu_uv >= 612500) ? mfg_khz : 26000);
- if((id>>16)!=0x7211) {printf("BEGONIA GPU: identity mismatch; reset skipped\n");return;}
+ if((id>>16)!=0x7211) {begonia_perf_note("BEGONIA GPU: identity mismatch; reset skipped");return;}
  wr(gpu,0x28,0);wr(gpu,0x24,0xffffffff);wr(gpu,0x30,1);
  if(wait_bits(gpu,0x20,1u<<8,1u<<8))return;
  wr(gpu,0x24,0xffffffff);
- printf("BEGONIA GPU: G76 soft reset complete; no Metal service published\n");
+ begonia_perf_note("BEGONIA GPU: G76 soft reset complete; no Metal service published");
  if(write_value_test(gpu) && mapped_write_test(gpu) && shader_compute_test(gpu)) {
   extern void begonia_mali_service_begin(vm_offset_t);
   begonia_mali_service_begin(gpu);

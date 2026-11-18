@@ -52,20 +52,33 @@ wr(vm_offset_t b, unsigned o, uint32_t v)
 static int
 pmic_read_reg(vm_offset_t base, unsigned address, uint32_t *value)
 {
+    extern void begonia_pwrap_take(void);
+    extern void begonia_pwrap_give(void);
+    int result = -1;
+    uint32_t state = 0;
     if ((address & 1) || address > 0xfffe) return -1;
-    uint32_t state = rd(base, 0xc24);
-    if (!(state & (1u << 22)) || ((state >> 16) & 7) != 0) return -1;
-    wr(base, 0xc20, (address >> 1) << 16);
-    for (unsigned i = 0; i < 1000; i++) {
+    /* one user of the channel at a time, and only when its state machine is idle (begonia_perf.c) */
+    begonia_pwrap_take();
+    for (unsigned i = 0; i < 2000; i++) {
         state = rd(base, 0xc24);
-        if (((state >> 16) & 7) == 6) {
-            *value = state & 0xffff;
-            wr(base, 0xc28, 1);
-            return 0;
-        }
+        if ((state & (1u << 22)) && ((state >> 16) & 7) == 0) break;
         delay(10);
     }
-    return -1;
+    if ((state & (1u << 22)) && ((state >> 16) & 7) == 0) {
+        wr(base, 0xc20, (address >> 1) << 16);
+        for (unsigned i = 0; i < 1000; i++) {
+            state = rd(base, 0xc24);
+            if (((state >> 16) & 7) == 6) {
+                *value = state & 0xffff;
+                wr(base, 0xc28, 1);
+                result = 0;
+                break;
+            }
+            delay(10);
+        }
+    }
+    begonia_pwrap_give();
+    return result;
 }
 
 static void

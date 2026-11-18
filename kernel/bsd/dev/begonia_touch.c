@@ -239,6 +239,7 @@ static void touch_thread(__unused void *arg,__unused wait_result_t result) {
    }
   }
   diagnostics_write(2,++polls,bad,reasons,report,longest_read);
+  if(polls%3000==1500) {extern void begonia_perf_notes_say(void);begonia_perf_notes_say();}
   if(polls%7500==0) {
    printf("BEGONIA TOUCH: polls %u bad %u events %u max_read_us %llu\n",polls,bad,events,longest_read/1000);
    printf("BEGONIA TOUCH: reasons invalid=%u recovery=%u watchdog=%u id=%u duplicate=%u bounds=%u last=%02x%02x%02x%02x%02x%02x\n",

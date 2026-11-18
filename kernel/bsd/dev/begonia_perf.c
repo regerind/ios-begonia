@@ -25,35 +25,70 @@ static void pw_wr(vm_offset_t base, unsigned offset, uint32_t value)
     *(volatile uint32_t *)(base+offset)=value;
     __asm__ volatile("dsb sy" ::: "memory");
 }
-static int pmic_write(vm_offset_t base, unsigned address, uint32_t value)
+/*
+ * The channel is one state machine for everybody: the buttons' thread asks the PMIC for the power key
+ * all the time, and this file reads and writes rails. A command given while the machine is not idle is
+ * lost, and it is not idle for a moment after a read has been acknowledged -- which two reads in a row
+ * got away with at the boot loader's 1175 MHz and not at 2000 (x10: after the A55s were raised every
+ * second read failed, the GPU's rails "could not be read", the GPU stayed off and CoreAnimation drew
+ * with the software rasterizer). So: one user at a time (begonia_pwrap_take), and idle is waited for.
+ */
+static volatile int pwrap_taken;
+void begonia_pwrap_take(void);
+void begonia_pwrap_give(void);
+void begonia_pwrap_take(void)
 {
-    if ((address&1) || address>0xfffe || (value&~0xffff)) return -1;
-    uint32_t state=rd(base,0xc24);
-    if (!(state&(1u<<22)) || ((state>>16)&7)!=0) return -1;
-    pw_wr(base,0xc20,(1u<<31)|((address>>1)<<16)|(value&0xffff));
-    for (unsigned i=0;i<1000;i++) {
-        state=rd(base,0xc24);
-        if (((state>>16)&7)==0) return 0;
+    while (__atomic_exchange_n(&pwrap_taken, 1, __ATOMIC_ACQUIRE)) {
+        delay(20);
+    }
+}
+void begonia_pwrap_give(void)
+{
+    __atomic_store_n(&pwrap_taken, 0, __ATOMIC_RELEASE);
+}
+static int pmic_idle(vm_offset_t base)
+{
+    for (unsigned i=0;i<2000;i++) {
+        uint32_t state=rd(base,0xc24);
+        if ((state&(1u<<22)) && ((state>>16)&7)==0) return 0;
         delay(10);
     }
     return -1;
 }
+static int pmic_write(vm_offset_t base, unsigned address, uint32_t value)
+{
+    int result=-1;
+    if ((address&1) || address>0xfffe || (value&~0xffff)) return -1;
+    begonia_pwrap_take();
+    if (!pmic_idle(base)) {
+        pw_wr(base,0xc20,(1u<<31)|((address>>1)<<16)|(value&0xffff));
+        delay(2);
+        result=pmic_idle(base);
+    }
+    begonia_pwrap_give();
+    return result;
+}
 static int pmic_read(vm_offset_t base, unsigned address, uint32_t *value)
 {
+    int result=-1;
     if ((address&1) || address>0xfffe) return -1;
-    uint32_t state=rd(base,0xc24);
-    if (!(state&(1u<<22)) || ((state>>16)&7)!=0) return -1;
-    pw_wr(base,0xc20,(address>>1)<<16);
-    for (unsigned i=0;i<1000;i++) {
-        state=rd(base,0xc24);
-        if (((state>>16)&7)==6) {
-            *value=state&0xffff;
-            pw_wr(base,0xc28,1);
-            return 0;
+    begonia_pwrap_take();
+    if (!pmic_idle(base)) {
+        pw_wr(base,0xc20,(address>>1)<<16);
+        for (unsigned i=0;i<1000;i++) {
+            uint32_t state=rd(base,0xc24);
+            if (((state>>16)&7)==6) {
+                *value=state&0xffff;
+                pw_wr(base,0xc28,1);
+                (void)pmic_idle(base);
+                result=0;
+                break;
+            }
+            delay(10);
         }
-        delay(10);
     }
-    return -1;
+    begonia_pwrap_give();
+    return result;
 }
 static void pmic_probe(void)
 {
@@ -131,7 +166,7 @@ static void clock_correct(vm_offset_t pll, vm_offset_t div)
  */
 /* What the clock and rail work said, kept: the console's ring in RAM holds a few minutes, and these
  * lines are from the first seconds. begonia_mali_service.c says them again with its statistics. */
-char begonia_perf_notes[1024];
+char begonia_perf_notes[4096];
 void begonia_perf_note(const char *format,...) __printflike(1,2);
 void begonia_perf_note(const char *format,...)
 {
@@ -140,6 +175,13 @@ void begonia_perf_note(const char *format,...)
     printf("%s\n",line);
     strlcat(begonia_perf_notes,line,sizeof(begonia_perf_notes));
     strlcat(begonia_perf_notes," | ",sizeof(begonia_perf_notes));
+}
+/* The notes again, in pieces a console line holds (begonia_touch.c, every half minute). */
+void begonia_perf_notes_say(void);
+void begonia_perf_notes_say(void)
+{
+    size_t length=strlen(begonia_perf_notes);
+    for(size_t at=0;at<length;at+=200)printf("BEGONIA NOTES %u: %.200s\n",(unsigned)(at/200),begonia_perf_notes+at);
 }
 struct begonia_opp {uint32_t mhz,uv,post;};
 static const struct begonia_opp ll_opp[4]={{0,0,0},{1618,875000,2},{1800,950000,1},{2000,1031250,1}};
@@ -283,7 +325,6 @@ begonia_perf_init(void)
     printf("BEGONIA PERF: Mali MMIO untouched; no DVFS or power-state changes\n");
     pmic_probe();
     clock_correct(pll,div);
-    cpu_opp(pll,div);
     uint32_t gpu_probe=0;
     if(PE_parse_boot_argn("begonia_gpu_probe",&gpu_probe,sizeof(gpu_probe)) && gpu_probe==1) {
         extern void begonia_mali_probe(uint32_t,uint32_t,int);
@@ -292,7 +333,7 @@ begonia_perf_init(void)
         if(pw && !pmic_read(pw,8,&hw) && hw==0x5920 &&
            !pmic_read(pw,0x15a6,&gv) && !pmic_read(pw,0x15a8,&ge) &&
            !pmic_read(pw,0x14a6,&sv) && !pmic_read(pw,0x14a8,&se)) {
-            printf("BEGONIA GPU: rail readbacks core=%04x/%04x SRAM=%04x/%04x\n",gv,ge,sv,se);
+            begonia_perf_note("BEGONIA GPU: rail readbacks core=%04x/%04x SRAM=%04x/%04x",gv,ge,sv,se);
             /* begonia_gpu_khz=620000|806000: stock rows of mt6785/mtk_gpufreq_core.h -- 620 MHz at
              * 700 mV (memory rail 850 mV), 806 MHz at 781.25 mV (881.25 mV). For 620 the memory rail is not
              * written: it is taken only if that voltage is already there. */
@@ -325,8 +366,10 @@ begonia_perf_init(void)
                 begonia_perf_note("BEGONIA GPU: core rail short of its selector; MFGPLL stays");begonia_gpu_khz=0;
             }
             begonia_mali_probe(400000+(gv&127)*6250,400000+(sv&127)*6250,(ge&se&1)!=0);
-        } else printf("BEGONIA GPU: PMIC identity/readback failed; untouched\n");
+        } else begonia_perf_note("BEGONIA GPU: PMIC identity/readback failed (id %04x); untouched",hw);
     }
+    cpu_opp(pll,div);
+    begonia_perf_note("BEGONIA PERF: now LL %08x BIG %08x CCI %08x MFG %08x",rd(pll,0x204),rd(pll,0x214),rd(pll,0x2a4),rd(pll,0x254));
 }
 
 /*

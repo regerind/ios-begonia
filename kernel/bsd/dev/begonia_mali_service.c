@@ -29,6 +29,7 @@ extern uint64_t kvtophys(vm_offset_t);
 extern boolean_t pmap_valid_address(uint64_t);
 extern void FlushPoC_DcacheRegion(vm_offset_t,size_t);
 extern void HakiosMaliStart(void);
+extern void begonia_perf_note(const char *format,...) __printflike(1,2);
 static vm_offset_t gpu;
 static struct beg_gpu_vm space;
 static struct mali_va addresses;
@@ -205,10 +206,6 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
   ns/1000000,busy/1000/stat_jobs,longest/1000,busy*100/ns,waited/1000/stat_jobs,stat_deepest,
   async_jobs?"queued":"run in the submit");
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
- {
-  extern char begonia_perf_notes[];static unsigned said;
-  if(said++%6==0 && begonia_perf_notes[0])printf("BEGONIA NOTES: %s\n",begonia_perf_notes);
- }
 }
 /* One job on the GPU, start to finish; nobody else touches its registers meanwhile. 1: done. */
 static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,unsigned depth) {
@@ -226,6 +223,8 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
  if(!wait(0x1000,(1u<<slot)|(1u<<(slot+16)),1u<<slot) && !rd(0x241c)) {
   success=1;
  } else {
+  static unsigned failures;
+  if(failures++<4)begonia_perf_note("BEGONIA GPU SERVICE: job%llu slot%u irq=%x mmu=%x FAILED (%u)",seq,slot,rd(0x1000),rd(0x241c),failures);
   printf("BEGONIA GPU SERVICE: job%llu slot%u irq=%x mmu=%x FAILED; recovering\n",seq,slot,rd(0x1000),rd(0x241c));
   if(reset() || init_gpu_hardware()) {
    printf("BEGONIA GPU SERVICE: hardware recovery failed\n");
@@ -300,7 +299,7 @@ void begonia_mali_service_begin(vm_offset_t registers) {
  uint32_t enabled=0;
  if(!PE_parse_boot_argn("begonia_gpu_service",&enabled,sizeof enabled) || enabled!=1 || gpu)return;
  gpu=registers;
- if(rd(0)>>16!=0x7211 || reset())return;
+ if(rd(0)>>16!=0x7211 || reset()) {begonia_perf_note("BEGONIA GPU SERVICE: identity or reset failed; not started");return;}
  gpu_group=lck_grp_alloc_init("begonia.gpu",LCK_GRP_ATTR_NULL);
  vm_lock=lck_mtx_alloc_init(gpu_group,LCK_ATTR_NULL);
  queue_lock=lck_mtx_alloc_init(gpu_group,LCK_ATTR_NULL);
@@ -316,7 +315,7 @@ void begonia_mali_service_begin(vm_offset_t registers) {
  space.tables = (struct beg_gpu_vm_table *)tbls;
  space.limit=BEG_GPU_VM_MAX_TABLES;space.allocate=allocate_table;
  if(init_gpu_hardware()) {
-  printf("HakiosMali: init_gpu_hardware failed\n");
+  begonia_perf_note("HakiosMali: init_gpu_hardware failed");
   return;
  }
  if(async_jobs) {
@@ -329,6 +328,6 @@ void begonia_mali_service_begin(vm_offset_t registers) {
   }
  }
  __atomic_store_n(&ready,1,__ATOMIC_RELEASE);
- printf("BEGONIA GPU SERVICE: ready; jobs %s\n",async_jobs?"queued to a kernel thread":"run inside the submit");
+ begonia_perf_note("BEGONIA GPU SERVICE: ready; jobs %s",async_jobs?"queued to a kernel thread":"run inside the submit");
  HakiosMaliStart();
 }
