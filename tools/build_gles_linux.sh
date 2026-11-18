@@ -56,7 +56,7 @@ ninja -C "$B/ios" src/gallium/targets/osmesa/libOSMesa.8.dylib > "$B/ios-build.l
 lib=$S/libOSMesa.8.dylib
 llvm-strip -x -o "$lib" "$B/ios/src/gallium/targets/osmesa/libOSMesa.8.dylib"
 "$THEOS/toolchain/linux/iphone/bin/install_name_tool" -id /redwood/lib/libOSMesa.8.dylib "$lib"
-llvm-objdump --macho --private-headers "$lib" | grep -q -E "platform (2|IOS)" || { echo "libOSMesa is not an iOS binary" >&2; exit 1; }
+llvm-objdump --macho --private-headers "$lib" | grep -q -i -E "platform +(2|ios)$" || { echo "libOSMesa is not an iOS binary" >&2; exit 1; }
 FLAGS=(-arch arm64 -isysroot "$SDK" -I"$R/userland/vulkan/compat")
 "$CC" "${FLAGS[@]}" -O1 -Wall -Wextra -Werror -I"$M/include" "$R/tests/gles_render_test.c" -o "$S/gles_render_test"
 
