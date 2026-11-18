@@ -1,0 +1,103 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -588,6 +588,46 @@
+ 	return format == GL_BGRA && internal == GL_RGBA ? GL_BGRA : internal;
+ }
+ 
++/*
++ * begonia: text that applications draw comes as masks of opacity alone -- GL_ALPHA textures, 834 of them in a five
++ * minute run -- and on the Mali-G76 every label, every key of the keyboard that is drawn that way, came out as its
++ * whole rectangle filled in: opacity 1 wherever the mask was read. Mesa's panfrost gives GL_ALPHA and
++ * GL_LUMINANCE_ALPHA hardware formats of their own on this generation (pan_format.c, "Obsolete formats removed in
++ * Valhall": A8_UNORM, R8A8_UNORM); the red and red-green formats are what everything else uses. So such a texture is
++ * made a GL_R8 or GL_RG8 one, with its channels sent where the old format had them (OpenGL ES 3's texture swizzle):
++ * opacity from red, or luminance from red and opacity from green. Only textures that are given pixels: one made empty
++ * may be drawn into, and what is drawn into it is opacity, not red. Boot-arg glalpha=0: as CoreAnimation asks.
++ */
++static int alpha_as_red = 1;
++
++static bool
++legacy_format(GLenum target, GLenum *internal, GLenum *format, GLenum type, bool swizzle)
++{
++	GLint to[4];
++
++	if (!alpha_as_red || type != GL_UNSIGNED_BYTE) {
++		return false;
++	}
++	if (*format == 0x1906) {                        /* GL_ALPHA */
++		*internal = 0x8229;                     /* GL_R8 */
++		*format = 0x1903;                       /* GL_RED */
++		to[0] = to[1] = to[2] = 0 /* GL_ZERO */, to[3] = 0x1903;
++	} else if (*format == 0x190a) {                 /* GL_LUMINANCE_ALPHA */
++		*internal = 0x822b;                     /* GL_RG8 */
++		*format = 0x8227;                       /* GL_RG */
++		to[0] = to[1] = to[2] = 0x1903, to[3] = 0x1904 /* GL_GREEN */;
++	} else {
++		return false;
++	}
++	if (swizzle) {
++		glTexParameteri(target, 0x8e42 /* GL_TEXTURE_SWIZZLE_R */, to[0]);
++		glTexParameteri(target, 0x8e43, to[1]);
++		glTexParameteri(target, 0x8e44, to[2]);
++		glTexParameteri(target, 0x8e45, to[3]);
++	}
++	return true;
++}
++
+ static unsigned
+ bytes_a_pixel(GLenum format, GLenum type)
+ {
+@@ -777,8 +817,12 @@
+ 	glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+ 	glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(row / pixel));
+ 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+-	glTexImage2D(image->to, 0, (GLint)internal_format(image->internal, image->format), image->width, image->height, 0,
+-	    image->format, image->type, base);
++	{
++		GLenum internal = internal_format(image->internal, image->format), format = image->format;
++
++		(void)legacy_format(image->to, &internal, &format, image->type, true);
++		glTexImage2D(image->to, 0, (GLint)internal, image->width, image->height, 0, format, image->type, base);
++	}
+ 	glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
+ 	glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+ 	if (trace_placing) {
+@@ -3564,7 +3608,14 @@
+ 		group_forget(e, e->bound[e->unit]);
+ 	}
+ 	uint64_t began = slow_calls_us != 0 ? now_us() : 0;
+-	glTexImage2D(target, level, (GLint)internal_format((GLenum)internal, format), width, height, border, format, type, pixels);
++	{
++		GLenum to = internal_format((GLenum)internal, format);
++
++		if (pixels != NULL) {
++			(void)legacy_format(target, &to, &format, type, level == 0);
++		}
++		glTexImage2D(target, level, (GLint)to, width, height, border, format, type, pixels);
++	}
+ 	if (began != 0 && now_us() - began >= slow_calls_us) {
+ 		/* (with glslow=US: which pictures take long to hand over) */
+ 		say("tl: slow-tex %dx%d level %d format %#x type %#x%s %llu at %llu\n", width, height, level, format, type,
+@@ -3590,7 +3641,13 @@
+ 		group_read(e, e->bound[e->unit]);
+ 		group_forget(e, e->bound[e->unit]);
+ 	}
+-	glTexSubImage2D(target, level, x, y, width, height, format, type, pixels);
++	{
++		GLenum unused = 0;
++
++		/* (into a texture that was made one of red: the pixels are called what the texture is) */
++		(void)legacy_format(target, &unused, &format, type, false);
++		glTexSubImage2D(target, level, x, y, width, height, format, type, pixels);
++	}
+ 	EAGL_LEAVE(e, 0x9a0);
+ }
+ 
+@@ -4402,6 +4459,7 @@
+ 		}
+ 		share_surfaces = strstr(arguments, "glcopy=1") == NULL;
+ 		blit_targets = strstr(arguments, "glblit=0") == NULL;
++		alpha_as_red = strstr(arguments, "glalpha=0") == NULL;
+ 		if ((argument = strstr(arguments, "gl_cpu=")) != NULL) {
+ 			bind_cpu = atoi(argument + 7);
+ 		}
