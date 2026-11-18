@@ -8,6 +8,7 @@
 #
 # Inputs (private/, never committed):
 #   private/twrp/recovery.img          full dump of the phone's recovery partition
+#                                      (RECOVERY=private/twrp/recovery-adb.img: tools/patch_twrp_usb.sh)
 #   private/twrp/recovery.img.sha256   its SHA256 as read on the phone
 #   private/touch/novatek_ts_fw.bin    118784-byte NT36672A firmware (SHA256 0b57dd62...)
 # Outputs: out/userdata/{system.ext,data.ext,data.hfs}, out/begonia-native.adt,
@@ -18,7 +19,7 @@ R=$(cd "$(dirname "$0")/.." && pwd); H=$R/upstream/hakios-xnu-kernel; cd "$R"
 SYSTEM=$H/userland/system.apfs
 SUPPORT=${SUPPORT:-$R/out/begonia-ui-support/root.apfs}
 KERNEL=$R/out/kernel.begonia-native-ufs
-RECOVERY=$R/private/twrp/recovery.img
+RECOVERY=${RECOVERY:-$R/private/twrp/recovery.img}
 TOUCH=$R/private/touch/novatek_ts_fw.bin
 for f in "$SYSTEM" "$SUPPORT" "$KERNEL" "$RECOVERY" "$RECOVERY.sha256" "$TOUCH" "$H/sysimage/DeviceTree.d22ap.im4p"; do
 	[ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }
