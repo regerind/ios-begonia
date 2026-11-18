@@ -1,0 +1,68 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -808,6 +808,54 @@
+ 	e->upload_bytes += row * (size_t)image->height;
+ }
+ 
++/*
++ * begonia: a target drawn into a texture of the library's own (blit_targets) starts with what its surface
++ * holds -- copied by the GPU from the mirror, which is the surface's memory, rather than added up and
++ * uploaded by the processor. CoreAnimation makes a new display surface nearly every frame here, and that
++ * upload (10 MB at 1080 x 2340) was most of a frame's time. The texture, which is bound, gets its storage
++ * first; the copy is turned over as target_to_surface() turns it back.
++ */
++static unsigned mirror_fills;
++static void
++mirror_to_target(struct eagl *e, struct image *image)
++{
++	GLint read = 0, draw = 0, row_length = 0, unpack = 0;
++
++	glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length);
++	glGetIntegerv(0x88ef /* GL_PIXEL_UNPACK_BUFFER_BINDING */, &unpack);
++	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++	if (unpack != 0) {
++		glBindBuffer(0x88ec /* GL_PIXEL_UNPACK_BUFFER */, 0);
++	}
++	glTexImage2D(GL_TEXTURE_2D, 0, (GLint)internal_format(image->internal, image->format), image->width, image->height, 0,
++	    image->format, image->type, NULL);
++	if (unpack != 0) {
++		glBindBuffer(0x88ec, (GLuint)unpack);
++	}
++	glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
++	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
++	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
++	if (e->reader == 0) {
++		glGenFramebuffers(1, &e->reader);
++	}
++	if (e->writer == 0) {
++		glGenFramebuffers(1, &e->writer);
++	}
++	glBindFramebuffer(GL_READ_FRAMEBUFFER, e->reader);
++	glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image->mirror, 0);
++	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, e->writer);
++	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image->texture, 0);
++	glBlitFramebuffer(0, 0, image->width, image->height, 0, image->invert ? image->height : 0, image->width,
++	    image->invert ? 0 : image->height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++	glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)read);
++	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)draw);
++	image->seed = IOSurfaceGetSeed(image->surface);
++	if (mirror_fills++ < 4 || mirror_fills % 500 == 0) {
++		say("hakios-gl: target %u filled from surface %u by the GPU (%d x %d%s), %u so far\n", image->texture,
++		    IOSurfaceGetID(image->surface), image->width, image->height, image->invert ? ", turned over" : "", mirror_fills);
++	}
++}
++
+ /* What has been drawn into a texture, into its IOSurface, unless it is there (frame_end() waits for it). */
+ static void
+ target_to_surface(struct eagl *e, struct image *image)
+@@ -4172,7 +4220,9 @@
+ 	 * around, to be shown): a texture that is not the surface's memory starts with what the surface holds.
+ 	 */
+ 	began = now_us();
+-	if (surface_mirrored(e, image) || !surface_shared(e, image)) {
++	if (surface_mirrored(e, image)) {
++		mirror_to_target(e, image);             /* begonia: by the GPU, from the surface's memory */
++	} else if (!surface_shared(e, image)) {
+ 		surface_changed(e, image);              /* (what it adds up to now) */
+ 		surface_to_texture(e, image);
+ 	}
