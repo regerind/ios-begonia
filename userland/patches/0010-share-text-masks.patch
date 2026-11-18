@@ -1,0 +1,75 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -679,6 +679,25 @@
+ }
+ 
+ /*
++ * begonia: the text masks CoreAnimation draws with -- an 'A008' surface asked for as GL_ALPHA, an
++ * 'LA08' one as GL_LUMINANCE_ALPHA, bytes -- are shared too (the library makes them alpha and
++ * luminance-alpha textures of the surface's memory). Copied, they were the filled boxes in place
++ * of text, and their memory was added up on the processor every frame (surface_changed()).
++ * Boot-arg glmask=0: copied, as before.
++ */
++static int share_masks = 1;
++
++static bool
++mask_surface(struct image *image, IOSurfaceRef surface)
++{
++	OSType pixels = IOSurfaceGetPixelFormat(surface);
++
++	return share_masks && image->type == GL_UNSIGNED_BYTE &&
++	    ((image->format == 0x1906 /* GL_ALPHA */ && pixels == 0x41303038 /* 'A008' */) ||
++	    (image->format == 0x190a /* GL_LUMINANCE_ALPHA */ && pixels == 0x4c413038 /* 'LA08' */));
++}
++
++/*
+  * Make a texture, which is bound, of its IOSurface's own memory, if that is what is asked for
+  * (the whole of a surface of blue-first pixels, the same way up) and the library can do it.
+  */
+@@ -686,8 +705,10 @@
+ surface_shared(struct eagl *e, struct image *image)
+ {
+ 	IOSurfaceRef surface = image->surface;
++	bool mask = mask_surface(image, surface);
+ 
+-	if (!share_surfaces || image->invert || image->alpha_first || image->format != GL_BGRA || image->type != GL_UNSIGNED_BYTE ||
++	if (!share_surfaces || image->invert || image->alpha_first ||
++	    (!mask && (image->format != GL_BGRA || image->type != GL_UNSIGNED_BYTE)) ||
+ 	    image->plane != 0 || (size_t)image->width != IOSurfaceGetWidth(surface) ||
+ 	    (size_t)image->height != IOSurfaceGetHeight(surface) ||
+ 	    !hakios_gl_surface_texture(e->gl, IOSurfaceGetID(surface))) {
+@@ -721,6 +742,26 @@
+ 		e->refused++;
+ 		return false;
+ 	}
++	if (mask) {
++		static unsigned masks;
++
++		/*
++		 * The surface's memory is one level; a minifying filter that wants more would make the
++		 * texture incomplete (it samples as black: a box). And a texture copied before may still
++		 * carry the red-for-alpha swizzle of legacy_format(): the library's texture is alpha itself.
++		 */
++		glTexParameteri(GL_TEXTURE_2D, 0x813c /* GL_TEXTURE_BASE_LEVEL */, 0);
++		glTexParameteri(GL_TEXTURE_2D, 0x813d /* GL_TEXTURE_MAX_LEVEL */, 0);
++		glTexParameteri(GL_TEXTURE_2D, 0x8e42 /* GL_TEXTURE_SWIZZLE_R */, 0x1903 /* GL_RED */);
++		glTexParameteri(GL_TEXTURE_2D, 0x8e43, 0x1904 /* GL_GREEN */);
++		glTexParameteri(GL_TEXTURE_2D, 0x8e44, 0x1905 /* GL_BLUE */);
++		glTexParameteri(GL_TEXTURE_2D, 0x8e45, 0x1906 /* GL_ALPHA */);
++		if (masks++ < 8 || masks % 500 == 0) {
++			say("hakios-gl: text mask %u ('%.4s' %zu x %zu, %zu bytes a row) shared, not copied (%u so far)\n",
++			    IOSurfaceGetID(surface), (const char *)&(uint32_t){ OSSwapInt32(IOSurfaceGetPixelFormat(surface)) },
++			    IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface), IOSurfaceGetBytesPerRow(surface), masks);
++		}
++	}
+ 	image->shared = true;
+ 	e->shared++;
+ 	return true;
+@@ -4460,6 +4501,7 @@
+ 		share_surfaces = strstr(arguments, "glcopy=1") == NULL;
+ 		blit_targets = strstr(arguments, "glblit=0") == NULL;
+ 		alpha_as_red = strstr(arguments, "glalpha=0") == NULL;
++		share_masks = strstr(arguments, "glmask=0") == NULL;
+ 		if ((argument = strstr(arguments, "gl_cpu=")) != NULL) {
+ 			bind_cpu = atoi(argument + 7);
+ 		}

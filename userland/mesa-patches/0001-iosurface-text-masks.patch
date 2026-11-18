@@ -1,0 +1,33 @@
+--- a/src/gallium/targets/osmesa/osmesa_target.c
++++ b/src/gallium/targets/osmesa/osmesa_target.c
+@@ -112,6 +112,9 @@
+  * The memory of an IOSurface as a texture, to draw into and to draw with (Darwin on redwood):
+  * the kernel's GPU driver makes a buffer of the surface. NULL: the screen is not the GPU's, or
+  * the surface is not one plane of 32-bit pixels, blue first, in rows the GPU can address.
++ * begonia: also the text masks CoreAnimation draws with -- 'A008' (alpha) and 'LA08'
++ * (luminance and alpha) -- to sample from only; copied, they came out as filled boxes and
++ * their memory was added up on the processor every frame to see whether it had changed.
+  */
+ struct pipe_resource *
+ osmesa_surface_resource(struct pipe_screen *screen, uint32_t surface)
+@@ -129,7 +132,19 @@
+ 
+    if (gpu_fd < 0 || hakios_drm_surface(gpu_fd, &s) != 0)
+       return NULL;
+-   if (s.pixel_format != 0x42475241 /* 'BGRA' */ || s.planes != 0)
++   if (s.planes != 0)
++      return NULL;
++   if (s.pixel_format == 0x41303038 /* 'A008' */) {
++      templ.format = PIPE_FORMAT_A8_UNORM;
++      templ.bind = PIPE_BIND_SAMPLER_VIEW;
++   } else if (s.pixel_format == 0x4c413038 /* 'LA08' */) {
++      templ.format = PIPE_FORMAT_L8A8_UNORM;
++      templ.bind = PIPE_BIND_SAMPLER_VIEW;
++   } else if (s.pixel_format != 0x42475241 /* 'BGRA' */) {
++      return NULL;
++   }
++   if (templ.format != PIPE_FORMAT_B8G8R8A8_UNORM &&
++       !screen->is_format_supported(screen, templ.format, PIPE_TEXTURE_2D, 0, 0, templ.bind))
+       return NULL;
+    /* (the surface comes in as Linux's buffers come in by file descriptor: see hakios-drm) */
+    templ.width0 = s.width;

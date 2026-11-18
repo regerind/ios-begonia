@@ -17,6 +17,13 @@ source "$H/xnu-env.sh"
 SDK=$THEOS/sdks/iPhoneOS16.5.sdk; CC=$H/xnu-deps/host/bin/xnu-clang
 B=$R/out/gles-linux; S=$R/out/gles-ios; mkdir -p "$B" "$S"
 [ -f "$M/.begonia-gles-patches.json" ] || { echo "run tools/prepare_gles_userland.py first" >&2; exit 1; }
+# begonia's own Mesa changes (userland/mesa-patches), on top of the reference's: each applied once.
+for p in "$R"/userland/mesa-patches/*.patch; do
+	[ -f "$p" ] || continue
+	if patch --dry-run --reverse --force -s -p1 -d "$M" -i "$p" >/dev/null 2>&1; then continue; fi
+	patch --force -s -p1 -d "$M" -i "$p" || { echo "Mesa patch does not apply: $p" >&2; exit 1; }
+	echo "gles: applied $(basename "$p")"
+done
 
 
 # ---- cross build -----------------------------------------------------------------------
