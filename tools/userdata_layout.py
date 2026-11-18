@@ -4,7 +4,9 @@
 The phone runs no Linux root of its own any more: userdata is dedicated to iOS and
 holds two images back to back, each as ONE contiguous run of 4 KiB blocks:
 
-    userdata + 1 MiB    system.apfs   read-only root (begonia-ufs node)
+    userdata + 0        f2fs, 256 MiB a real /data for TWRP: without a mountable /data this
+                                      TWRP never brings up USB (no adb, no MTP)
+    userdata + 256 MiB  system.apfs   read-only root (begonia-ufs node)
     userdata + 3 GiB    data.hfs      16 GiB HFS+ /private/var (begonia-data node)
 
 Every number below is checked against userdata's GPT bounds, which the kernel
@@ -25,7 +27,8 @@ USERDATA_BLOCKS = 109641664 * 512 // BLOCK
 USERDATA_END = USERDATA_FIRST + USERDATA_BLOCKS
 assert (USERDATA_FIRST, USERDATA_END) == (0x1d2800, 0xee47f8)
 
-SYSTEM_OFFSET = 1 << 20          # bytes from the start of userdata
+F2FS_SIZE = 256 << 20            # TWRP's /data (its fstab reserves 128 MiB) at the start
+SYSTEM_OFFSET = F2FS_SIZE        # bytes from the start of userdata
 DATA_OFFSET = 3 << 30
 DATA_SIZE = 16 << 30             # the kernel requires exactly 16 GiB
 MAGIC = 0x4245474558543031       # "BEGEXT01", checked by begonia_ufs.c
@@ -41,6 +44,7 @@ def plan(system_size):
     return {
         'userdata_first_block': USERDATA_FIRST, 'userdata_end_block': USERDATA_END,
         'userdata_bytes': USERDATA_BLOCKS * BLOCK,
+        'f2fs': {'offset': 0, 'size': F2FS_SIZE},
         'system': {'offset': SYSTEM_OFFSET, 'size': system_size},
         'data': {'offset': DATA_OFFSET, 'size': DATA_SIZE},
     }

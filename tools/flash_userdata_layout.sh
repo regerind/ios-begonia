@@ -7,6 +7,7 @@
 #
 # Writes ONLY to /dev/block/sdc46 (userdata, ERASED) and /dev/block/sdc34 (boot).
 # Both are resolved by name and checked against this phone's GPT before any write.
+# The f2fs at the start of userdata (TWRP's /data) is written by fastboot: tools/make_userdata_head.sh.
 # Every write is read back and compared by SHA256. Never touches nvram, nvdata,
 # nvcfg, persist, protect1/2, proinfo, md1img or anything else.
 set -e -o pipefail
@@ -58,13 +59,6 @@ if [ "$MODE" != --boot-only ]; then
 	echo "flash: unmounting userdata"
 	sh 'for m in $(grep sdc46 /proc/mounts | cut -d" " -f2 | sort -r); do umount $m || umount -l $m; done'
 	[ -z "$(sh 'grep sdc46 /proc/mounts')" ] || die "userdata is still mounted"
-	ZERO=$(head -c 1048576 /dev/zero | sha256sum | cut -d' ' -f1)
-	if [ "$(hash_of "$UD" 0 256)" != "$ZERO" ]; then
-		echo "flash: erasing the f2fs superblocks (first 1 MiB of userdata)"
-		sh "dd if=/dev/zero of=$UD bs=4096 count=256 conv=fsync 2>/dev/null"
-		[ "$(hash_of "$UD" 0 256)" = "$ZERO" ] || die "userdata head not zeroed"
-	fi
-	echo "flash: userdata head is zero (no stale f2fs)"
 	put "$DIR/system.apfs" "$UD" "$SYSTEM_SEEK" "$SYSTEM_SHA256" system.apfs
 	for i in $(seq 1 "$DATA_PIECES"); do
 		eval "set -- \$DATA_PIECE_$i"   # name seek blocks sha
