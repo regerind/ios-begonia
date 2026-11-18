@@ -1,11 +1,3 @@
---- a/bsd/conf/files
-+++ b/bsd/conf/files
-@@ -688,3 +688,5 @@
- bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
- bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
- 
-+bsd/dev/begonia_ufs.c	standard
-+bsd/dev/begonia_touch.c	standard
 --- a/iokit/bsddev/IOKitBSDInit.cpp
 +++ b/iokit/bsddev/IOKitBSDInit.cpp
 @@ -784,6 +784,16 @@

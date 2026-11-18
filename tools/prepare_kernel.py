@@ -16,7 +16,7 @@ for patch in sorted((root/'patches').glob('*.patch')):
     if res.returncode==0:
         subprocess.run([*cmd,str(patch)],check=True);print('Applied:',patch.name)
     else:
-        print('Skipping (already modified or applied):',patch.name)
+        raise SystemExit(f'Patch does not apply: {patch.name}\n{res.stderr.decode(errors="replace")}')
 # Keep the imported driver's canonical copy in sync; upstream build may recopy it.
 for name in ['0008-framebuffer-release-text-console.patch','0011-begonia-low-secondary-trampoline.patch']:
     patch=root/'patches'/name
@@ -46,6 +46,8 @@ for cpp in ['BegoniaWLAN.cpp', 'BegoniaBluetooth.cpp']:
 bsd_files = (tree/'bsd/conf/files').read_text()
 bsd_files = bsd_files.replace('bsd/dev/begonia_connsys.c standard\n', '')
 for entry in [
+    'bsd/dev/begonia_ufs.c standard',
+    'bsd/dev/begonia_touch.c standard',
     'bsd/dev/begonia_wlan.c standard',
     'bsd/dev/begonia_wifi.c standard',
     'bsd/dev/begonia_wpa.c standard',
