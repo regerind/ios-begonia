@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build private native-file-root payload; small support image is md1, dummy md0 keeps iOS boot conventions."""
-import argparse,pathlib,subprocess,sys,struct,time,copy
+import argparse,pathlib,subprocess,sys,struct,time,copy,shutil
 root=pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(root/'upstream/ios-sweet/tools'));import adt
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('output',type=pathlib.Path);p.add_argument('--support-root',type=pathlib.Path,default=root/'upstream/hakios-xnu-kernel/userland/root.apfs');p.add_argument('--smp-trampoline',type=lambda x:int(x,0),default=0);p.add_argument('--cpus',type=int,choices=[1,2,3,4,5,6,7],default=1);p.add_argument('--kernel',type=pathlib.Path,default=root/'out/kernel.begonia-native-ufs');p.add_argument('--gpu-service',action='store_true');p.add_argument('--metal',type=int,choices=[0,1,2,3],default=0);p.add_argument('--gles-compositor',action='store_true');p.add_argument('--gpu-shader-selftest',action='store_true');p.add_argument('--gpu-mapped-selftest',action='store_true');p.add_argument('--gpu-selftest',action='store_true');p.add_argument('--gpu-probe',action='store_true');p.add_argument('--cpu-boost',action='store_true');p.add_argument('--perf-probe',action='store_true');p.add_argument('--touch-direct',action='store_true');p.add_argument('--touch-debug',action='store_true');p.add_argument('--disable-cs',action='store_true');p.add_argument('--data',action='store_true');p.add_argument('--touch',action='store_true');p.add_argument('--keep-console',action='store_true');p.add_argument('--watch-seconds',type=int,default=240);p.add_argument('--extra-args',type=str,default='');a=p.parse_args()
@@ -18,7 +18,7 @@ if a.touch and not any(c.name=='begonia-touch' for c in tree.children):p.error('
 if a.data and not any(c.name=='begonia-data' for c in tree.children):p.error('--data requires the verified data extent map in the ADT')
 symbols={}
 present=set()
-for line in subprocess.check_output(['nm','-n',str(a.kernel)],text=True).splitlines():
+for line in subprocess.check_output([shutil.which('llvm-nm') or 'nm','-n',str(a.kernel)],text=True).splitlines():
     parts=line.split()
     if len(parts)==3:present.add(parts[2])
     if len(parts)==3 and parts[2] in ('_loader_log','_loader_log_len','_begonia_console'):symbols[parts[2]]=int(parts[0],16)
