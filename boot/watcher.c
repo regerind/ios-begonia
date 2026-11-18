@@ -17,7 +17,7 @@ static uint64_t smc(uint64_t fn,uint64_t a,uint64_t b,uint64_t c){
  __asm__ volatile("smc #0":"+r"(x0),"+r"(x1),"+r"(x2),"+r"(x3)::"x4","x5","x6","x7","x8","x9","x10","x11","x12","x13","x14","x15","x16","x17","memory");return x0;
 }
 /* Mirror above 4 GiB: FASTBOOT download buffers may overwrite low ramoops RAM.
- * The paired PMOS recovery DTB reserves this same 2 MiB range. */
+ * A fallback DTB must reserve this 2 MiB range for it to survive Linux. */
 __attribute__((unused)) static void mirror_logs(struct context *c){
  _Static_assert(128+0x40000+1536*1024<=0x200000,"mirror fits reserved range");
  volatile uint64_t *h=(volatile uint64_t *)0x1b7e00000ULL;
@@ -72,9 +72,9 @@ void watcher_main(struct context *c){
  (void)smc(0x84000002,0,0,0);
 #else
 #ifdef XNU_FORCE_TEST
- begonia_emit_text("BEGONIA WATCHER: reset after log capture; recover through postmarketOS\n");
+ begonia_emit_text("BEGONIA WATCHER: reset after log capture; recover through the fallback kernel (TWRP)\n");
 #else
- begonia_emit_text("BEGONIA WATCHER: warm reset to postmarketOS\n");
+ begonia_emit_text("BEGONIA WATCHER: warm reset to the fallback kernel (TWRP)\n");
 #endif
  (void)smc(0x84000008,0,0,0);
  *(volatile uint32_t *)0x10007014=0x1209;

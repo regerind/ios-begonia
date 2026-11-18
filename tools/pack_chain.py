@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Build a temporary begonia diagnostic boot image from its verified boot backup.
-No device access. Preserves original ramdisk, DTB, cmdline and load addresses.
+"""Build a begonia boot image: loader + chained fallback kernel (+ XNU payload).
+Input is a verified Android v2 boot image whose kernel becomes the fallback
+(TWRP's recovery.img on the current phone; formerly the postmarketOS boot).
+No device access. Preserves its ramdisk, DTB, cmdline and load addresses.
 """
 import argparse, gzip, hashlib, pathlib, struct
 CHAIN_OFFSET=0x10000
+CHAIN_STUB=0x46ff0000   # boot/start.S: where the copy stub runs from
+DTB_STAGING=0x47000000
 
 def chain_image(probe, original):
     if probe[56:60] != b'ARM\x64' or original[56:60] != b'ARM\x64':
@@ -38,17 +42,22 @@ def main():
     kernel=chain_image(a.probe.read_bytes(),original)
     if a.payload:
         payload=a.payload.read_bytes()
-        if b'begonia_watch=' in payload[0x48:0x2a8] and b'begonia-log-mirror@1b7e00000\0' not in parts[4]:
-            p.error('capture payload requires the log-preserving postmarketOS recovery DTB')
+        if b'begonia-log-mirror@1b7e00000\0' not in parts[4]:
+            print('Note: fallback DTB does not reserve the 0x1b7e00000 log mirror; read logs from '
+                  'pstore console-ramoops (0x4d09f000) instead.')
         kernel.extend(bytes((-len(kernel))%16))
         struct.pack_into('<Q',kernel,40,len(kernel));struct.pack_into('<Q',kernel,48,len(payload))
         kernel.extend(payload)
         struct.pack_into('<Q',kernel,16,len(kernel))
-        da=0x47000000
-    # Neither loader, full original kernel allocation nor copy stub may hit DTB/ramdisk.
+        da=DTB_STAGING
+    # Neither loader, full original kernel allocation nor copy stub may hit DTB/ramdisk;
+    # the chained kernel's source bytes and its whole allocation must stay below the stub.
     end=ka+len(kernel)
     original_end=ka+struct.unpack_from('<Q',original,16)[0]
-    if max(end,original_end)>da or not(original_end<0x42000000 and da+ds<=ra): p.error('memory placement collision')
+    source_end=ka+CHAIN_OFFSET+len(original)
+    if max(end,original_end)>da or max(original_end,source_end)>CHAIN_STUB or not(CHAIN_STUB+0x1000<=da and da+ds<=ra):
+        p.error(f'memory placement collision: end={end:#x} original_end={original_end:#x} '
+                f'source_end={source_end:#x} stub={CHAIN_STUB:#x} dtb={da:#x}+{ds:#x} ramdisk={ra:#x}')
     parts[0]=gzip.compress(kernel,mtime=0) if was_gzip else kernel
     header=bytearray(src[:ps]);struct.pack_into('<Q',header,1652,da)
     struct.pack_into('<I',header,8,len(parts[0]))

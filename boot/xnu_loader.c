@@ -38,8 +38,16 @@ static void copy(void *to,const void *from,uint64_t n) {
 static void zero(void *to,uint64_t n) {
     unsigned char *d=to;for(uint64_t i=0;i<n;i++) d[i]=0;
 }
+/* One-shot request word and "already ran" latch. They live in the 4 KiB ramoops
+ * ftrace zone (0x4d0df000..0x4d0e0000 with LK's ramoops.mem_address=0x4d010000,
+ * mem_size=0xe0000, record 4K, console 0x40000, ftrace 4K, pmsg 64K), which no
+ * fallback kernel writes unless pstore ftrace recording is switched on. The old
+ * 0x4d0e01xx words sat inside pmsg, which Android/TWRP user space writes. The
+ * ramoops header occupies the first 12 bytes of the zone; these are past it. */
+#define BEGONIA_REQUEST_ADDR 0x4d0df100UL
+#define BEGONIA_LATCH_ADDR   0x4d0df108UL
 int xnu_main(void) {
-    volatile uint32_t *mark=(volatile uint32_t *)0x4d0e0100;
+    volatile uint32_t *mark=(volatile uint32_t *)BEGONIA_REQUEST_ADDR;
     uint64_t offset=*(uint64_t *)(_head+40), total=*(uint64_t *)(_head+48);
     if(offset<0x10000 || total<0x2a8 || total>0x2000000) return 0;
     const struct payload *p=(const struct payload *)(_head+offset);
@@ -59,9 +67,9 @@ int xnu_main(void) {
     if(!request)request=1;
 #ifdef XNU_FORCE_TEST
     volatile uint64_t *saved=(volatile uint64_t *)0x1b7e00000ULL;
-    volatile uint32_t *boot_done=(volatile uint32_t *)0x4d0e0108;
+    volatile uint32_t *boot_done=(volatile uint32_t *)BEGONIA_LATCH_ADDR;
     if((saved[0]==0x3230474f4c474542ULL && saved[8]==request) || *boot_done==request){
-        begonia_emit_text("BEGONIA XNU: test already executed; chaining postmarketOS\n");
+        begonia_emit_text("BEGONIA XNU: test already executed; chaining fallback kernel\n");
         *boot_done=request;
         *mark=0;
         return 0;
@@ -70,7 +78,7 @@ int xnu_main(void) {
     *boot_done=request;
     *mark=request;__asm__ volatile("dsb sy" ::: "memory");
 #endif
-    if(*mark!=request){begonia_emit_text("BEGONIA XNU: no explicit request; chaining postmarketOS\n");return 0;}
+    if(*mark!=request){begonia_emit_text("BEGONIA XNU: no explicit request; chaining fallback kernel\n");return 0;}
     /* Consume before any risky setup. Cold or warm resets default to Linux. */
     *mark=0;__asm__ volatile("dsb sy" ::: "memory");
     begonia_emit_text("BEGONIA XNU: validated payload; copying kernel to upper DDR\n");

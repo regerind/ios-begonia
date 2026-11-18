@@ -32,10 +32,13 @@ _start:
 .global after_probe
 after_probe:
 #ifdef CHAIN_BOOT
- /* Move copy stub outside source/destination. No peripheral reset. */
+ /* Move copy stub outside source/destination. No peripheral reset.
+  * 0x46ff0000 is above any chained kernel we carry (TWRP's Image is ~37 MB,
+  * image_size 0x29f0000) and the loader+chain+payload file, and just below
+  * the DTB staging address 0x47000000; pack_chain.py checks all of that. */
  adr x1, chain_stub
  adr x2, chain_stub_end
- mov x3, #0x42000000
+ mov x3, #0x46ff0000
  mov x4, x3
 4: cmp x1, x2
  b.hs 5f
