@@ -35,7 +35,7 @@ static struct beg_gpu_vm space;
 static struct mali_va addresses;
 static int ready;
 static uint64_t submitted,completed,failed;
-static uint32_t async_jobs;             /* boot-arg begonia_gpu_async=1 */
+static uint32_t async_jobs=1;           /* boot-arg begonia_gpu_async=0: jobs run inside the submit, as at first */
 static lck_grp_t *gpu_group;
 static lck_mtx_t *vm_lock;              /* the tables' memory and their dirty marks */
 static lck_mtx_t *queue_lock;           /* the queue, submitted, completed, failed */

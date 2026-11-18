@@ -1,0 +1,60 @@
+--- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
++++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+@@ -270,6 +270,16 @@
+  * abort a minute after boot, so on a SoC not known here nothing is read and frames stay on their beat.
+  */
+ static TUNABLE(uint64_t, gIntfPhysical, "fb_intf", 0);
++/*
++ * begonia, boot-arg fb_line=PHYSICAL: a register that counts the line being scanned and nothing else, for a display
++ * controller that has no interface block of Qualcomm's shape. MediaTek's MT6785: the read DMA in front of the panel,
++ * DISP_RDMA0 at 0x1400b000, OUT_LINE_CNT at 0x12c (the pinned Xiaomi tree, video/mt6785/dispsys/ddp_reg_dma.h) --
++ * fb_line=0x1400b12c. Reads only. What a scan is (how many lines, how long) is taken from watching it count: it has to
++ * come back to its start at least three times in a fifth of a second, climb to about the panel's height, and a scan has
++ * to take between 5 and 40 ms; otherwise frames stay on their beat, as without it.
++ */
++static TUNABLE(uint64_t, gLinePhysical, "fb_line", 0);
++extern "C" void begonia_perf_note(const char * format, ...) __printflike(1, 2);
+ 
+ static vm_offset_t
+ panelInterface(void)
+@@ -958,6 +968,40 @@
+ 	uint64_t began, ended, until;
+ 
+ 	IOSleep(60000);
++	if (gLinePhysical != 0) {
++		vm_offset_t reg = ml_io_map((vm_offset_t) (gLinePhysical & ~0x3fffULL), 0x4000) + (vm_offset_t) (gLinePhysical & 0x3fffULL);
++		uint32_t before = *(volatile uint32_t *) reg, most = 0, least = ~0u, wraps = 0;
++		uint64_t firstWrap = 0, lastWrap = 0, now, ns = 0;
++
++		nanoseconds_to_absolutetime(200 * NSEC_PER_MSEC, &until);
++		until += mach_absolute_time();
++		while ((now = mach_absolute_time()) < until) {
++			line = *(volatile uint32_t *) reg;
++			most = line > most ? line : most;
++			least = line < least ? line : least;
++			if (line + fPanelHeight / 2 < before) {         /* back at the top */
++				firstWrap = wraps == 0 ? now : firstWrap;
++				lastWrap = now;
++				wraps++;
++			}
++			before = line;
++		}
++		if (wraps >= 3) {
++			absolutetime_to_nanoseconds((lastWrap - firstWrap) / (wraps - 1), &ns);
++		}
++		if (wraps < 3 || most + 1 < fPanelHeight * 3 / 4 || most > fPanelHeight * 2 || least > fPanelHeight / 4 ||
++		    ns < 5 * NSEC_PER_MSEC || ns > 40 * NSEC_PER_MSEC) {
++			begonia_perf_note("fb_beam: fb_line=%#llx does not count like a scan (lines %u to %u, %u times round, %llu us a round): frames stay on their beat",
++			    gLinePhysical, least, most, wraps, ns / NSEC_PER_USEC);
++			return;
++		}
++		fBeamLines = (most + 1 > fPanelHeight ? most + 1 : fPanelHeight) + 1;
++		fBeamPeriod = (lastWrap - firstWrap) / (wraps - 1);
++		begonia_perf_note("fb_beam: the panel's scan by fb_line=%#llx: lines %u to %u, %llu us a scan: frames are written behind it from now on",
++		    gLinePhysical, least, most, ns / NSEC_PER_USEC);
++		fBeamIntf = reg - INTF_LINE_COUNT;
++		return;
++	}
+ 	intf = panelInterface();
+ 	if (intf == 0) {
+ 		IOLog("MiniIOMobileFramebuffer: fb_beam: no display interface known for this SoC (fb_intf=): frames stay on their beat\n");

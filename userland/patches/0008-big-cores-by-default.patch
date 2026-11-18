@@ -1,0 +1,31 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -362,7 +362,7 @@
+  * begonia, boot-arg gl_cpu=N: the drawing thread asks the kernel for processor N (kern.begonia_bind_cpu) when it
+  * begins its first frame. XNU has every core of this SoC down as the same kind; 5 and 6 are the two Cortex-A76.
+  */
+-static int bind_cpu = -1;
++static int bind_cpu = 6;                /* (gl_cpu=-1: wherever the scheduler puts it) */
+ /*
+  * A frame that is handed to the display must have been drawn. The display's driver waits for
+  * the GPU itself before it puts a surface on the panel, on a thread of its own, and says so in
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2064,12 +2064,14 @@
+ 	char arguments[1024] = "";
+ 	size_t size = sizeof(arguments) - 1;
+ 	const char *argument;
+-	int cpu, failed;
++	int cpu = 5, failed;                    /* (sb_cpu=-1: wherever the scheduler puts it) */
+ 
+-	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 || (argument = strstr(arguments, "sb_cpu=")) == NULL) {
++	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) == 0 && (argument = strstr(arguments, "sb_cpu=")) != NULL) {
++		cpu = atoi(argument + 7);
++	}
++	if (cpu < 0) {
+ 		return;
+ 	}
+-	cpu = atoi(argument + 7);
+ 	failed = sysctlbyname("kern.begonia_bind_cpu", NULL, NULL, &cpu, sizeof(cpu));
+ 	say("hakios: SpringBoard: the main thread asked for processor %d: %s\n", cpu, failed == 0 ? "it has it" : strerror(errno));
+ }

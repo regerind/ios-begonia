@@ -281,8 +281,9 @@ static int pll_move(vm_offset_t pll,vm_offset_t div,unsigned con1,unsigned mux,c
 }
 static void cpu_opp(vm_offset_t pll,vm_offset_t div)
 {
-    uint32_t level=0,hw=0;
-    if(!PE_parse_boot_argn("begonia_cpu_opp",&level,sizeof(level)) || level<1 || level>3)return;
+    uint32_t level=3,hw=0;      /* (x15: level 3 on this phone; begonia_cpu_opp=0 leaves the boot loader's clocks) */
+    (void)PE_parse_boot_argn("begonia_cpu_opp",&level,sizeof(level));
+    if(level<1 || level>3)return;
     vm_offset_t pmic=ml_io_map(0x1000d000,0x1000);
     if(!pmic || pmic_read(pmic,8,&hw) || hw!=0x5920) {
         begonia_perf_note("BEGONIA CPU: PMIC identity %04x is not the MT6359 these registers are for; unchanged",hw);return;
@@ -337,7 +338,7 @@ begonia_perf_init(void)
             /* begonia_gpu_khz=620000|806000: stock rows of mt6785/mtk_gpufreq_core.h -- 620 MHz at
              * 700 mV (memory rail 850 mV), 806 MHz at 781.25 mV (881.25 mV). For 620 the memory rail is not
              * written: it is taken only if that voltage is already there. */
-            uint32_t want=0,selector=0x22,sram_uv=400000+(sv&127)*6250;
+            uint32_t want=806000,selector=0x22,sram_uv=400000+(sv&127)*6250;     /* (begonia_gpu_khz=0: 270 MHz) */
             (void)PE_parse_boot_argn("begonia_gpu_khz",&want,sizeof(want));
             /* 806 MHz wants its memory rail (the "vpu" buck: mtk_gpufreq_core.c) at 881.25 mV, and stock
              * raises that one first. Only upwards, only from where the probe's own bounds allow, and
