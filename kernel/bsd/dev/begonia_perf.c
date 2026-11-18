@@ -294,10 +294,19 @@ begonia_perf_init(void)
            !pmic_read(pw,0x14a6,&sv) && !pmic_read(pw,0x14a8,&se)) {
             printf("BEGONIA GPU: rail readbacks core=%04x/%04x SRAM=%04x/%04x\n",gv,ge,sv,se);
             /* begonia_gpu_khz=620000|806000: stock rows of mt6785/mtk_gpufreq_core.h -- 620 MHz at
-             * 700 mV (memory rail 850 mV), 806 MHz at 781.25 mV (881.25 mV). The memory rail is not
-             * written here: a frequency whose memory voltage is not already there is not taken. */
+             * 700 mV (memory rail 850 mV), 806 MHz at 781.25 mV (881.25 mV). For 620 the memory rail is not
+             * written: it is taken only if that voltage is already there. */
             uint32_t want=0,selector=0x22,sram_uv=400000+(sv&127)*6250;
             (void)PE_parse_boot_argn("begonia_gpu_khz",&want,sizeof(want));
+            /* 806 MHz wants its memory rail (the "vpu" buck: mtk_gpufreq_core.c) at 881.25 mV, and stock
+             * raises that one first. Only upwards, only from where the probe's own bounds allow, and
+             * never more than 350 mV above the core rail (BUCK_DIFF_MAX). */
+            if(want>=806000 && sram_uv>=850000 && sram_uv<881250 && 881250<=400000+(gv&127)*6250+350000) {
+                int failed=rail_set(pw,0x14ac,0x14a6,0,400000,881250);
+                (void)pmic_read(pw,0x14a6,&sv);
+                sram_uv=400000+(sv&127)*6250;
+                begonia_perf_note("BEGONIA GPU: memory rail asked to 881250 uV: %s, now %u uV",failed?"not taken":"taken",sram_uv);
+            }
             if(want>=806000 && sram_uv>=881250 && sram_uv<=781250+350000) {begonia_gpu_khz=806000;selector=61;}
             else if(want>=620000 && sram_uv>=850000 && sram_uv<=700000+350000) {begonia_gpu_khz=620000;selector=48;}
             else if(want)begonia_perf_note("BEGONIA GPU: %u kHz not taken with the memory rail at %u uV",want,sram_uv);
