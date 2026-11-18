@@ -35,7 +35,16 @@ verify() { # verify DEV SEEK_BLOCKS BLOCKS SHA256 WHAT
 }
 write() { # write FILE DEV SEEK_BLOCKS WHAT
 	echo "flash: writing $4 ($(stat -c %s "$1") bytes) at block $3 of $2"
-	adb exec-in "dd of=$2 bs=4096 seek=$3 conv=notrunc,fsync 2>/dev/null" < "$1"
+	sh rm -f /tmp/flash.done
+	# adb exec-in can return once stdin is sent, before the remote dd has finished:
+	# wait for its own completion marker before anything reads the device back.
+	adb exec-in "dd of=$2 bs=4096 seek=$3 conv=notrunc,fsync 2>/dev/null; echo \$? > /tmp/flash.done" < "$1"
+	local n=0 rc
+	until rc=$(sh 'cat /tmp/flash.done 2>/dev/null') && [ -n "$rc" ]; do
+		n=$((n + 1)); [ $n -lt 600 ] || die "$4: dd did not finish"
+		sleep 1
+	done
+	[ "$rc" = 0 ] || die "$4: dd exit status $rc"
 }
 
 if [ "$MODE" != --boot-only ]; then
