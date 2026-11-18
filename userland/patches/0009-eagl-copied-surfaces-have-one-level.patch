@@ -1,0 +1,19 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -822,6 +822,16 @@
+ 
+ 		(void)legacy_format(image->to, &internal, &format, image->type, true);
+ 		glTexImage2D(image->to, 0, (GLint)internal, image->width, image->height, 0, format, image->type, base);
++		/*
++		 * begonia: this texture has the one level it was just given, and is to be read as that whatever
++		 * filter CoreAnimation sets on it. Darwin's library shows an IOSurface whole at any filter; here a
++		 * filter that wants smaller levels left the texture incomplete, and an incomplete texture reads as
++		 * opaque black: every label of an application -- a mask of opacity, by the text's colour -- came out
++		 * as its rectangle filled in (x16's trace: the mask's bytes right, 1250 of 6912 not zero; the shader
++		 * colour times texture; the picture a box).
++		 */
++		glTexParameteri(image->to, 0x813c /* GL_TEXTURE_BASE_LEVEL */, 0);
++		glTexParameteri(image->to, 0x813d /* GL_TEXTURE_MAX_LEVEL */, 0);
+ 	}
+ 	glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
+ 	glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
