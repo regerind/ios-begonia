@@ -83,6 +83,15 @@ static struct {
 } su;
 
 #include "begonia_extent_policy.h"
+/*
+ * Hard bounds of the userdata partition (sdc46) on LUN2, in 4 KiB blocks, read
+ * from this phone's GPT. Everything below it on the same LUN (nvram, nvdata,
+ * nvcfg, persist, protect1/2, proinfo, md1img...) carries the IMEI and radio
+ * calibration; flashinfo sits directly above. No extent map, however it was
+ * generated, may reach outside these bounds, and no WRITE may ever leave them.
+ */
+#define BEGONIA_USERDATA_FIRST 0x1d2800ULL
+#define BEGONIA_USERDATA_END   0xee47f8ULL
 static struct begonia_extent data_extents[4096];
 static uint32_t data_extent_count, data_secsize=DEV_BSIZE;
 static uint64_t data_blocks;
@@ -96,7 +105,7 @@ load_file_map(DTEntry node)
     if(SecureDTGetProperty(node,"file-extents",(void const **)&blob,&bytes)!=kSuccess || bytes<40)return EINVAL;
     uint64_t h[4]; uint32_t count;
     memcpy(h,blob,32);memcpy(&count,blob+32,4);
-    if(h[0]!=0x4245474558543031ULL || !h[1] || h[1]%4096 || count==0 || count>4096 || bytes!=40+count*24 || h[2]>=h[3] || h[3]>0xee5800)return EINVAL;
+    if(h[0]!=0x4245474558543031ULL || !h[1] || h[1]%4096 || count==0 || count>4096 || bytes!=40+count*24 || h[2]>=h[3] || h[2]<BEGONIA_USERDATA_FIRST || h[3]>BEGONIA_USERDATA_END)return EINVAL;
     memcpy(root_extents,blob+40,count*24);
     uint64_t next=0;
     for(uint32_t i=0;i<count;i++){
@@ -117,7 +126,7 @@ static int load_data_map(void) {
  if(SecureDTLookupEntry(NULL,"/begonia-data",&node)!=kSuccess ||
     SecureDTGetProperty(node,"file-extents",(const void **)&blob,&bytes)!=kSuccess || bytes<40)return EINVAL;
  memcpy(h,blob,32);memcpy(&count,blob+32,4);
- if(h[0]!=0x4245474558543031ULL || h[1]!=(16ULL<<30) || !count || count>4096 || bytes!=40+count*24 || h[2]>=h[3] || h[3]>0xee5800)return EINVAL;
+ if(h[0]!=0x4245474558543031ULL || h[1]!=(16ULL<<30) || !count || count>4096 || bytes!=40+count*24 || h[2]>=h[3] || h[2]<BEGONIA_USERDATA_FIRST || h[3]>BEGONIA_USERDATA_END)return EINVAL;
  memcpy(data_extents,blob+40,count*24);
  for(uint32_t i=0;i<count;i++) {
   struct begonia_extent *e=&data_extents[i];
@@ -168,6 +177,8 @@ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
         uint64_t lba=((uint64_t)cdb[2]<<24)|((uint64_t)cdb[3]<<16)|((uint64_t)cdb[4]<<8)|cdb[5];
         uint32_t blocks=((uint32_t)cdb[7]<<8)|cdb[8];
         if(len!=(uint64_t)blocks*UFS_BLOCK || !begonia_extent_contains(data_extents,data_extent_count,lba,blocks))return EPERM;
+        /* Independent of the extent map: never write outside userdata. */
+        if(!blocks || lba<BEGONIA_USERDATA_FIRST || lba+blocks>BEGONIA_USERDATA_END)return EPERM;
     } else if(cdb[0]!=0 && cdb[0]!=0x28 && !(cdb[0]==0x35 && data_writable && !len))return EPERM;
     if (ufs_rd(REG_UTRLBA)!=(uint32_t)su.dma_pa || ufs_rd(REG_UTRLBAU)!=(uint32_t)(su.dma_pa>>32) || !(ufs_rd(REG_UTRLRSR)&1)) return EIO;
 	bzero(utrd, sizeof(*utrd));
