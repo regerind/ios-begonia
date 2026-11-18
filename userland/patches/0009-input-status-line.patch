@@ -1,0 +1,146 @@
+--- a/userland/src/inject.c
++++ b/userland/src/inject.c
+@@ -665,7 +665,13 @@
+ struct service {
+ 	CFMutableDictionaryRef properties;
+ 	volatile bool opened;
++	/* begonia: what the event server has done with it, for the status line (input_status_thread) */
++	const char *name;
++	volatile unsigned attempts, opens, closes, sets, copies;
+ };
++/* begonia: the services of ours, and what the input thread did with the driver's samples */
++static struct service *status_screen, *status_buttons;
++static volatile unsigned status_read, status_touches, status_sent, status_woke, status_swallowed, status_buttons_sent;
+ 
+ /* The properties of a service of ours; the event server asks for them one at a time. */
+ static CFTypeRef
+@@ -674,6 +680,8 @@
+ 	static CFMutableSetRef asked;
+ 	CFTypeRef value = CFDictionaryGetValue(((struct service *)refcon)->properties, key);
+ 
++	((struct service *)refcon)->copies++;
++
+ 	if (asked == NULL) {
+ 		asked = CFSetCreateMutable(NULL, 0, &kCFTypeSetCallBacks);
+ 	}
+@@ -710,9 +718,15 @@
+ 	CFStringRef description;
+ 
+ 	/* the last thing the event server does when it opens a service; see make_service() */
++	((struct service *)refcon)->sets++;
+ 	if (key != NULL && value != NULL && CFEqual(key, CFSTR("DeviceOpenedByEventSystem")) &&
+-	    CFGetTypeID(value) == CFBooleanGetTypeID() && CFBooleanGetValue(value)) {
+-		((struct service *)refcon)->opened = true;
++	    CFGetTypeID(value) == CFBooleanGetTypeID()) {
++		if (CFBooleanGetValue(value)) {
++			((struct service *)refcon)->opened = true;
++			((struct service *)refcon)->opens++;
++		} else {
++			((struct service *)refcon)->closes++;
++		}
+ 	}
+ 	if (key != NULL && value != NULL && CFEqual(key, CFSTR("TouchDetectionMode")) && CFGetTypeID(value) == CFNumberGetTypeID()) {
+ 		int mode = 0;
+@@ -793,8 +807,15 @@
+ 	}
+ 	/* the dictionary stays: it is what service_copy_property() answers from */
+ 	made->properties = properties;
++	made->name = product;
++	if (display) {
++		status_screen = made;
++	} else {
++		status_buttons = made;
++	}
+ 	for (int attempt = 1; attempt <= 20; attempt++) {
+ 		made->opened = false;
++		made->attempts = attempt;
+ 		service = IOHIDVirtualServiceClientCreateWithCallbacks(client, properties, &service_callbacks, NULL, made);
+ 		if (service == NULL) {
+ 			break;
+@@ -974,6 +995,11 @@
+ 		t = batch[sample];
+ 		uint64_t read_at = mach_absolute_time();
+ 
++		status_read++;
++		if (t.type <= HAKIOS_TOUCH_UP) {
++			status_touches++;
++		}
++
+ 		if (touch_latency || count++ < 4) {
+ 			say("hakios: input: sample type %u finger %u at %u %u\n", t.type, t.finger, t.x, t.y);
+ 		}
+@@ -984,6 +1010,7 @@
+ 		if (t.type > HAKIOS_TOUCH_UP) {
+ 			if (buttons != NULL) {
+ 				send_button(buttons, &t);
++				status_buttons_sent++;
+ 			}
+ 		} else if (t.type == HAKIOS_TOUCH_DOWN && !begonia_touch_direct && (touch_mode & 0xff) == TOUCH_MODE_WAKE && buttons != NULL) {
+ 			/*
+@@ -996,12 +1023,15 @@
+ 			press.type = HAKIOS_BUTTON_UP;
+ 			send_button(buttons, &press);
+ 			waking |= 1u << (t.finger & 31);
++			status_woke++;
+ 		} else if (waking & (1u << (t.finger & 31))) {
++			status_swallowed++;
+ 			if (t.type == HAKIOS_TOUCH_UP) {
+ 				waking &= ~(1u << (t.finger & 31));
+ 			}
+ 		} else {
+ 			send_touch(screen, &t);
++			status_sent++;
+ 			if (touch_latency) {
+ 				say("tl: i %u posted %llu read %llu sent %llu\n", t.type, micros(t.time), micros(read_at),
+ 				    micros(mach_absolute_time()));
+@@ -1013,10 +1043,49 @@
+ 	return NULL;
+ }
+ 
++/*
++ * begonia: the input path's state, every 10 s for the first two minutes. The console ring keeps only
++ * the last part of a run, and the lines the services print when they are made are gone by the time
++ * the log is read; this says again whether the event server opened (and closed) the touch screen
++ * and the buttons, and where the driver's samples went: read, sent as touches, turned into a lock
++ * press to wake the display, or swallowed after one.
++ */
++static void
++say_service(char *line, size_t size, const char *what, struct service *s)
++{
++	if (s == NULL) {
++		snprintf(line, size, "%s none", what);
++		return;
++	}
++	snprintf(line, size, "%s opened %d attempts %u opens %u closes %u sets %u asks %u", what, s->opened, s->attempts,
++	    s->opens, s->closes, s->sets, s->copies);
++}
++
++static void *
++input_status_thread(__unused void *arg)
++{
++	char screen_line[160], buttons_line[160];
++
++	pthread_setname_np("begonia input status");
++	for (int i = 1; i <= 12; i++) {
++		sleep(10);
++		say_service(screen_line, sizeof(screen_line), "screen", status_screen);
++		say_service(buttons_line, sizeof(buttons_line), "buttons", status_buttons);
++		say("hakios: input status %ds: %s | %s | read %u touches %u sent %u woke %u swallowed %u buttons %u mode %#x\n",
++		    i * 10, screen_line, buttons_line, status_read, status_touches, status_sent, status_woke, status_swallowed,
++		    status_buttons_sent, touch_mode);
++	}
++	return NULL;
++}
++
+ static void
+ input_start(void)
+ {
+-	pthread_t thread;
++	pthread_t thread, status;
++
++	if (pthread_create(&status, NULL, input_status_thread, NULL) == 0) {
++		pthread_detach(status);
++	}
+ 
+ 	input_services_made = dispatch_semaphore_create(0);
+ 	if (pthread_create(&thread, NULL, input_thread, NULL) == 0) {
