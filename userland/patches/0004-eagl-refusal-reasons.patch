@@ -1,33 +1,31 @@
---- a/userland/src/eagl.c	2026-11-18 23:05:34.087838277 +0300
-+++ b/userland/src/eagl.c	2026-11-18 23:05:34.104414461 +0300
-@@ -504,6 +504,13 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -339,6 +339,12 @@
+ static __thread struct eagl *current;
+ static struct eagl *contexts[8];
+ static uint32_t slot_calls[SLOTS];
++/* begonia: why surfaces were copied rather than shared, for the whole run (summary()) */
++static unsigned refuse_count[7];
++static unsigned long long refuse_bytes[7];
++static const char *const refuse_name[7] = { "sharing off", "turned over", "alpha first", "not BGRA bytes",
++    "a plane", "a part of it", "the library refused" };
++
+ static int check_errors = 1;            /* ask the library for an error after every call (the first frames) */
+ static int share_surfaces = 1;          /* boot-arg glcopy=1: 0 */
+ /*
+@@ -504,6 +510,11 @@
  	    e->frames, e->all_calls / frames, e->all_draws / frames, e->all_triangles / frames, e->most_calls,
  	    e->most_triangles, e->frame_us / frames, e->flush_us / frames, e->wait_us / frames, e->readback_us / frames,
  	    e->attach_us / frames, e->shared, e->refused, e->shaders, e->programs, widest_texture, tallest_texture, e->errors);
 +	for (unsigned i = 0; i < 7; i++) {
 +		if (refuse_count[i]) {
-+			say("hakios-gl:   copied because %s: %u surfaces, %llu MB
-+", refuse_name[i], refuse_count[i],
-+			    (unsigned long long)(refuse_bytes[i] >> 20));
++			say("hakios-gl:   copied because %s: %u surfaces, %llu MB\n", refuse_name[i], refuse_count[i], refuse_bytes[i] >> 20);
 +		}
 +	}
  	for (unsigned i = 0; i < sizeof(formats) / sizeof(formats[0]) && formats[i].count; i++) {
  		say("hakios-gl:   textures: %s %#x/%#x/%#x: %u times, up to %u x %u\n", formats[i].how, formats[i].internal,
  		    formats[i].format, formats[i].type, formats[i].count, formats[i].widest, formats[i].tallest);
-@@ -626,6 +633,12 @@
-  * Make a texture, which is bound, of its IOSurface's own memory, if that is what is asked for
-  * (the whole of a surface of blue-first pixels, the same way up) and the library can do it.
-  */
-+/* begonia: why surfaces were copied rather than shared, for the whole run (summary()) */
-+static unsigned refuse_count[7];
-+static uint64_t refuse_bytes[7];
-+static const char *const refuse_name[7] = { "sharing off", "turned over", "alpha first", "not BGRA bytes",
-+    "a plane", "a part of it", "the library refused" };
-+
- static bool
- surface_shared(struct eagl *e, struct image *image)
- {
-@@ -646,6 +659,23 @@
+@@ -646,6 +657,22 @@
  			    (size_t)image->width != IOSurfaceGetWidth(surface) || (size_t)image->height != IOSurfaceGetHeight(surface) ?
  			    "a part of it; " : "(the library refused)");
  		}
@@ -41,8 +39,7 @@
 +			refuse_bytes[why] += bytes;
 +			/* the big ones, whenever: a full-screen copy is what costs a frame */
 +			if (bytes >= (4u << 20) && (refuse_count[why] < 8 || refuse_count[why] % 500 == 0)) {
-+				say("hakios-gl: big surface %u ('%.4s' %zu x %zu, %zu bytes a row, texture %u x %u, format %#x/%#x) copied: %s
-+",
++				say("hakios-gl: big surface %u ('%.4s' %zu x %zu, %zu bytes a row, texture %u x %u, format %#x/%#x) copied: %s\n",
 +				    IOSurfaceGetID(surface), (const char *)&(uint32_t){ OSSwapInt32(IOSurfaceGetPixelFormat(surface)) },
 +				    IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface), IOSurfaceGetBytesPerRow(surface),
 +				    (unsigned)image->width, (unsigned)image->height, image->format, image->type, refuse_name[why]);
