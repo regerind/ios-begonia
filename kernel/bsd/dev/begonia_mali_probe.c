@@ -239,15 +239,24 @@ void begonia_mali_probe(uint32_t gpu_uv,uint32_t sram_uv,int rails_enabled) {
  uint32_t mfg_khz=270000;
  if((begonia_gpu_khz==620000 && gpu_uv>=700000) || (begonia_gpu_khz==806000 && gpu_uv>=781250)) {
   vm_offset_t apmixed=ml_io_map(0x1000c000,0x1000);
-  if(apmixed && (rd(apmixed,0x250)&1) && ((rd(top,0x50)>>16)&3)==0) {
+  if(apmixed && (rd(apmixed,0x250)&1)) {
+   /* x14: the boot loader leaves the GPU's clock on MFGPLL already (CLK_CFG_3 = 00010d00), its domains off.
+    * Onto the crystal first (the clear register, then the update bit), then the PLL is moved with nothing
+    * clocked from it; the lines below put the GPU back on it. */
    uint32_t dds=(uint32_t)((((uint64_t)begonia_gpu_khz/1000*4)<<14)/26),was=rd(apmixed,0x254);
-   wr(apmixed,0x254,0x80000000u|(2u<<24)|(dds&0x3fffffu));
+   wr(top,0x58,3u<<16);
+   wr(top,0x4,1u<<14);
    delay(40);
-   mfg_khz=begonia_gpu_khz;
-   begonia_perf_note("BEGONIA GPU: MFGPLL CON1 %08x -> %08x (%u kHz)",was,rd(apmixed,0x254),mfg_khz);
+   if(((rd(top,0x50)>>16)&3)==0) {
+    wr(apmixed,0x254,0x80000000u|(2u<<24)|(dds&0x3fffffu));
+    delay(60);
+    mfg_khz=begonia_gpu_khz;
+    begonia_perf_note("BEGONIA GPU: MFGPLL CON1 %08x -> %08x (%u kHz)",was,rd(apmixed,0x254),mfg_khz);
+   } else {
+    begonia_perf_note("BEGONIA GPU: the GPU's clock would not go onto the crystal (CLK_CFG_3=%08x); frequency unchanged",rd(top,0x50));
+   }
   } else {
-   begonia_perf_note("BEGONIA GPU: MFGPLL off or the GPU not on the crystal (CON0=%08x CLK_CFG_3=%08x); frequency unchanged",
-    apmixed?rd(apmixed,0x250):0,rd(top,0x50));
+   begonia_perf_note("BEGONIA GPU: MFGPLL is off (CON0=%08x); frequency unchanged",apmixed?rd(apmixed,0x250):0);
   }
  }
  /* MFG clock: switch from crystal (parent 0) to MFGPLL (parent 1) when rail is verified. */
