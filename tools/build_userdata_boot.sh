@@ -24,6 +24,11 @@ TOUCH=$R/private/touch/novatek_ts_fw.bin
 for f in "$SYSTEM" "$SUPPORT" "$KERNEL" "$RECOVERY" "$RECOVERY.sha256" "$TOUCH" "$H/sysimage/DeviceTree.d22ap.im4p"; do
 	[ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }
 done
+# The image takes the kernel from a copy. x10 and x11 were built after `make kernel` without that copy
+# being made: the old kernel, with a command line written for the new one, and no GPU (softpipe).
+if [ -f "$H/hakios-kernel" ] && ! cmp -s "$H/hakios-kernel" "$KERNEL"; then
+	echo "error: $KERNEL is not the kernel that was last built ($H/hakios-kernel); copy it first" >&2; exit 1
+fi
 [ "$(sha256sum < "$TOUCH" | cut -d' ' -f1)" = 0b57dd62863f0f20ea285263a667af3fdd86f48473e23ac638efeba5c8f6ad03 ] ||
 	{ echo "touch firmware checksum mismatch" >&2; exit 1; }
 
