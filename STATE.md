@@ -1,3 +1,42 @@
+# Current state — 2026-11-18 (Android-era rebuild)
+
+## a2: SpringBoard home screen on the raw-userdata layout, TWRP as fallback
+
+The phone now ships Project Infinity X (Android 16) firmware with unified TWRP on `recovery`;
+postmarketOS and all previous `upstream/`, `private/`, `out/` trees are gone. Rebuilt from the
+pinned sources on Windows + WSL2 Ubuntu 24.04 (theos toolchain, iPhoneOS16.5 SDK, iOS 16.5 20F66).
+
+**Verified on hardware (owner observation):** a2 boots XNU, mounts the read-only iOS root and the
+16 GiB HFS+ `/private/var` from raw userdata, and reaches the SpringBoard home screen with the
+verbose console overlaid (still scrolling, no hang). Battery shows low: no MT6359 battery/charger
+driver yet. Touch disabled in a2 (v18 recipe).
+
+- Image `out/ios16-a2.img` 52,502,528 bytes, SHA256 `e0ea2dbcabc2a9cc36b0086400b110b572fe3c1eda8b06050ff5afac437a29b2`
+- cmdline: `begonia_data=1 var_hfs=begonia-data begonia_keep_console=1 begonia_watch=1800 ... cpus=1 rd=md0 begonia_root=1 begonia_log=1 debug=0x8 -v`
+- Build: `tools/build_userdata_boot.sh a2 --data --keep-console --watch-seconds 1800`
+
+**Layout** (`tools/userdata_layout.py`): userdata = sdc46, 4 KiB blocks 0x1d2800..0xee47f8.
+`system.apfs` (2,476,720,128 bytes) at userdata+1 MiB, 16 GiB `data.hfs` at userdata+3 GiB, each
+one contiguous extent. First 1 MiB zeroed (no stale f2fs). `begonia_ufs.c` now hard-limits all maps
+and every WRITE(10) to these bounds: nvram/nvdata/persist/protect* on the same LUN carry the IMEI.
+
+**Boot chain:** LK -> loader (`boot/`) -> XNU, fallback chains the phone's own TWRP kernel/ramdisk
+(from the recovery backup) instead of postmarketOS. Chain stub moved to 0x46ff0000; one-shot
+request/latch moved to the ramoops ftrace zone 0x4d0df100/8. Console zone 0x4d09f000 matches
+TWRP 4.14's ramoops layout.
+
+**Gotchas found:**
+- Android left `boot-recovery` in the misc BCB; LK then always booted recovery. Cleared (13 bytes).
+- Without `begonia_keep_console=1` the panel freezes on the Apple logo (same as v16).
+- Windows has no driver for LK fastboot (18D1:D00D): use usbipd-win -> WSL fastboot.
+- With userdata raw, TWRP brings up no USB at all, so pstore logs can't be pulled over adb yet.
+- After a timer reset the forced latch sends warm boots to TWRP; a cold power-off retries iOS.
+
+Sections below describe the previous owner's postmarketOS-era work (v10–v100). Treat entries after
+~v62 as unverified (see the review in this rebuild's history).
+
+---
+
 # Current state — 2026-11-08
 
 ## v100 Resolved CONNSYS 4 MiB Mapping Overflow Crash & Boot Hang (Fixed `EMI_SIZE` from 5 MiB to 4 MiB)
