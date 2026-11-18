@@ -7,9 +7,7 @@
 set -e -o pipefail
 R=$(cd "$(dirname "$0")/.." && pwd); cd "$R"
 SYSTEM=upstream/hakios-xnu-kernel/userland/system.apfs; O=out/userdata; mkdir -p "$O"
-eval "$(python3 tools/userdata_layout.py plan "$(stat -c %s "$SYSTEM")" | python3 -c '
-import json,sys; p=json.load(sys.stdin)
-print(f"F2FS={p[\"f2fs\"][\"size\"]} SYS_OFF={p[\"system\"][\"offset\"]} SYS_SIZE={p[\"system\"][\"size\"]} DATA_OFF={p[\"data\"][\"offset\"]}")')"
+eval "$(python3 tools/userdata_layout.py plan "$(stat -c %s "$SYSTEM")" | python3 -c 'import json,sys; p=json.load(sys.stdin); print("F2FS=%d SYS_OFF=%d SYS_SIZE=%d DATA_OFF=%d" % (p["f2fs"]["size"], p["system"]["offset"], p["system"]["size"], p["data"]["offset"]))')"
 [ $((SYS_OFF + SYS_SIZE)) -le "$DATA_OFF" ] || { echo "head would overlap the data volume" >&2; exit 1; }
 rm -f "$O/f2fs.img" "$O/head.raw" "$O/head.simg"
 truncate -s "$F2FS" "$O/f2fs.img"
