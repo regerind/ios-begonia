@@ -205,6 +205,10 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
   ns/1000000,busy/1000/stat_jobs,longest/1000,busy*100/ns,waited/1000/stat_jobs,stat_deepest,
   async_jobs?"queued":"run in the submit");
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
+ {
+  extern char begonia_perf_notes[];static unsigned said;
+  if(said++%6==0 && begonia_perf_notes[0])printf("BEGONIA NOTES: %s\n",begonia_perf_notes);
+ }
 }
 /* One job on the GPU, start to finish; nobody else touches its registers meanwhile. 1: done. */
 static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,unsigned depth) {

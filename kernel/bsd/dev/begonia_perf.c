@@ -129,6 +129,18 @@ static void clock_correct(vm_offset_t pll, vm_offset_t div)
  * out in *_DBG0 / *_VOSEL1). Every write is read back from the rail itself before the next; the
  * first thing that is not as expected ends it, with the clocks where they were.
  */
+/* What the clock and rail work said, kept: the console's ring in RAM holds a few minutes, and these
+ * lines are from the first seconds. begonia_mali_service.c says them again with its statistics. */
+char begonia_perf_notes[1024];
+void begonia_perf_note(const char *format,...) __printflike(1,2);
+void begonia_perf_note(const char *format,...)
+{
+    char line[256];va_list arguments;
+    va_start(arguments,format);vsnprintf(line,sizeof(line),format,arguments);va_end(arguments);
+    printf("%s\n",line);
+    strlcat(begonia_perf_notes,line,sizeof(begonia_perf_notes));
+    strlcat(begonia_perf_notes," | ",sizeof(begonia_perf_notes));
+}
 struct begonia_opp {uint32_t mhz,uv,post;};
 static const struct begonia_opp ll_opp[4]={{0,0,0},{1618,875000,2},{1800,950000,1},{2000,1031250,1}};
 static const struct begonia_opp big_opp[4]={{0,0,0},{1670,956250,1},{1860,1037500,1},{2002,1100000,1}};
@@ -164,14 +176,14 @@ static int rail_raise(vm_offset_t pmic,const struct begonia_rail *rail,uint32_t 
     if(sram_target<850000)sram_target=850000;
     if(rail_read(pmic,rail,&proc,&sram) || proc<700000 || proc>1100000 || sram<850000 || sram>1125000 ||
        sram<proc+50000 || sram>proc+225000 || target>1100000) {
-        printf("BEGONIA CPU: %s at %u/%u uV is not a state to start from; unchanged\n",rail->name,proc,sram);
+        begonia_perf_note("BEGONIA CPU: %s at %u/%u uV is not a state to start from; unchanged",rail->name,proc,sram);
         return -1;
     }
     first=proc;
-    printf("BEGONIA CPU: %s starts at %u uV, its memory rail at %u uV; going to %u\n",rail->name,proc,sram,target);
+    begonia_perf_note("BEGONIA CPU: %s starts at %u uV, its memory rail at %u uV; going to %u",rail->name,proc,sram,target);
     for(unsigned step=0;step<32;step++) {
         if(proc>=target && (tracking || sram>=sram_target)) {
-            printf("BEGONIA CPU: %s now %u uV, its memory rail %u uV%s\n",rail->name,proc,sram,
+            begonia_perf_note("BEGONIA CPU: %s now %u uV, its memory rail %u uV%s",rail->name,proc,sram,
                 tracking?" (follows by itself)":"");
             return 0;
         }
@@ -179,7 +191,7 @@ static int rail_raise(vm_offset_t pmic,const struct begonia_rail *rail,uint32_t 
             uint32_t next=proc+200000<sram_target?proc+200000:sram_target;
             if(next>sram && rail_set(pmic,rail->sram_set,rail->sram_out,8,500000,next)) {
                 /* a memory rail the PMIC makes follow the logic rail takes no selector of ours */
-                printf("BEGONIA CPU: %s memory rail did not take %u uV; trying whether it follows\n",rail->name,next);
+                begonia_perf_note("BEGONIA CPU: %s memory rail did not take %u uV; trying whether it follows",rail->name,next);
                 tracking=1;
             }
         }
@@ -192,18 +204,18 @@ static int rail_raise(vm_offset_t pmic,const struct begonia_rail *rail,uint32_t 
                 next=sram-100000;
             }
             if(next>proc && rail_set(pmic,rail->proc_set,rail->proc_out,0,400000,next)) {
-                printf("BEGONIA CPU: %s did not take %u uV; stopped\n",rail->name,next);
+                begonia_perf_note("BEGONIA CPU: %s did not take %u uV; stopped",rail->name,next);
                 return -1;
             }
         }
         if(rail_read(pmic,rail,&proc,&sram))return -1;
         if(sram<proc+(tracking?75000:50000) && sram<1118750) {
-            printf("BEGONIA CPU: %s at %u uV but its memory rail only %u uV; back to %u and stopped\n",rail->name,proc,sram,first);
+            begonia_perf_note("BEGONIA CPU: %s at %u uV but its memory rail only %u uV; back to %u and stopped",rail->name,proc,sram,first);
             (void)rail_set(pmic,rail->proc_set,rail->proc_out,0,400000,first);
             return -1;
         }
     }
-    printf("BEGONIA CPU: %s stuck at %u/%u uV short of %u; stopped\n",rail->name,proc,sram,target);
+    begonia_perf_note("BEGONIA CPU: %s stuck at %u/%u uV short of %u; stopped",rail->name,proc,sram,target);
     return -1;
 }
 /* A cluster's PLL to `mhz`: its cores wait on the 26 MHz crystal while the PLL moves (as clock_correct). */
@@ -214,7 +226,7 @@ static int pll_move(vm_offset_t pll,vm_offset_t div,unsigned con1,unsigned mux,c
     uint32_t value=(was&~((7u<<24)|0x3fffffu))|((opp->post==1?0u:opp->post==2?1u:2u)<<24)|(pcw&0x3fffffu)|0x80000000u;
     /* as inherited and decoded: the PLL selected (mux field 1), divided by one (selector 8) */
     if(((divider>>9)&3)!=1 || ((divider>>17)&31)!=8 || pcw>0x3fffffu || opp->mhz*opp->post<1500 || opp->mhz*opp->post>3800) {
-        printf("BEGONIA CPU: %s divider %08x / PLL %08x not as expected; unchanged\n",name,divider,was);
+        begonia_perf_note("BEGONIA CPU: %s divider %08x / PLL %08x not as expected; unchanged",name,divider,was);
         return -1;
     }
     boolean_t interrupts=ml_set_interrupts_enabled(FALSE);
@@ -222,7 +234,7 @@ static int pll_move(vm_offset_t pll,vm_offset_t div,unsigned con1,unsigned mux,c
     pw_wr(pll,con1,value);delay(40);
     pw_wr(div,mux,divider);
     ml_set_interrupts_enabled(interrupts);
-    printf("BEGONIA CPU: %s PLL %08x -> %08x (%u MHz)\n",name,was,rd(pll,con1),opp->mhz);
+    begonia_perf_note("BEGONIA CPU: %s PLL %08x -> %08x (%u MHz)",name,was,rd(pll,con1),opp->mhz);
     return 0;
 }
 static void cpu_opp(vm_offset_t pll,vm_offset_t div)
@@ -231,7 +243,7 @@ static void cpu_opp(vm_offset_t pll,vm_offset_t div)
     if(!PE_parse_boot_argn("begonia_cpu_opp",&level,sizeof(level)) || level<1 || level>3)return;
     vm_offset_t pmic=ml_io_map(0x1000d000,0x1000);
     if(!pmic || pmic_read(pmic,8,&hw) || hw!=0x5920) {
-        printf("BEGONIA CPU: PMIC identity %04x is not the MT6359 these registers are for; unchanged\n",hw);return;
+        begonia_perf_note("BEGONIA CPU: PMIC identity %04x is not the MT6359 these registers are for; unchanged",hw);return;
     }
     uint32_t shared=ll_opp[level].uv>cci_opp[level].uv?ll_opp[level].uv:cci_opp[level].uv;
     if(!rail_raise(pmic,&rail_ll,shared)) {
@@ -288,7 +300,7 @@ begonia_perf_init(void)
             (void)PE_parse_boot_argn("begonia_gpu_khz",&want,sizeof(want));
             if(want>=806000 && sram_uv>=881250 && sram_uv<=781250+350000) {begonia_gpu_khz=806000;selector=61;}
             else if(want>=620000 && sram_uv>=850000 && sram_uv<=700000+350000) {begonia_gpu_khz=620000;selector=48;}
-            else if(want)printf("BEGONIA GPU: %u kHz not taken with the memory rail at %u uV\n",want,sram_uv);
+            else if(want)begonia_perf_note("BEGONIA GPU: %u kHz not taken with the memory rail at %u uV",want,sram_uv);
             if ((gv & 0x7f) < selector) {
                 if (!pmic_write(pw, 0x15ac, selector)) {
                     for (int retry = 0; retry < 2000; retry++) {
@@ -297,11 +309,11 @@ begonia_perf_init(void)
                             break;
                         }
                     }
-                    printf("BEGONIA GPU: raised core rail to %u uV (reg 15a6=%04x)\n", 400000+(gv&127)*6250, gv);
+                    begonia_perf_note("BEGONIA GPU: raised core rail to %u uV (reg 15a6=%04x)", 400000+(gv&127)*6250, gv);
                 }
             }
             if(begonia_gpu_khz && (gv&0x7f)<selector) {
-                printf("BEGONIA GPU: core rail short of its selector; MFGPLL stays\n");begonia_gpu_khz=0;
+                begonia_perf_note("BEGONIA GPU: core rail short of its selector; MFGPLL stays");begonia_gpu_khz=0;
             }
             begonia_mali_probe(400000+(gv&127)*6250,400000+(sv&127)*6250,(ge&se&1)!=0);
         } else printf("BEGONIA GPU: PMIC identity/readback failed; untouched\n");
