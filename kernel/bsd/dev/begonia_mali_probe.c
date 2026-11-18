@@ -25,6 +25,14 @@ static int wait_bits(vm_offset_t b,unsigned o,uint32_t mask,uint32_t value) {
  for(unsigned i=0;i<5000;i++) {if((rd(b,o)&mask)==value)return 0;delay(10);}
  printf("BEGONIA GPU: timeout offset %x mask %x value %x got %x\n",o,mask,value,rd(b,o));return -1;
 }
+/* A self-test's own boot-arg, or begonia_gpu_service=1, which needs all three to pass and so implies
+ * them: the kernel's command line is 608 characters, and the three names alone were 69 of them. */
+static int test_wanted(const char *name) {
+ uint32_t enabled=0;
+ if(PE_parse_boot_argn(name,&enabled,sizeof(enabled)) && enabled==1)return 1;
+ enabled=0;
+ return PE_parse_boot_argn("begonia_gpu_service",&enabled,sizeof(enabled)) && enabled==1;
+}
 static int domain_on(vm_offset_t spm,unsigned control,uint32_t status,unsigned srams) {
  printf("BEGONIA GPU: power control %x status-bit %x\n",control,status);
  wr(spm,control,rd(spm,control)|4);
@@ -41,7 +49,7 @@ static int domain_on(vm_offset_t spm,unsigned control,uint32_t status,unsigned s
 }
 static int write_value_test(vm_offset_t gpu) {
  uint32_t enabled=0;int succeeded=0;
- if(!PE_parse_boot_argn("begonia_gpu_selftest",&enabled,sizeof(enabled)) || enabled!=1)return 0;
+ (void)enabled;if(!test_wanted("begonia_gpu_selftest"))return 0;
  /* GPU internal blocks are reset-off even after the SPM domains come up. */
  wr(gpu,0x1a0,1);wr(gpu,0x190,1);wr(gpu,0x180,15);
  if(wait_bits(gpu,0x160,1,1) || wait_bits(gpu,0x150,1,1) || wait_bits(gpu,0x140,15,15))return 0;
@@ -81,7 +89,7 @@ reset:
 
 static int mapped_write_test(vm_offset_t gpu) {
  uint32_t enabled=0;int succeeded=0;
- if(!PE_parse_boot_argn("begonia_gpu_mapped",&enabled,sizeof(enabled)) || enabled!=1)return 0;
+ (void)enabled;if(!test_wanted("begonia_gpu_mapped"))return 0;
  vm_offset_t pages[5]={0};uint64_t physical[5]={0};unsigned allocated=0;int armed=0;
  const uint64_t address=0x100000;unsigned indices[4];
  if(begonia_gpu_indices(address,indices))return 0;
@@ -127,7 +135,7 @@ finish:
 
 static int shader_compute_test(vm_offset_t gpu) {
  uint32_t enabled=0;int succeeded=0;
- if(!PE_parse_boot_argn("begonia_gpu_shader",&enabled,sizeof(enabled)) || enabled!=1)return 0;
+ (void)enabled;if(!test_wanted("begonia_gpu_shader"))return 0;
 #if BEG_GPU_FIXTURE_PRESENT
  /* One own-source compute chain. Every GPU VA maps only private allocations;
   * no identity mapping, IOSurface, user pointer, or live display buffer. */
