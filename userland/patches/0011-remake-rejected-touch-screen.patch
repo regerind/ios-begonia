@@ -1,0 +1,93 @@
+--- a/userland/src/inject.c
++++ b/userland/src/inject.c
+@@ -664,9 +664,12 @@
+ 	/* begonia: what the event server has done with it, for the status line (input_status_thread) */
+ 	const char *name;
+ 	volatile unsigned attempts, opens, closes, sets, copies;
++	/* begonia (from ios-s9plus-exynos): backboardd said what touches it wants (judged), and took it for its screen */
++	volatile bool judged, taken;
+ };
+ /* begonia: the services of ours, and what the input thread did with the driver's samples */
+ static struct service *status_screen, *status_buttons;
++static volatile unsigned remakes;       /* keep_screen(): touch screens made again after backboardd turned one down */
+ static volatile unsigned status_read, status_touches, status_sent, status_woke, status_swallowed, status_buttons_sent;
+ 
+ /* The properties of a service of ours; the event server asks for them one at a time. */
+@@ -715,6 +718,13 @@
+ 
+ 	/* the last thing the event server does when it opens a service; see make_service() */
+ 	((struct service *)refcon)->sets++;
++	/* backboardd sets this on the digitizer it takes for its main screen, as it takes it */
++	if (key != NULL && CFEqual(key, CFSTR("QuantizationDPI"))) {
++		((struct service *)refcon)->taken = true;
++	}
++	if (key != NULL && CFEqual(key, CFSTR("TouchDetectionMode"))) {
++		((struct service *)refcon)->judged = true;
++	}
+ 	if (key != NULL && value != NULL && CFEqual(key, CFSTR("DeviceOpenedByEventSystem")) &&
+ 	    CFGetTypeID(value) == CFBooleanGetTypeID()) {
+ 		if (CFBooleanGetValue(value)) {
+@@ -830,6 +840,40 @@
+ 	return service;
+ }
+ 
++/*
++ * begonia, from the ios-s9plus-exynos reference (keep_screen()): the other way the event server's start
++ * goes wrong. backboardd sees the touch screen but reads its usage page as 0 ("*** unexpected digitizer
++ * usage pair") and keeps waiting for a main screen digitizer, so no touch ever arrives -- while the lock
++ * button, a service of its own kind, works. It sets "TouchDetectionMode" on the service either way, and
++ * "QuantizationDPI" just before that only when it takes it. A touch screen turned down is made again, and
++ * backboardd reads it afresh. (x19-x21, x24: no touch; x15, x22: touch -- whichever way the start went.)
++ */
++static IOHIDServiceClientRef
++keep_screen(IOHIDEventSystemClientRef client, IOHIDServiceClientRef screen)
++{
++	for (int attempt = 1; attempt <= 3 && screen != NULL && status_screen != NULL; attempt++) {
++		struct service *made = status_screen;
++		int tenths = 0;
++
++		while (!made->judged && !made->taken && tenths++ < 600) {
++			usleep(100000);
++		}
++		for (tenths = 0; made->judged && !made->taken && tenths < 20; tenths++) {
++			usleep(100000);
++		}
++		if (made->taken || !made->judged) {
++			say("hakios: input: backboardd %s the touch screen\n", made->taken ? "took" : "has not decided about");
++			return screen;
++		}
++		say("hakios: input: backboardd turned the touch screen down (remake %d): making it again\n", attempt);
++		remakes++;
++		IOHIDVirtualServiceClientRemove(screen);
++		CFRelease(screen);
++		screen = make_service(client, "HakiOS touch screen", HID_PAGE_DIGITIZER, HID_USAGE_TOUCH_SCREEN, true);
++	}
++	return screen;
++}
++
+ /* One frame of the touch screen: the hand, and under it every finger that is down or has just lifted. */
+ static void
+ send_touch(IOHIDServiceClientRef screen, const struct hakios_touch *t)
+@@ -974,6 +1018,11 @@
+ 	if (screen == NULL) {
+ 		return NULL;
+ 	}
++	screen = keep_screen(client, screen);
++	if (screen == NULL) {
++		say("hakios: input: no touch screen after making it again\n");
++		return NULL;
++	}
+ 
+ 	while ((received = read(device, batch, batch_touch ? sizeof(batch) : sizeof(batch[0]))) > 0) {
+ 		if (received % sizeof(batch[0]) != 0) {
+@@ -1053,8 +1102,8 @@
+ 		snprintf(line, size, "%s none", what);
+ 		return;
+ 	}
+-	snprintf(line, size, "%s opened %d attempts %u opens %u closes %u sets %u asks %u", what, s->opened, s->attempts,
+-	    s->opens, s->closes, s->sets, s->copies);
++	snprintf(line, size, "%s opened %d attempts %u opens %u closes %u sets %u asks %u judged %d taken %d remakes %u", what,
++	    s->opened, s->attempts, s->opens, s->closes, s->sets, s->copies, s->judged, s->taken, remakes);
+ }
+ 
+ static void *
