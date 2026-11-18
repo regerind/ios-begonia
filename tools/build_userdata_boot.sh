@@ -38,7 +38,8 @@ if [ ! -f out/userdata/data.hfs ]; then
 	mv out/userdata/data.hfs.new out/userdata/data.hfs
 fi
 
-python3 "$H/xnuloader/im4p.py" "$H/sysimage/DeviceTree.d22ap.im4p" out/d22ap.adt >/dev/null
+python3 "$H/xnuloader/im4p.py" "$H/sysimage/DeviceTree.d22ap.im4p" out/d22ap.adt.lzfse >/dev/null
+lzfse -decode -i out/d22ap.adt.lzfse -o out/d22ap.adt   # apt install lzfse
 python3 tools/make_begonia_adt.py out/begonia-native.adt \
 	--extents out/userdata/system.ext --data-extents out/userdata/data.ext \
 	--touch-firmware "$TOUCH" --identity out/d22ap.adt >/dev/null
