@@ -1,0 +1,47 @@
+--- a/iokit/Kernel/MiniIOSurface.cpp
++++ b/iokit/Kernel/MiniIOSurface.cpp
+@@ -93,6 +93,17 @@
+ static uint64_t         gSurfaceLogged[2];                      /* selectors already complained about */
+ /* Boot-arg surftrace=N: log the first N surfaces created (default 24). */
+ static TUNABLE(uint32_t, gSurfaceTrace, "surftrace", 24);
++/*
++ * begonia, boot-arg surf_align=0: rows as the maker asks. Otherwise a row the maker sizes itself
++ * (IOSurfaceBytesPerRow) is made a multiple of MINISURF_ROW_ALIGN as well: the Mali-G76's driver
++ * takes a surface's memory as a texture only with rows (and a start) on 64 bytes, and copies --
++ * then adds up on the processor every frame -- every other one. CoreGraphics' text masks ('A008',
++ * 'LA08') came with their own narrower rows, and those copies were the filled boxes in place of
++ * text. Makers read the row length back (IOSurfaceGetBytesPerRow); memory around a client's own
++ * (IOSurfaceAddress) keeps the client's rows.
++ */
++static TUNABLE(uint32_t, gSurfaceRowAlign, "surf_align", 1);
++static uint32_t gSurfaceRealigned;
+ static uint32_t         gSurfaceTraced;                         /* (a tunable is read-only after boot) */
+ /*
+  * Boot-arg surftrace_of=NAME: only the surfaces made by programs whose name begins with NAME count for
+@@ -590,6 +601,17 @@
+ 		bpr = planeCount ? s->planes[0].bytesPerRow
+ 		    : alignUp((uint64_t) ((width + ew - 1) / ew) * bpe, MINISURF_ROW_ALIGN);
+ 	}
++	bool realigned = false;
++	if (gSurfaceRowAlign && wrapped == NULL && planeCount == 0 && bpr % MINISURF_ROW_ALIGN != 0) {
++		uint32_t asked = bpr;
++
++		bpr = alignUp(bpr, MINISURF_ROW_ALIGN);
++		realigned = true;
++		if (gSurfaceRealigned++ < 8 || gSurfaceRealigned % 1000 == 0) {
++			IOLog("MiniIOSurface: '%.4s' %ux%u: rows of %u bytes made %u for the GPU (%u so far)\n", (const char *) &format,
++			    width, height, asked, bpr, gSurfaceRealigned);
++		}
++	}
+ 	if (planeCount == 0) {
+ 		needed = (uint64_t) bpr * ((height + eh - 1) / eh);
+ 		/* the one implicit plane, for the per-plane getters */
+@@ -606,7 +628,7 @@
+ 	alloc = dictNumber(props, "IOSurfaceAllocSize", 0);
+ 	if (alloc < needed) {
+ 		/* (a surface around the owner's memory has the owner's size: a mask's last row is only as long as it is wide) */
+-		if (alloc != 0 && wrapped == NULL) {
++		if (alloc != 0 && wrapped == NULL && !realigned) {
+ 			IOLog("MiniIOSurface: alloc size %u too small for %ux%u '%.4s', using %llu\n", alloc, width, height,
+ 			    (const char *) &format, needed);
+ 		}

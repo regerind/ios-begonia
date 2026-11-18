@@ -1,0 +1,36 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -686,6 +686,7 @@
+  * Boot-arg glmask=0: copied, as before.
+  */
+ static int share_masks = 1;
++static unsigned mask_offered, mask_shared, mask_bad_row, mask_bad_start;
+ 
+ static bool
+ mask_surface(struct image *image, IOSurfaceRef surface)
+@@ -707,6 +708,17 @@
+ 	IOSurfaceRef surface = image->surface;
+ 	bool mask = mask_surface(image, surface);
+ 
++	if (mask) {
++		/* begonia: why masks are or are not shared, said now and then (the first lines of a run are not kept) */
++		mask_offered++;
++		mask_bad_row += (IOSurfaceGetBytesPerRow(surface) & 63) != 0;
++		mask_bad_start += ((uintptr_t)IOSurfaceGetBaseAddress(surface) & 63) != 0;
++		if (mask_offered % 50 == 0) {
++			say("hakios-gl: text masks: %u offered, %u shared; rows not a multiple of 64 bytes %u, start not on 64 bytes %u\n",
++			    mask_offered, mask_shared, mask_bad_row, mask_bad_start);
++		}
++	}
++
+ 	if (!share_surfaces || image->invert || image->alpha_first ||
+ 	    (!mask && (image->format != GL_BGRA || image->type != GL_UNSIGNED_BYTE)) ||
+ 	    image->plane != 0 || (size_t)image->width != IOSurfaceGetWidth(surface) ||
+@@ -756,6 +768,7 @@
+ 		glTexParameteri(GL_TEXTURE_2D, 0x8e43, 0x1904 /* GL_GREEN */);
+ 		glTexParameteri(GL_TEXTURE_2D, 0x8e44, 0x1905 /* GL_BLUE */);
+ 		glTexParameteri(GL_TEXTURE_2D, 0x8e45, 0x1906 /* GL_ALPHA */);
++		mask_shared++;
+ 		if (masks++ < 8 || masks % 500 == 0) {
+ 			say("hakios-gl: text mask %u ('%.4s' %zu x %zu, %zu bytes a row) shared, not copied (%u so far)\n",
+ 			    IOSurfaceGetID(surface), (const char *)&(uint32_t){ OSSwapInt32(IOSurfaceGetPixelFormat(surface)) },
