@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """Apply recorded support fixes; build init and input library without rebuilding Apple assets."""
 from pathlib import Path
-import subprocess
+import hashlib,subprocess
 root=Path(__file__).resolve().parents[1]
 repo=root/'upstream/hakios-xnu-kernel'
-for patch in sorted((root/'userland/patches').glob('*.patch')):
- cmd=['git','-C',str(repo),'apply']
- if subprocess.run([*cmd,'--reverse','--check',str(patch)],capture_output=True).returncode==0:continue
- subprocess.run([*cmd,'--check',str(patch)],check=True)
- subprocess.run([*cmd,str(patch)],check=True)
+patches=sorted((root/'userland/patches').glob('*.patch'))
+# The series is applied as a whole: later patches touch the context of earlier ones, so a single
+# patch cannot be tested for "already applied" once its successors are on top of it.
+marker=repo/'userland/.begonia-userland-patches'
+digest='\n'.join(p.name+' '+hashlib.sha256(p.read_bytes()).hexdigest() for p in patches)+'\n'
+cmd=['git','-C',str(repo),'apply']
+if marker.exists() and marker.read_text()!=digest:
+ raise SystemExit('userland patches changed since they were applied; restore pristine userland sources first')
+if not marker.exists():
+ if subprocess.run([*cmd,'--reverse','--check',*map(str,reversed(patches))],capture_output=True).returncode!=0:
+  subprocess.run([*cmd,'--check',*map(str,patches)],check=True)
+  subprocess.run([*cmd,*map(str,patches)],check=True)
+ marker.write_text(digest)
 script='''set -e
 source "$1/xnu-env.sh"
 ccflags=(-arch arm64 -Os -static -nostdlib -ffreestanding -fno-stack-protector -fno-builtin -Wall -Wextra)
