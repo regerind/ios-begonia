@@ -1,5 +1,5 @@
 /* MT6785 clock/power observation and opt-in guarded CPU/CCI correction.
- * No regulator or GPU register writes.
+ * Regulator writes only with begonia_cpu_opp= / begonia_gpu_khz= (stock operating points, below).
  * Register locations: pinned Xiaomi MT6785 clk/cpufreq sources (docs/CPU.md).
  * Enable explicitly with begonia_perf_probe=1. This is not a DVFS governor.
  */
@@ -8,6 +8,8 @@
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
 #include <sys/systm.h>
+#include <sys/sysctl.h>
+#include <sys/errno.h>
 #include "begonia_clock_policy.h"
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 
@@ -107,6 +109,141 @@ static void clock_correct(vm_offset_t pll, vm_offset_t div)
        ll,rd(pll,0x204),cci,rd(pll,0x2a4),cpu_uv,sram_uv);
 }
 
+/*
+ * begonia_cpu_opp=1|2|3: the boot loader leaves the A55s at 1175 MHz, the A76s at 1085 MHz and the
+ * interconnect at 612 MHz, and nothing here ever raised them: every thread of the system ran at a
+ * little over half of what the SoC is sold for. This puts each cluster on one fixed stock operating
+ * point -- no governor, no thermal control, hence opt-in and three levels:
+ *
+ *      level   A55 (VPROC2)        A76 (VPROC1)        interconnect (VPROC2)
+ *        1     1618 MHz  875.00 mV  1670 MHz  956.25 mV  1120 MHz  862.50 mV
+ *        2     1800 MHz  950.00 mV  1860 MHz 1037.50 mV  1260 MHz  950.00 mV
+ *        3     2000 MHz 1031.25 mV  2002 MHz 1100.00 mV  1400 MHz 1031.25 mV
+ *
+ * Frequencies, voltages and post dividers are rows of FY_6785Tbl in the pinned Xiaomi tree
+ * (cpufreq_v1/src/mach/mt6785/mtk_cpufreq_opp_pv_table.h; voltage = 400 mV + n * 6.25 mV), the
+ * rails and the order of work from mtk_cpufreq_platform.[ch]: the memory rail first and at least
+ * 100 mV above the logic rail, never more than 225 mV above it, at most 1125 mV; voltage before
+ * frequency; the interconnect before the cores. MT6359 registers: Linux
+ * include/linux/mfd/mt6359/registers.h (VOSEL in *_ELR0 / LDO_VSRAM_PROC*_ELR, what the buck puts
+ * out in *_DBG0 / *_VOSEL1). Every write is read back from the rail itself before the next; the
+ * first thing that is not as expected ends it, with the clocks where they were.
+ */
+struct begonia_opp {uint32_t mhz,uv,post;};
+static const struct begonia_opp ll_opp[4]={{0,0,0},{1618,875000,2},{1800,950000,1},{2000,1031250,1}};
+static const struct begonia_opp big_opp[4]={{0,0,0},{1670,956250,1},{1860,1037500,1},{2002,1100000,1}};
+static const struct begonia_opp cci_opp[4]={{0,0,0},{1120,862500,2},{1260,950000,2},{1400,1031250,2}};
+struct begonia_rail {const char *name;unsigned proc_set,proc_out,sram_set,sram_out;};
+static const struct begonia_rail rail_ll={"VPROC2",0x17b2,0x17a6,0x1b42,0x1eac};
+static const struct begonia_rail rail_big={"VPROC1",0x172e,0x1726,0x1b40,0x1e8e};
+
+static int rail_read(vm_offset_t pmic,const struct begonia_rail *rail,uint32_t *proc,uint32_t *sram)
+{
+    uint32_t a=0,b=0;
+    if(pmic_read(pmic,rail->proc_out,&a) || pmic_read(pmic,rail->sram_out,&b))return -1;
+    *proc=400000+(a&127)*6250;*sram=500000+((b>>8)&127)*6250;
+    return 0;
+}
+/* One selector, then the rail's own word for what it puts out, for up to 20 ms. */
+static int rail_set(vm_offset_t pmic,unsigned set,unsigned out,unsigned shift,uint32_t base,uint32_t uv)
+{
+    uint32_t selector=(uv-base)/6250,now=0;
+    if(uv<base || (uv-base)%6250 || selector>127 || pmic_read(pmic,set,&now))return -1;
+    if(pmic_write(pmic,set,(now&~0x7fu)|selector))return -1;
+    for(unsigned i=0;i<400;i++) {
+        delay(50);
+        if(!pmic_read(pmic,out,&now) && ((now>>shift)&127)==selector)return 0;
+    }
+    return -1;
+}
+static int rail_raise(vm_offset_t pmic,const struct begonia_rail *rail,uint32_t target)
+{
+    uint32_t proc=0,sram=0,sram_target=target+100000,first=0;
+    int tracking=0;
+    if(sram_target>1125000)sram_target=1125000;
+    if(sram_target<850000)sram_target=850000;
+    if(rail_read(pmic,rail,&proc,&sram) || proc<700000 || proc>1100000 || sram<850000 || sram>1125000 ||
+       sram<proc+50000 || sram>proc+225000 || target>1100000) {
+        printf("BEGONIA CPU: %s at %u/%u uV is not a state to start from; unchanged\n",rail->name,proc,sram);
+        return -1;
+    }
+    first=proc;
+    printf("BEGONIA CPU: %s starts at %u uV, its memory rail at %u uV; going to %u\n",rail->name,proc,sram,target);
+    for(unsigned step=0;step<32;step++) {
+        if(proc>=target && (tracking || sram>=sram_target)) {
+            printf("BEGONIA CPU: %s now %u uV, its memory rail %u uV%s\n",rail->name,proc,sram,
+                tracking?" (follows by itself)":"");
+            return 0;
+        }
+        if(!tracking && sram<sram_target) {
+            uint32_t next=proc+200000<sram_target?proc+200000:sram_target;
+            if(next>sram && rail_set(pmic,rail->sram_set,rail->sram_out,8,500000,next)) {
+                /* a memory rail the PMIC makes follow the logic rail takes no selector of ours */
+                printf("BEGONIA CPU: %s memory rail did not take %u uV; trying whether it follows\n",rail->name,next);
+                tracking=1;
+            }
+        }
+        if(rail_read(pmic,rail,&proc,&sram))return -1;
+        {
+            uint32_t next=target;
+            if(tracking) {
+                if(next>proc+25000)next=proc+25000;
+            } else if(sram<sram_target && next+100000>sram) {
+                next=sram-100000;
+            }
+            if(next>proc && rail_set(pmic,rail->proc_set,rail->proc_out,0,400000,next)) {
+                printf("BEGONIA CPU: %s did not take %u uV; stopped\n",rail->name,next);
+                return -1;
+            }
+        }
+        if(rail_read(pmic,rail,&proc,&sram))return -1;
+        if(sram<proc+(tracking?75000:50000) && sram<1118750) {
+            printf("BEGONIA CPU: %s at %u uV but its memory rail only %u uV; back to %u and stopped\n",rail->name,proc,sram,first);
+            (void)rail_set(pmic,rail->proc_set,rail->proc_out,0,400000,first);
+            return -1;
+        }
+    }
+    printf("BEGONIA CPU: %s stuck at %u/%u uV short of %u; stopped\n",rail->name,proc,sram,target);
+    return -1;
+}
+/* A cluster's PLL to `mhz`: its cores wait on the 26 MHz crystal while the PLL moves (as clock_correct). */
+static int pll_move(vm_offset_t pll,vm_offset_t div,unsigned con1,unsigned mux,const struct begonia_opp *opp,const char *name)
+{
+    uint32_t was=rd(pll,con1),divider=rd(div,mux);
+    uint32_t pcw=(uint32_t)((((uint64_t)opp->mhz*opp->post)<<14)/26);
+    uint32_t value=(was&~((7u<<24)|0x3fffffu))|((opp->post==1?0u:opp->post==2?1u:2u)<<24)|(pcw&0x3fffffu)|0x80000000u;
+    /* as inherited and decoded: the PLL selected (mux field 1), divided by one (selector 8) */
+    if(((divider>>9)&3)!=1 || ((divider>>17)&31)!=8 || pcw>0x3fffffu || opp->mhz*opp->post<1500 || opp->mhz*opp->post>3800) {
+        printf("BEGONIA CPU: %s divider %08x / PLL %08x not as expected; unchanged\n",name,divider,was);
+        return -1;
+    }
+    boolean_t interrupts=ml_set_interrupts_enabled(FALSE);
+    pw_wr(div,mux,divider&~(3u<<9));
+    pw_wr(pll,con1,value);delay(40);
+    pw_wr(div,mux,divider);
+    ml_set_interrupts_enabled(interrupts);
+    printf("BEGONIA CPU: %s PLL %08x -> %08x (%u MHz)\n",name,was,rd(pll,con1),opp->mhz);
+    return 0;
+}
+static void cpu_opp(vm_offset_t pll,vm_offset_t div)
+{
+    uint32_t level=0,hw=0;
+    if(!PE_parse_boot_argn("begonia_cpu_opp",&level,sizeof(level)) || level<1 || level>3)return;
+    vm_offset_t pmic=ml_io_map(0x1000d000,0x1000);
+    if(!pmic || pmic_read(pmic,8,&hw) || hw!=0x5920) {
+        printf("BEGONIA CPU: PMIC identity %04x is not the MT6359 these registers are for; unchanged\n",hw);return;
+    }
+    uint32_t shared=ll_opp[level].uv>cci_opp[level].uv?ll_opp[level].uv:cci_opp[level].uv;
+    if(!rail_raise(pmic,&rail_ll,shared)) {
+        if(!pll_move(pll,div,0x2a4,0x2e0,&cci_opp[level],"interconnect"))
+            (void)pll_move(pll,div,0x204,0x2a0,&ll_opp[level],"A55");
+    }
+    if(!rail_raise(pmic,&rail_big,big_opp[level].uv))
+        (void)pll_move(pll,div,0x214,0x2a4,&big_opp[level],"A76");
+}
+
+uint32_t begonia_gpu_khz;       /* what begonia_mali_probe.c is to set MFGPLL to (0: leave it) */
+
 void
 begonia_perf_init(void)
 {
@@ -134,6 +271,7 @@ begonia_perf_init(void)
     printf("BEGONIA PERF: Mali MMIO untouched; no DVFS or power-state changes\n");
     pmic_probe();
     clock_correct(pll,div);
+    cpu_opp(pll,div);
     uint32_t gpu_probe=0;
     if(PE_parse_boot_argn("begonia_gpu_probe",&gpu_probe,sizeof(gpu_probe)) && gpu_probe==1) {
         extern void begonia_mali_probe(uint32_t,uint32_t,int);
@@ -143,18 +281,54 @@ begonia_perf_init(void)
            !pmic_read(pw,0x15a6,&gv) && !pmic_read(pw,0x15a8,&ge) &&
            !pmic_read(pw,0x14a6,&sv) && !pmic_read(pw,0x14a8,&se)) {
             printf("BEGONIA GPU: rail readbacks core=%04x/%04x SRAM=%04x/%04x\n",gv,ge,sv,se);
-            if ((gv & 0x7f) < 0x22) {
-                if (!pmic_write(pw, 0x15ac, 0x0022)) {
+            /* begonia_gpu_khz=620000|806000: stock rows of mt6785/mtk_gpufreq_core.h -- 620 MHz at
+             * 700 mV (memory rail 850 mV), 806 MHz at 781.25 mV (881.25 mV). The memory rail is not
+             * written here: a frequency whose memory voltage is not already there is not taken. */
+            uint32_t want=0,selector=0x22,sram_uv=400000+(sv&127)*6250;
+            (void)PE_parse_boot_argn("begonia_gpu_khz",&want,sizeof(want));
+            if(want>=806000 && sram_uv>=881250 && sram_uv<=781250+350000) {begonia_gpu_khz=806000;selector=61;}
+            else if(want>=620000 && sram_uv>=850000 && sram_uv<=700000+350000) {begonia_gpu_khz=620000;selector=48;}
+            else if(want)printf("BEGONIA GPU: %u kHz not taken with the memory rail at %u uV\n",want,sram_uv);
+            if ((gv & 0x7f) < selector) {
+                if (!pmic_write(pw, 0x15ac, selector)) {
                     for (int retry = 0; retry < 2000; retry++) {
                         delay(50);
-                        if (!pmic_read(pw, 0x15a6, &gv) && (gv & 0x7f) >= 0x22) {
+                        if (!pmic_read(pw, 0x15a6, &gv) && (gv & 0x7f) >= selector) {
                             break;
                         }
                     }
-                    printf("BEGONIA GPU: raised core rail to 612.5mV (reg 15a6=%04x)\n", gv);
+                    printf("BEGONIA GPU: raised core rail to %u uV (reg 15a6=%04x)\n", 400000+(gv&127)*6250, gv);
                 }
+            }
+            if(begonia_gpu_khz && (gv&0x7f)<selector) {
+                printf("BEGONIA GPU: core rail short of its selector; MFGPLL stays\n");begonia_gpu_khz=0;
             }
             begonia_mali_probe(400000+(gv&127)*6250,400000+(sv&127)*6250,(ge&se&1)!=0);
         } else printf("BEGONIA GPU: PMIC identity/readback failed; untouched\n");
     }
 }
+
+/*
+ * kern.begonia_bind_cpu: the calling thread onto one processor (-1: off it again). XNU is given every
+ * core as the same kind here (cluster-type 0 in the device tree: no P/E scheduling in this kernel
+ * configuration), so the window server's drawing thread and SpringBoard's main thread ran wherever
+ * there was room, mostly on an A55. The two A76s are XNU's processors 5 and 6 (MPIDR 0x600, 0x700;
+ * 0x100 is the recovery supervisor's and is not XNU's). The scheduler's own kern.sched_thread_bind_cpu
+ * does the same but only for root and behind a boot-arg; this one is for the two UI programs, which
+ * are not root (userland: gl_cpu=, sb_cpu=).
+ */
+extern kern_return_t sysctl_thread_bind_cpuid(int32_t cpuid);
+static int
+sysctl_begonia_bind_cpu SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+    int32_t value = -1;
+    int changed = 0;
+    int error = sysctl_io_number(req, -1, sizeof(int32_t), &value, &changed);
+    if (error || !changed) {
+        return error;
+    }
+    return sysctl_thread_bind_cpuid(value) == KERN_SUCCESS ? 0 : EINVAL;
+}
+SYSCTL_PROC(_kern, OID_AUTO, begonia_bind_cpu, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY,
+    0, 0, sysctl_begonia_bind_cpu, "I", "bind the calling thread to a processor");

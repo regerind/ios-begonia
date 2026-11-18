@@ -222,7 +222,25 @@ void begonia_mali_probe(uint32_t gpu_uv,uint32_t sram_uv,int rails_enabled) {
  if(wait_bits(infra,0x258,7u<<19,7u<<19))return;
  wr(infra,0x2a0,3u<<21);
  if(wait_bits(infra,0x228,3u<<21,3u<<21))return;
- /* MFG clock: switch from crystal (parent 0) to MFGPLL 270MHz (parent 1) when rail is verified. */
+ /* begonia_gpu_khz (begonia_perf.c has the rail for it): MFGPLL moved while the GPU is still on the
+  * crystal and its domains off. Post divider 4, CON1 = change | divider | 22-bit word, 20 us to
+  * settle: __mt_gpufreq_clock_switch()'s parking path in the pinned mtk_gpufreq_core.c. */
+ extern uint32_t begonia_gpu_khz;
+ uint32_t mfg_khz=270000;
+ if((begonia_gpu_khz==620000 && gpu_uv>=700000) || (begonia_gpu_khz==806000 && gpu_uv>=781250)) {
+  vm_offset_t apmixed=ml_io_map(0x1000c000,0x1000);
+  if(apmixed && (rd(apmixed,0x250)&1) && ((rd(top,0x50)>>16)&3)==0) {
+   uint32_t dds=(uint32_t)((((uint64_t)begonia_gpu_khz/1000*4)<<14)/26),was=rd(apmixed,0x254);
+   wr(apmixed,0x254,0x80000000u|(2u<<24)|(dds&0x3fffffu));
+   delay(40);
+   mfg_khz=begonia_gpu_khz;
+   printf("BEGONIA GPU: MFGPLL CON1 %08x -> %08x (%u kHz)\n",was,rd(apmixed,0x254),mfg_khz);
+  } else {
+   printf("BEGONIA GPU: MFGPLL off or the GPU not on the crystal (CON0=%08x CLK_CFG_3=%08x); frequency unchanged\n",
+    apmixed?rd(apmixed,0x250):0,rd(top,0x50));
+  }
+ }
+ /* MFG clock: switch from crystal (parent 0) to MFGPLL (parent 1) when rail is verified. */
  if (gpu_uv >= 612500) {
   wr(top,0x58,(3u<<16)|(1u<<23));
   wr(top,0x54,1u<<16);
@@ -244,9 +262,9 @@ void begonia_mali_probe(uint32_t gpu_uv,uint32_t sram_uv,int rails_enabled) {
  printf("BEGONIA GPU: domains ready, ungating BG3D before ID read\n");
  wr(cfg,8,1);
  uint32_t id=rd(gpu,0);
- printf("BEGONIA GPU: ID=%08x shader=%x tiler=%x L2=%x at %s\n",
+ printf("BEGONIA GPU: ID=%08x shader=%x tiler=%x L2=%x at %s (%u kHz)\n",
     id,rd(gpu,0x100),rd(gpu,0x110),rd(gpu,0x120),
-    (gpu_uv >= 612500) ? "270MHz MFGPLL" : "crystal clock");
+    (gpu_uv >= 612500) ? "MFGPLL" : "crystal clock",(gpu_uv >= 612500) ? mfg_khz : 26000);
  if((id>>16)!=0x7211) {printf("BEGONIA GPU: identity mismatch; reset skipped\n");return;}
  wr(gpu,0x28,0);wr(gpu,0x24,0xffffffff);wr(gpu,0x30,1);
  if(wait_bits(gpu,0x20,1u<<8,1u<<8))return;

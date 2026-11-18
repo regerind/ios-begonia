@@ -21,6 +21,9 @@ xnu-clang "${ccflags[@]}" -Ilibmini -Wl,-e,_start -Wl,-pagezero_size,0x100000000
 cp obj/init root/sbin/init
 xnu-clang -arch arm64 -isysroot "$THEOS/sdks/iPhoneOS16.5.sdk" -O1 -dynamiclib -install_name /redwood/lib/libhakios.dylib -framework CoreFoundation -framework IOKit -lobjc -o obj/libhakios.dylib src/inject.c
 cp obj/libhakios.dylib root/lib/libhakios.dylib
+# SpringBoard's library (src/inject_sb.c), as userland/build.sh builds it
+xnu-clang -arch arm64 -isysroot "$THEOS/sdks/iPhoneOS16.5.sdk" -O1 -dynamiclib -install_name /redwood/lib/libhakios.sb.dylib -framework CoreFoundation -framework CoreGraphics -framework IOKit -framework IOSurface -lobjc -o obj/libhakios.sb.dylib src/inject_sb.c
+cp obj/libhakios.sb.dylib root/lib/libhakios.sb.dylib
 '''
 subprocess.run(['bash','-c',script,'build-init',str(repo)],cwd=repo/'userland',check=True)
-print('Built support init and input library; persistent system groups are preserved.')
+print('Built support init, input and SpringBoard libraries; persistent system groups are preserved.')

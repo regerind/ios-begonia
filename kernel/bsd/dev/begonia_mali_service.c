@@ -1,9 +1,21 @@
 /* SPDX-License-Identifier: MIT
  * G76 backend for the S9+ HakiosMali IOKit transport. MT6785 power-up is owned
- * by begonia_mali_probe.c, never by the Exynos reference. Initial transport
- * deliberately submits synchronously and resets between jobs. No DVFS.
+ * by begonia_mali_probe.c, never by the Exynos reference. No DVFS.
+ *
+ * Jobs: the glue (hakios.mali.cpp) is written for a backend that queues -- kPanfrostSubmit
+ * "queued, not run here", the waits taken without its lock. The first transport here ran each
+ * job inside the submit and polled the GPU until it was done, on the caller's thread: the window
+ * server's drawing thread spent a third of its processor time in that poll (x8, glprof) and never
+ * prepared a batch while the GPU drew one. With begonia_gpu_async=1 a submit only queues; one
+ * kernel thread runs the jobs in order, one at a time as before, and is the only one to touch
+ * the GPU's registers after start-up. The tables' memory is edited under vm_lock by whoever maps;
+ * the thread writes them out and tells the MMU before each job, while the GPU is idle, exactly
+ * where the synchronous transport did.
  */
 #include <kern/clock.h>
+#include <kern/locks.h>
+#include <kern/sched_prim.h>
+#include <kern/thread.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
 #include <machine/machine_routines.h>
@@ -22,6 +34,16 @@ static struct beg_gpu_vm space;
 static struct mali_va addresses;
 static int ready;
 static uint64_t submitted,completed,failed;
+static uint32_t async_jobs;             /* boot-arg begonia_gpu_async=1 */
+static lck_grp_t *gpu_group;
+static lck_mtx_t *vm_lock;              /* the tables' memory and their dirty marks */
+static lck_mtx_t *queue_lock;           /* the queue, submitted, completed, failed */
+#define JOB_QUEUE 1024
+static struct {uint64_t chain,seq,queued;bool fragment;} queue[JOB_QUEUE];
+static uint64_t queue_head,queue_tail;
+/* what the GPU's time goes into, said every five seconds it has had work */
+static uint64_t stat_jobs,stat_fragment,stat_busy,stat_longest,stat_waited,stat_since;
+static unsigned stat_deepest;
 static uint32_t rd(unsigned o) {return *(volatile uint32_t *)(gpu+o);}
 static void wr(unsigned o,uint32_t v) {*(volatile uint32_t *)(gpu+o)=v;__asm__ volatile("dsb sy":::"memory");}
 static int wait(unsigned o,uint32_t mask,uint32_t value) {
@@ -108,7 +130,9 @@ bool hakios_mali_map(uint64_t address,uint64_t physical) {
   printf("HakiosMali: map failed: !pmap_valid_address(0x%llx)\n", physical);
   return false;
  }
+ lck_mtx_lock(vm_lock);
  int err = beg_gpu_vm_map(&space,address,physical);
+ lck_mtx_unlock(vm_lock);
  if(err != 0) {
   printf("HakiosMali: map failed: beg_gpu_vm_map(va=0x%llx, pa=0x%llx) err=%d tables=%u/%u\n",
          address, physical, err, space.count, space.limit);
@@ -129,7 +153,8 @@ static int init_gpu_hardware(void) {
  }
  return 0;
 }
-void hakios_mali_mapped(void) {
+/* vm_lock held, the GPU idle. */
+static void flush_tables(void) {
  bool any = false;
  for(unsigned i=0;i<space.count;i++) {
   struct beg_gpu_vm_table *table=&space.tables[i];
@@ -146,22 +171,50 @@ void hakios_mali_mapped(void) {
   (void)wait(0x2428,1,0);
  }
 }
+void hakios_mali_mapped(void) {
+ /* queued jobs: the thread that runs them does this before each one (run_job) */
+ if(async_jobs)return;
+ lck_mtx_lock(vm_lock);
+ flush_tables();
+ lck_mtx_unlock(vm_lock);
+}
 void hakios_mali_unmap(uint64_t address,uint64_t size) {
  if(!hakios_mali_ready() || !size || address<MALI_VA_FIRST || address>=MALI_VA_END || size>MALI_VA_END-address)return;
+ lck_mtx_lock(vm_lock);
  for(uint64_t off=0;off<size;off+=4096)(void)beg_gpu_vm_unmap(&space,address+off);
+ lck_mtx_unlock(vm_lock);
  mali_va_free(&addresses,address,size);
 }
 void hakios_mali_tag(uint64_t address,uint32_t kind,uint32_t width,uint32_t height,uint32_t row,
  uint32_t format,uint32_t offset) {
  (void)address;(void)kind;(void)width;(void)height;(void)row;(void)format;(void)offset;
 }
-uint64_t hakios_mali_enqueue(uint64_t chain,bool fragment) {
- if(!hakios_mali_ready() || !space.count || !chain || (chain&63) || !beg_gpu_vm_translate(&space,chain))return 0;
- uint64_t seq=++submitted;int success=0;
-
- hakios_mali_mapped();
+static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queued,unsigned depth) {
+ uint64_t took=ended-began,ns;
+ stat_jobs++;stat_fragment+=fragment;stat_busy+=took;stat_waited+=began-queued;
+ if(took>stat_longest)stat_longest=took;
+ if(depth>stat_deepest)stat_deepest=depth;
+ if(!stat_since)stat_since=began;
+ absolutetime_to_nanoseconds(ended-stat_since,&ns);
+ if(ns<5000000000ull)return;
+ uint64_t busy,longest,waited;
+ absolutetime_to_nanoseconds(stat_busy,&busy);absolutetime_to_nanoseconds(stat_longest,&longest);
+ absolutetime_to_nanoseconds(stat_waited,&waited);
+ printf("BEGONIA GPU SERVICE: %llu jobs (%llu fragment) in %llu ms: %llu us each on the GPU, the longest %llu; "
+  "GPU busy %llu%%; queued %llu us each before starting, queue up to %u deep; %s\n",stat_jobs,stat_fragment,
+  ns/1000000,busy/1000/stat_jobs,longest/1000,busy*100/ns,waited/1000/stat_jobs,stat_deepest,
+  async_jobs?"queued":"run in the submit");
+ stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
+}
+/* One job on the GPU, start to finish; nobody else touches its registers meanwhile. 1: done. */
+static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,unsigned depth) {
+ int success=0;
+ lck_mtx_lock(vm_lock);
+ flush_tables();
+ lck_mtx_unlock(vm_lock);
 
  unsigned slot=fragment?0:1,base=0x1800+slot*0x80;
+ uint64_t began=mach_absolute_time();
  wr(0x2004,0xffffffff);wr(0x1008,0);wr(0x1004,0xffffffff);
  wr(base+0x40,(uint32_t)chain);wr(base+0x44,chain>>32);
  wr(base+0x50,15);wr(base+0x54,0);wr(base+0x58,(3u<<8)|(3u<<12)|(8u<<16));
@@ -174,22 +227,81 @@ uint64_t hakios_mali_enqueue(uint64_t chain,bool fragment) {
    printf("BEGONIA GPU SERVICE: hardware recovery failed\n");
   }
  }
-
- if(!success)__atomic_store_n(&failed,seq,__ATOMIC_RELEASE);
- __atomic_store_n(&completed,seq,__ATOMIC_RELEASE);
- return success?seq:0;
+ job_stats(began,mach_absolute_time(),fragment,queued,depth);
+ return success;
+}
+static void job_thread(void *argument,wait_result_t result) {
+ (void)argument;(void)result;
+ for(;;) {
+  lck_mtx_lock(queue_lock);
+  while(queue_head==queue_tail)
+   (void)lck_mtx_sleep(queue_lock,LCK_SLEEP_DEFAULT,(event_t)&queue_tail,THREAD_UNINT);
+  uint64_t chain=queue[queue_head%JOB_QUEUE].chain,seq=queue[queue_head%JOB_QUEUE].seq;
+  bool fragment=queue[queue_head%JOB_QUEUE].fragment;uint64_t queued=queue[queue_head%JOB_QUEUE].queued;
+  unsigned depth=(unsigned)(queue_tail-queue_head);
+  lck_mtx_unlock(queue_lock);
+  int success=run_job(chain,fragment,seq,queued,depth);
+  lck_mtx_lock(queue_lock);
+  queue_head++;
+  if(!success)__atomic_store_n(&failed,seq,__ATOMIC_RELEASE);
+  __atomic_store_n(&completed,seq,__ATOMIC_RELEASE);
+  thread_wakeup((event_t)&completed);
+  thread_wakeup((event_t)&queue_head);
+  lck_mtx_unlock(queue_lock);
+ }
+}
+uint64_t hakios_mali_enqueue(uint64_t chain,bool fragment) {
+ if(!hakios_mali_ready() || !space.count || !chain || (chain&63))return 0;
+ lck_mtx_lock(vm_lock);
+ uint64_t mapped=beg_gpu_vm_translate(&space,chain);
+ lck_mtx_unlock(vm_lock);
+ if(!mapped)return 0;
+ if(!async_jobs) {
+  uint64_t seq=++submitted;
+  int success=run_job(chain,fragment,seq,mach_absolute_time(),0);
+  if(!success)__atomic_store_n(&failed,seq,__ATOMIC_RELEASE);
+  __atomic_store_n(&completed,seq,__ATOMIC_RELEASE);
+  return success?seq:0;
+ }
+ lck_mtx_lock(queue_lock);
+ while(queue_tail-queue_head>=JOB_QUEUE)
+  (void)lck_mtx_sleep(queue_lock,LCK_SLEEP_DEFAULT,(event_t)&queue_head,THREAD_UNINT);
+ uint64_t seq=++submitted;
+ queue[queue_tail%JOB_QUEUE].chain=chain;queue[queue_tail%JOB_QUEUE].seq=seq;
+ queue[queue_tail%JOB_QUEUE].fragment=fragment;queue[queue_tail%JOB_QUEUE].queued=mach_absolute_time();
+ queue_tail++;
+ thread_wakeup((event_t)&queue_tail);
+ lck_mtx_unlock(queue_lock);
+ return seq;
 }
 uint32_t hakios_mali_submit(uint64_t chain,bool fragment) {return (uint32_t)hakios_mali_enqueue(chain,fragment);}
+/* Job `seq` done, and well, within `timeout` nanoseconds (0: is it done now). */
 bool hakios_mali_wait(uint64_t seq,uint64_t timeout) {
- (void)timeout;
- return !seq || (hakios_mali_ready() && seq<=__atomic_load_n(&completed,__ATOMIC_ACQUIRE) &&
-  seq!=__atomic_load_n(&failed,__ATOMIC_ACQUIRE));
+ if(!seq)return true;
+ if(!hakios_mali_ready())return false;
+ if(async_jobs && timeout && seq>__atomic_load_n(&completed,__ATOMIC_ACQUIRE)) {
+  uint64_t interval,deadline;
+  nanoseconds_to_absolutetime(timeout,&interval);
+  deadline=mach_absolute_time()+interval;
+  if(deadline<interval)deadline=~0ull;
+  lck_mtx_lock(queue_lock);
+  while(seq>completed && hakios_mali_ready()) {
+   if(lck_mtx_sleep_deadline(queue_lock,LCK_SLEEP_DEFAULT,(event_t)&completed,THREAD_UNINT,deadline)==THREAD_TIMED_OUT)break;
+  }
+  lck_mtx_unlock(queue_lock);
+ }
+ return seq<=__atomic_load_n(&completed,__ATOMIC_ACQUIRE) && seq!=__atomic_load_n(&failed,__ATOMIC_ACQUIRE);
 }
 void begonia_mali_service_begin(vm_offset_t registers) {
  uint32_t enabled=0;
  if(!PE_parse_boot_argn("begonia_gpu_service",&enabled,sizeof enabled) || enabled!=1 || gpu)return;
  gpu=registers;
  if(rd(0)>>16!=0x7211 || reset())return;
+ gpu_group=lck_grp_alloc_init("begonia.gpu",LCK_GRP_ATTR_NULL);
+ vm_lock=lck_mtx_alloc_init(gpu_group,LCK_ATTR_NULL);
+ queue_lock=lck_mtx_alloc_init(gpu_group,LCK_ATTR_NULL);
+ if(!gpu_group || !vm_lock || !queue_lock)return;
+ (void)PE_parse_boot_argn("begonia_gpu_async",&async_jobs,sizeof async_jobs);
  vm_offset_t tbls = 0;
  size_t tbls_size = (sizeof(struct beg_gpu_vm_table) * BEG_GPU_VM_MAX_TABLES + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
  if(kmem_alloc(kernel_map, &tbls, tbls_size, KMA_KOBJECT|KMA_ZERO|KMA_DATA, VM_KERN_MEMORY_DIAG) != KERN_SUCCESS) {
@@ -203,7 +315,16 @@ void begonia_mali_service_begin(vm_offset_t registers) {
   printf("HakiosMali: init_gpu_hardware failed\n");
   return;
  }
+ if(async_jobs) {
+  thread_t thread=THREAD_NULL;
+  if(kernel_thread_start(job_thread,NULL,&thread)!=KERN_SUCCESS) {
+   printf("BEGONIA GPU SERVICE: no job thread; jobs run in the submit\n");async_jobs=0;
+  } else {
+   thread_set_thread_name(thread,"begonia.gpu.jobs");
+   thread_deallocate(thread);
+  }
+ }
  __atomic_store_n(&ready,1,__ATOMIC_RELEASE);
- printf("BEGONIA GPU SERVICE: high-performance pipeline active (60 FPS direct)\n");
+ printf("BEGONIA GPU SERVICE: ready; jobs %s\n",async_jobs?"queued to a kernel thread":"run inside the submit");
  HakiosMaliStart();
 }

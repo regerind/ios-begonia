@@ -7,6 +7,8 @@
 #include <stdbool.h>
 #include "begonia_gpu_mmu.h"
 #define BEG_GPU_VM_MAX_TABLES 4096
+#define BEG_GPU_VM_HASH_BITS 13
+#define BEG_GPU_VM_HASH (1u<<BEG_GPU_VM_HASH_BITS)   /* twice the tables: never full */
 struct beg_gpu_vm_table {
  uint64_t physical;
  uint64_t *entries;
@@ -17,7 +19,24 @@ struct beg_gpu_vm {
  unsigned count,limit;
  int (*allocate)(void *context,struct beg_gpu_vm_table *table);
  void *context;
+ /* physical page of a table -> its number + 1 (0: empty). Open addressing; tables are never
+  * removed. Mapping one 4 KiB page used to compare against every table three times over:
+  * with ~2000 tables (4 GiB of GPU VA cycled) a 10 MiB surface cost ~15 M compares. */
+ uint16_t hash[BEG_GPU_VM_HASH];
 };
+static inline unsigned beg_gpu_vm_slot(uint64_t physical) {
+ return (unsigned)(((physical>>12)*0x9e3779b97f4a7c15ull)>>(64-BEG_GPU_VM_HASH_BITS));
+}
+/* The table at `physical`, or vm->count: none. */
+static inline unsigned beg_gpu_vm_find(const struct beg_gpu_vm *vm,uint64_t physical) {
+ unsigned slot=beg_gpu_vm_slot(physical);
+ for(unsigned probes=0;probes<BEG_GPU_VM_HASH;probes++,slot=(slot+1)&(BEG_GPU_VM_HASH-1)) {
+  unsigned value=vm->hash[slot];
+  if(!value)break;
+  if(value<=vm->count && vm->tables[value-1].physical==physical)return value-1;
+ }
+ return vm->count;
+}
 static inline int beg_gpu_vm_new_table(struct beg_gpu_vm *vm) {
  if(!vm || !vm->tables || !vm->allocate || !vm->limit || vm->limit>BEG_GPU_VM_MAX_TABLES || vm->count>=vm->limit) {
   printf("beg_gpu_vm_new_table: count %u >= limit %u\n", vm ? vm->count : 0, vm ? vm->limit : 0);
@@ -33,7 +52,7 @@ static inline int beg_gpu_vm_new_table(struct beg_gpu_vm *vm) {
   printf("beg_gpu_vm_new_table: bad entries %p or table_entry 0x%llx\n", table.entries, table.physical);
   return -1;
  }
- for(unsigned i=0;i<vm->count;i++)if(vm->tables[i].physical==table.physical) {
+ if(beg_gpu_vm_find(vm,table.physical)!=vm->count) {
   printf("beg_gpu_vm_new_table: duplicate physical table 0x%llx\n", table.physical);
   return -1;
  }
@@ -42,7 +61,11 @@ static inline int beg_gpu_vm_new_table(struct beg_gpu_vm *vm) {
   return -1;
  }
  table.dirty=true;
- unsigned n=vm->count++;vm->tables[n]=table;return (int)n;
+ unsigned n=vm->count++;vm->tables[n]=table;
+ unsigned slot=beg_gpu_vm_slot(table.physical);
+ while(vm->hash[slot])slot=(slot+1)&(BEG_GPU_VM_HASH-1);
+ vm->hash[slot]=(uint16_t)(n+1);
+ return (int)n;
 }
 static inline int beg_gpu_vm_map(struct beg_gpu_vm *vm,uint64_t va,uint64_t physical) {
  unsigned index[4];uint64_t leaf=begonia_gpu_leaf_entry(physical);
@@ -72,7 +95,7 @@ static inline int beg_gpu_vm_map(struct beg_gpu_vm *vm,uint64_t va,uint64_t phys
     printf("beg_gpu_vm_map: entry at level %u bad flags 0x%llx\n", level, *entry);
     return -1;
    }
-   for(;next<vm->count;next++)if(vm->tables[next].physical==(*entry&~4095ull))break;
+   next=beg_gpu_vm_find(vm,*entry&~4095ull);
    if(next==vm->count) {
     printf("beg_gpu_vm_map: level %u next table 0x%llx not found\n", level, *entry&~4095ull);
     return -1;
@@ -96,7 +119,7 @@ static inline uint64_t beg_gpu_vm_translate(const struct beg_gpu_vm *vm,uint64_t
   if(!entry)return 0;
   if(level==3)return (entry&((1ull<<40)-4096))|(va&4095);
   if((entry&4095)!=3)return 0;
-  unsigned next=0;for(;next<vm->count;next++)if(vm->tables[next].physical==(entry&~4095ull))break;
+  unsigned next=beg_gpu_vm_find(vm,entry&~4095ull);
   if(next==vm->count)return 0;table=next;
  }
  return 0;
@@ -107,7 +130,7 @@ static inline int beg_gpu_vm_unmap(struct beg_gpu_vm *vm,uint64_t va) {
  for(unsigned level=0;level<3;level++) {
   uint64_t entry=vm->tables[table].entries[index[level]];unsigned next=0;
   if((entry&4095)!=3)return -1;
-  for(;next<vm->count;next++)if(vm->tables[next].physical==(entry&~4095ull))break;
+  next=beg_gpu_vm_find(vm,entry&~4095ull);
   if(next==vm->count)return -1;table=next;
  }
  uint64_t *entry=&vm->tables[table].entries[index[3]];if(!*entry)return -1;

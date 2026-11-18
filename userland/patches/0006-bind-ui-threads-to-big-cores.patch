@@ -1,0 +1,72 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -359,6 +359,11 @@
+  */
+ static int blit_targets = 1;
+ /*
++ * begonia, boot-arg gl_cpu=N: the drawing thread asks the kernel for processor N (kern.begonia_bind_cpu) when it
++ * begins its first frame. XNU has every core of this SoC down as the same kind; 5 and 6 are the two Cortex-A76.
++ */
++static int bind_cpu = -1;
++/*
+  * A frame that is handed to the display must have been drawn. The display's driver waits for
+  * the GPU itself before it puts a surface on the panel, on a thread of its own, and says so in
+  * the registry ("HakiosWaitsForGPU"); the window server is then at its next frame meanwhile.
+@@ -1193,6 +1198,13 @@
+ 	}
+ 	e->in_frame = true;
+ 	e->began = now_us();
++	if (bind_cpu >= 0) {
++		int cpu = bind_cpu, failed;
++
++		bind_cpu = -1;                          /* (once: the first thread that draws) */
++		failed = sysctlbyname("kern.begonia_bind_cpu", NULL, NULL, &cpu, sizeof(cpu));
++		say("hakios-gl: the drawing thread asked for processor %d: %s\n", cpu, failed == 0 ? "it has it" : strerror(errno));
++	}
+ 	if (prof_us != 0 && prof_thread == MACH_PORT_NULL) {
+ 		pthread_t sampler;
+ 
+@@ -4390,6 +4402,9 @@
+ 		}
+ 		share_surfaces = strstr(arguments, "glcopy=1") == NULL;
+ 		blit_targets = strstr(arguments, "glblit=0") == NULL;
++		if ((argument = strstr(arguments, "gl_cpu=")) != NULL) {
++			bind_cpu = atoi(argument + 7);
++		}
+ 		sync_frames = strstr(arguments, "glsync=0") == NULL;
+ 		if (strstr(arguments, "glwait=0") != NULL || (strstr(arguments, "glwait=1") == NULL && display_waits())) {
+ 			wait_for_frames = 0;
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2057,6 +2057,23 @@
+  * reads them. The ones that hold the frame rate back (CA_MINIMUM_FRAME_DURATION and its kind) are read by the
+  * process that animates as well as by the one that composes, and SpringBoard animates the home screen.
+  */
++/* begonia, boot-arg sb_cpu=N: SpringBoard's main thread (this constructor runs on it) onto processor N, as gl_cpu= */
++static void
++main_thread_cpu(void)
++{
++	char arguments[1024] = "";
++	size_t size = sizeof(arguments) - 1;
++	const char *argument;
++	int cpu, failed;
++
++	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 || (argument = strstr(arguments, "sb_cpu=")) == NULL) {
++		return;
++	}
++	cpu = atoi(argument + 7);
++	failed = sysctlbyname("kern.begonia_bind_cpu", NULL, NULL, &cpu, sizeof(cpu));
++	say("hakios: SpringBoard: the main thread asked for processor %d: %s\n", cpu, failed == 0 ? "it has it" : strerror(errno));
++}
++
+ static void
+ caenv(void)
+ {
+@@ -2118,6 +2135,7 @@
+ 		return;
+ 	}
+ 	caenv();
++	main_thread_cpu();
+ 	display_link_rates();
+ 	accessibility_settings();
+ 	/*
