@@ -1,13 +1,24 @@
 --- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
 +++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
-@@ -1536,6 +1536,10 @@
+@@ -1536,6 +1536,21 @@
  				/* the first picture: the kernel's text console must stop drawing over it */
  				fGraphics = true;
  				PE_initialize_console(NULL, kPEGraphicsMode);
-+				/* GraphicsMode sets flags; ReleaseScreen stops an acquired text console. */
-+				uint32_t keepConsole = 0;
++				/*
++				 * GraphicsMode only sets flags: the text console keeps drawing over the picture
++				 * (begonia_keep_console=1, the overlay). ReleaseScreen stops it but also arms the
++				 * boot progress indicator, which re-acquires the screen after a delay (the frozen
++				 * Apple logo). begonia_console_off=1: DisableScreen pauses the text console and
++				 * the progress indicator, nothing else (kernel output goes to the serial console).
++				 */
++				uint32_t keepConsole = 0, consoleOff = 0;
 +				PE_parse_boot_argn("begonia_keep_console", &keepConsole, sizeof(keepConsole));
-+				if (!keepConsole) PE_initialize_console(NULL, kPEReleaseScreen);
++				PE_parse_boot_argn("begonia_console_off", &consoleOff, sizeof(consoleOff));
++				if (consoleOff) {
++					PE_initialize_console(NULL, kPEDisableScreen);
++				} else if (!keepConsole) {
++					PE_initialize_console(NULL, kPEReleaseScreen);
++				}
  			}
  			drawLayer(s, src, dst);
  			if (layer == 0) {
