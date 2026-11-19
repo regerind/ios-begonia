@@ -50,6 +50,7 @@ static unsigned stat_deepest;
 static uint64_t stat_sleeps,stat_slept;
 static int32_t job_cpu=4;               /* x34: begonia_gpu_cpu (job_thread()) */
 static uint64_t stat_busy_fragment;
+static uint64_t stat_sizes[6],stat_size_us[6];
 static int job_bound=-1;
 static uint32_t rd(unsigned o) {return *(volatile uint32_t *)(gpu+o);}
 static void wr(unsigned o,uint32_t v) {*(volatile uint32_t *)(gpu+o)=v;__asm__ volatile("dsb sy":::"memory");}
@@ -200,6 +201,13 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
  uint64_t took=ended-began,ns;
  stat_jobs++;stat_fragment+=fragment;stat_busy+=took;stat_waited+=began-queued;
  if(fragment)stat_busy_fragment+=took;      /* x45: the pixel jobs' share of the GPU's time */
+ if(fragment) {                             /* x48: how long the pixel jobs are: a few long ones or many middling */
+  static const uint64_t bounds_us[5]={200,500,1000,2000,4000};
+  uint64_t us;unsigned k=0;
+  absolutetime_to_nanoseconds(took,&us);us/=1000;
+  while(k<5 && us>=bounds_us[k])k++;
+  stat_sizes[k]++;stat_size_us[k]+=us;
+ }
  if(took>stat_longest)stat_longest=took;
  if(depth>stat_deepest)stat_deepest=depth;
  if(!stat_since)stat_since=began;
@@ -215,6 +223,11 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
    printf("BEGONIA GPU JOBS: fragment %llu, %llu us each; the others (vertex and tiler) %llu, %llu us each\n",stat_fragment,
     stat_fragment?pixels/1000/stat_fragment:0,stat_jobs-stat_fragment,
     stat_jobs>stat_fragment?(busy-pixels)/1000/(stat_jobs-stat_fragment):0);stat_busy_fragment=0; }
+ printf("BEGONIA GPU SIZES: fragment jobs, count/ms in all: under 200 us %llu/%llu, to 500 %llu/%llu, to 1000 %llu/%llu, "
+  "to 2000 %llu/%llu, to 4000 %llu/%llu, longer %llu/%llu\n",stat_sizes[0],stat_size_us[0]/1000,stat_sizes[1],
+  stat_size_us[1]/1000,stat_sizes[2],stat_size_us[2]/1000,stat_sizes[3],stat_size_us[3]/1000,stat_sizes[4],
+  stat_size_us[4]/1000,stat_sizes[5],stat_size_us[5]/1000);
+ for(unsigned k=0;k<6;k++)stat_sizes[k]=stat_size_us[k]=0;
  printf("BEGONIA GPU WAITS: callers slept for a job %llu times, %llu ms in all (of %llu ms); jobs run on processor %d "
   "(begonia_gpu_cpu=%d: %s)\n",sleeps,slept/1000000,ns/1000000,cpu_number(),job_cpu,
   job_bound<0?"not asked":job_bound?"bound":"NOT bound");
