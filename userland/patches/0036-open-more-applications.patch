@@ -1,0 +1,36 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2744,6 +2744,33 @@
+ 	notify_register_dispatch("com.hakios.front", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		front();
+ 	});
++	notify_register_dispatch("com.hakios.open.maps", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.Maps");
++	});
++	notify_register_dispatch("com.hakios.open.weather", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.weather");
++	});
++	notify_register_dispatch("com.hakios.open.photos", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.mobileslideshow");
++	});
++	notify_register_dispatch("com.hakios.open.camera", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.camera");
++	});
++	notify_register_dispatch("com.hakios.open.music", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.Music");
++	});
++	notify_register_dispatch("com.hakios.open.measure", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.measure");
++	});
++	notify_register_dispatch("com.hakios.open.notes", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.mobilenotes");
++	});
++	notify_register_dispatch("com.hakios.open.appstore", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.AppStore");
++	});
++	notify_register_dispatch("com.hakios.open.calculator", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.calculator");
++	});
+ 	notify_register_dispatch("com.hakios.pbui", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		pbui();
+ 	});
