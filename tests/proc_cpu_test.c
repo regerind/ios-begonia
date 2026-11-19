@@ -77,8 +77,8 @@ main(int argc, char **argv)
 	int seconds = argc > 1 ? atoi(argv[1]) : 60;
 	static struct proc a[MAXP], b[MAXP];
 	static char history[3000];
-	mach_timebase_info_data_t tb;
-	mach_timebase_info(&tb);
+	mach_timebase_info_data_t tbase;
+	mach_timebase_info(&tbase);
 	setvbuf(stdout, NULL, _IOLBF, 0);
 
 	int na = take(a);
@@ -142,7 +142,7 @@ main(int argc, char **argv)
 					before = a[i].t;
 				}
 			}
-			double ns = (double)(b[j].t - before) * tb.numer / tb.denom;
+			double ns = (double)(b[j].t - before) * tbase.numer / tbase.denom;
 			pct[j] = 100.0 * ns / 3e9;
 			all += pct[j];
 			for (int s = 0; s < 5; s++) {
