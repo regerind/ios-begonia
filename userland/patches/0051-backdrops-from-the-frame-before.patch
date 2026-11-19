@@ -30,9 +30,9 @@
 + * and every frame at 30 fps (y117-y132). Here the picture's texture, read while another framebuffer is drawn into,
 + * is the copy of the frame before (made at each frame's end, the same way up): nothing to send early, the picture is
 + * drawn in one go, and a backdrop shows what was behind it one frame (16-33 ms) ago.
-+ * Boot-arg glbackdrop=1: on (off by default until it is seen right).
++ * On by default since y136 (with Mesa 0009: frames under 18 ms with YouTube 0-1% -> 23%, the page seen right); boot-arg glbackdrop=0: off.
 + */
-+static int backdrop_prev = 0;
++static int backdrop_prev = 1;
 +static GLuint prev_texture, prev_reader, prev_writer;
 +static GLsizei prev_width, prev_height;
 +static bool prev_valid;
@@ -171,7 +171,7 @@
  			}
  		}
  		share_surfaces = strstr(arguments, "glcopy=1") == NULL;
-+		backdrop_prev = strstr(arguments, "glbackdrop=1") != NULL;
++		backdrop_prev = strstr(arguments, "glbackdrop=0") == NULL;
  		auto_scissor_on = strstr(arguments, "glautoscissor=1") != NULL;
  		trust_seed = strstr(arguments, "glseed=0") == NULL;
  		share_planes = strstr(arguments, "glplanes=0") == NULL;
