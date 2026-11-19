@@ -1,0 +1,72 @@
+diff --git a/src/panfrost/vulkan/panvk_host_copy.c b/src/panfrost/vulkan/panvk_host_copy.c
+index fa5f2b9c852..0fd33ea4e18 100644
+--- a/src/panfrost/vulkan/panvk_host_copy.c
++++ b/src/panfrost/vulkan/panvk_host_copy.c
+@@ -15,6 +15,42 @@
+ 
+ #include "util/cache_ops.h"
+ 
++#include <fcntl.h>
++#include <stdarg.h>
++#include <stdio.h>
++#include <unistd.h>
++
++/*
++ * begonia: a host image copy (VK_EXT_host_image_copy), said on the console the first times: the Metal runtime makes
++ * a texture's first contents with one, and on the phone the processor's write into the tiled image faulted outside
++ * the mapping (Freeform, y29: pan_store_tiled_image from panvk_CopyMemoryToImage). What was mapped, how big, and
++ * where the copy goes.
++ */
++static void
++begonia_host_copy_say(const char *format, ...)
++{
++   static int fd = -2;
++   static unsigned said;
++   char line[512];
++   va_list ap;
++   int n;
++
++   if (said >= 24)
++      return;
++   if (fd == -2)
++      fd = open("/dev/console", O_WRONLY | O_NOCTTY);
++   if (fd < 0)
++      return;
++   said++;
++   va_start(ap, format);
++   n = vsnprintf(line, sizeof(line), format, ap);
++   va_end(ap);
++   if (n > (int)sizeof(line) - 1)
++      n = sizeof(line) - 1;
++   if (n > 0)
++      (void)write(fd, line, n);
++}
++
+ struct image_params {
+    struct panvk_image *img;
+    struct pan_kmod_bo *bo;
+@@ -314,6 +350,24 @@ panvk_CopyMemoryToImage(VkDevice device, const VkCopyMemoryToImageInfo *info)
+       if (result != VK_SUCCESS)
+          goto out_unmap;
+ 
++      {
++         const struct panvk_image_plane *plane = &dst->planes[p];
++         const VkMemoryToImageCopy *r = &info->pRegions[i];
++         const struct pan_image_slice_layout *slice =
++            &plane->plane.layout.slices[r->imageSubresource.mipLevel];
++
++         begonia_host_copy_say(
++            "panvk: host copy into image %ux%ux%u format %d mod %#llx flags %#x: mapped %p, bo %llu bytes, plane at %llu; "
++            "level %u at %u, %u bytes, row %u, surface %u, array %u; region at %d,%d %ux%u, layers %u+%u\n",
++            dst->vk.extent.width, dst->vk.extent.height, dst->vk.extent.depth, dst->vk.format,
++            (unsigned long long)dst->vk.drm_format_mod, info->flags, dst_cpu[p],
++            (unsigned long long)pan_kmod_bo_size(plane->mem->bo), (unsigned long long)plane->mem_offset,
++            r->imageSubresource.mipLevel, (unsigned)slice->offset_B, (unsigned)slice->size_B,
++            (unsigned)slice->tiled_or_linear.row_stride_B, (unsigned)slice->tiled_or_linear.surface_stride_B,
++            (unsigned)plane->plane.layout.array_stride_B, r->imageOffset.x, r->imageOffset.y,
++            r->imageExtent.width, r->imageExtent.height, r->imageSubresource.baseArrayLayer,
++            r->imageSubresource.layerCount);
++      }
+       panvk_copy_memory_to_image(dst, dst->planes[p].mem->bo, dst_cpu[p],
+                                  &info->pRegions[i], info->flags);
+       image_sync_subres(dst, dst_cpu[p], &info->pRegions[i].imageSubresource,
