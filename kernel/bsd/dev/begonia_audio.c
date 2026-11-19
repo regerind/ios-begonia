@@ -430,6 +430,123 @@ tone(char *out, size_t len, size_t o)
  * not the last sound again, plays when nothing is written. The hardware comes up on a thread call at the first write
  * (the writer is the audio server's real-time thread and must not wait); frames before that are dropped.
  */
+/*
+ * ---- The bottom speaker: the TFA9874 smart amp (I2C 6, 0x34), fed by the AFE's I2S3 out ----
+ * Xiaomi's tfa98xx.cnt (646 bytes, C:\begonia-private\firmware\vendor-firmware) is a TFA9874 with no DSP program
+ * ("9874_dummy.patch"): its device list (the hidden-register key, then 47 bit fields: TDM 2 slots of 32 bits, the
+ * speaker from slot 0, the boost and protection settings) and its one profile "speaker" (48 kHz) are below as they are
+ * in the file; a bit field is (register << 8 | first bit << 4 | bits - 1). The amp's own TFA2 start: I2C reset,
+ * the settings, MANSCONF (0x0120, "I2C configured"), AMPE (0x0030), PWDN (0x0000) 0 -- with the I2S clocks running,
+ * which its PLL locks to. The device tree: speaker on I2S3 out (mtk_spk_i2s_out = <3>), pins GPIO67 LRCK, 68 DO,
+ * 71 BCK (mode 1); I2S3 is AFE_I2S_CON3 (its I2S4_* fields): 48 kHz (10), I2S format, 32-bit words (BCK 64 fs).
+ * DL1's left channel goes to I2S3's (AFE_CONN0 bit 5), its right to I2S3's right (AFE_CONN1 bit 6).
+ */
+int begonia_i2c_xfer(int bus, uint8_t addr, const uint8_t *out, unsigned n, uint8_t *in, unsigned m);
+int begonia_i2c_amp_ready(uint16_t *rev);
+
+#define AFE_CONN0               0x0020          /* O00 (I2S3's left): bit 5 = DL1_CH1 */
+#define AFE_CONN1               0x0024          /* O01 (I2S3's right): bit 6 = DL1_CH2 */
+#define AFE_I2S_CON3            0x0040
+#define AMP_BUS                 6
+#define AMP_ADDR                0x34
+
+static const struct { uint8_t reg; uint16_t value; } amp_keys[] = { { 0x0f, 0x5a6b }, { 0xa1, 0x005a }, { 0xa0, 0x005a } };
+static const uint16_t amp_device[][2] = {       /* { bit field, value }: tfa98xx.cnt's device list, in its order */
+	{ 0x20c3, 0x2 }, { 0x2144, 0x1f }, { 0x2224, 0x17 }, { 0x2103, 0x1 }, { 0x2330, 0x1 }, { 0x2340, 0x1 }, { 0x26c3, 0x1 },
+	{ 0x2703, 0x0 }, { 0x6802, 0x2 }, { 0x2603, 0x0 }, { 0x2643, 0x1 }, { 0x2310, 0x0 }, { 0x6163, 0x4 }, { 0x6123, 0xf },
+	{ 0x6831, 0x1 }, { 0x6851, 0x2 }, { 0x0255, 0x16 }, { 0x5257, 0xbe }, { 0x64e1, 0x2 }, { 0x5350, 0x1 }, { 0x5690, 0x0 },
+	{ 0x6f02, 0x5 }, { 0x6f72, 0x1 }, { 0x7071, 0x3 }, { 0x7430, 0x1 }, { 0x7494, 0x8 }, { 0x75f0, 0x1 }, { 0x74f0, 0x0 },
+	{ 0x8001, 0x0 }, { 0x8305, 0x19 }, { 0x8364, 0x1e }, { 0x8453, 0x4 }, { 0x5150, 0x0 }, { 0x5844, 0x1 }, { 0x6f50, 0x1 },
+	{ 0x8510, 0x1 }, { 0x8530, 0x0 }, { 0x8540, 0x0 }, { 0x8801, 0x2 }, { 0x8440, 0x0 }, { 0xc4d0, 0x0 }, { 0xb050, 0x0 },
+	{ 0x7033, 0xc }, { 0x7444, 0xa }, { 0x7534, 0x6 }, { 0x7584, 0x10 }, { 0x7635, 0x1e }, { 0x7695, 0x3f },
+};
+static const uint16_t amp_speaker[][2] = {      /* the profile "speaker", up to its "default" section */
+	{ 0x0040, 0x1 }, { 0x7090, 0x1 }, { 0x64e1, 0x2 }, { 0x62e1, 0x0 }, { 0x0203, 0x8 },
+};
+
+static int
+amp_read(uint8_t reg, uint16_t *v)
+{
+	uint8_t b[2] = { 0, 0 };
+	int e = begonia_i2c_xfer(AMP_BUS, AMP_ADDR, &reg, 1, b, 2);
+	*v = (uint16_t)(b[0] << 8 | b[1]);
+	return e;
+}
+
+static int
+amp_write(uint8_t reg, uint16_t v)
+{
+	uint8_t b[3] = { reg, (uint8_t)(v >> 8), (uint8_t)v };
+	return begonia_i2c_xfer(AMP_BUS, AMP_ADDR, b, 3, NULL, 0);
+}
+
+static int
+amp_field(uint16_t field, uint16_t value)
+{
+	uint8_t reg = (uint8_t)(field >> 8);
+	unsigned pos = (field >> 4) & 15, bits = (field & 15) + 1;
+	uint16_t mask = (uint16_t)(((1u << bits) - 1) << pos), v;
+	int e = amp_read(reg, &v);
+	if (e == 0) {
+		e = amp_write(reg, (uint16_t)((v & ~mask) | ((value << pos) & mask)));
+	}
+	return e;
+}
+
+static bool speaker_on;
+
+static size_t
+speaker_up(char *out, size_t len, size_t o)
+{
+	uint16_t rev = 0, r[8];
+	int e;
+
+	if (begonia_i2c_amp_ready(&rev) != 0 || (rev & 0xff) != 0x74) {
+		say("speaker: the amp did not answer as a TFA9874 (rev %#x)\n", rev);
+		return o;
+	}
+	/* I2S3 out: the pins, DL1 into it, 48 kHz 32-bit I2S, on (before the amp: its PLL locks to BCK) */
+	m32(gpio, 0x300 + 0x10 * 8, 0xfu << 12 | 0xfu << 16 | 0xfu << 28, 1u << 12 | 1u << 16 | 1u << 28);     /* 67, 68, 71 */
+	m32(afe, AFE_CONN0, 1u << 5, 1u << 5);
+	m32(afe, AFE_CONN1, 1u << 6, 1u << 6);
+	m32(afe, AFE_I2S_CON3, 0xffffeffe, (10u << 8) | (1u << 3) | (1u << 1));
+	m32(afe, AFE_I2S_CON3, 1u, 1u);
+	delay(2000);
+	/* the amp: reset over I2C, the file's settings, then configured, amplifier on, powered up */
+	e = amp_field(0x0010, 1);
+	delay(5000);
+	for (unsigned i = 0; i < sizeof(amp_keys) / sizeof(amp_keys[0]); i++) {
+		e |= amp_write(amp_keys[i].reg, amp_keys[i].value);
+	}
+	for (unsigned i = 0; i < sizeof(amp_device) / sizeof(amp_device[0]); i++) {
+		e |= amp_field(amp_device[i][0], amp_device[i][1]);
+	}
+	for (unsigned i = 0; i < sizeof(amp_speaker) / sizeof(amp_speaker[0]); i++) {
+		e |= amp_field(amp_speaker[i][0], amp_speaker[i][1]);
+	}
+	e |= amp_field(0x0120, 1);              /* MANSCONF */
+	e |= amp_field(0x0030, 1);              /* AMPE */
+	e |= amp_field(0x0000, 0);              /* PWDN 0 */
+	/* what it says: its status registers over 200 ms (0x10/0x11: PLL, clocks, amp; 0x13; 0x14: its state machine) */
+	static const uint8_t look[8] = { 0x00, 0x01, 0x02, 0x10, 0x11, 0x13, 0x14, 0x15 };
+	for (int t = 0; t < 5; t++) {
+		delay(40000);
+		for (int i = 0; i < 8; i++) {
+			r[i] = 0xdead;
+			(void)amp_read(look[i], &r[i]);
+		}
+		if (t == 0 || t == 4) {
+			say("speaker: TFA9874 rev %#x%s; after %d ms: 00 %04x 01 %04x 02 %04x 10 %04x 11 %04x 13 %04x 14 %04x 15 %04x; "
+			    "I2S3 %#x\n", rev, e ? " (SOME I2C WRITES FAILED)" : "", (t + 1) * 40, r[0], r[1], r[2], r[3], r[4], r[5],
+			    r[6], r[7], r32(afe, AFE_I2S_CON3));
+		}
+	}
+	begonia_perf_note("BEGONIA AUDIO: speaker TFA9874 %#x%s: 00 %04x 01 %04x 10 %04x 11 %04x 13 %04x 14 %04x I2S3 %x", rev,
+	    e ? " I2C FAILED" : "", r[0], r[1], r[3], r[4], r[5], r[6], r32(afe, AFE_I2S_CON3));
+	speaker_on = e == 0;
+	return o;
+}
+
 #include <sys/hakios.audio.h>
 #include <kern/thread_call.h>
 #include <kern/clock.h>
@@ -443,6 +560,29 @@ static uint32_t wp;                             /* the next frame written, in th
 static uint32_t cleared;                        /* the next frame the timer clears */
 static thread_call_t up_call, clear_call;
 static uint64_t frames_in, frames_dropped;
+static volatile int audio_route;                /* 0 both (speaker left, earpiece right), 1 earpiece, 2 speaker */
+
+static int
+sysctl_begonia_audio_route SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+	int value = audio_route, changed = 0;
+	int error = sysctl_io_number(req, value, sizeof(int), &value, &changed);
+	if (error == 0 && changed) {
+		if (value < 0 || value > 2) {
+			return EINVAL;
+		}
+		if (value != audio_route) {
+			begonia_perf_note("BEGONIA AUDIO: route %d (%s)", value, value == 1 ? "earpiece: a call" :
+			    value == 2 ? "speaker" : "both");
+		}
+		audio_route = value;
+	}
+	return error;
+}
+SYSCTL_PROC(_kern, OID_AUTO, begonia_audio_route, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY,
+    0, 0, sysctl_begonia_audio_route, "I", "where the sound goes: 0 speaker + earpiece, 1 earpiece (calls), 2 speaker");
+
 static volatile uint32_t volume_gain = 32768;   /* Darwin's volume, 0..32768, read by the timer (not under audio_lock) */
 
 static void
@@ -542,6 +682,20 @@ come_up(__unused thread_call_param_t a, __unused thread_call_param_t b)
 		return;
 	}
 	dl1_regs_noted();
+	/*
+	 * The bottom speaker too. Then the two outputs take the ring's two channels: left to the speaker (I2S3), right
+	 * to the earpiece (the DAC link: O3 and O4 both from DL1_CH2). The sink decides what goes in each (route).
+	 */
+	{
+		static char spk[1024];
+		size_t so = speaker_up(spk, sizeof(spk), 0);
+		(void)so;
+		printf("%s", spk);
+		m32(afe, AFE_CONN3, 1u << 5 | 1u << 6, 1u << 6);
+		m32(afe, AFE_CONN4, 1u << 5 | 1u << 6, 1u << 6);
+		printf("BEGONIA AUDIO: the speaker %s\n", speaker_on ? "is on (left channel); the earpiece the right" :
+		    "DID NOT COME UP: the earpiece alone");
+	}
 	cleared = read_frame();
 	wp = (cleared + 1920) % RING_FRAMES;            /* 40 ms ahead of DL1 */
 	clear_call = thread_call_allocate(clear_played, NULL);
@@ -585,11 +739,23 @@ sink(const int16_t *frames, uint32_t count)
 	}
 	uint32_t room = RING_FRAMES / 2 - ahead;
 	uint32_t n = count < room ? count : room;
+	/*
+	 * Where the sound goes (kern.begonia_audio_route): 0 both -- Darwin's left to the bottom speaker, its right to the
+	 * earpiece, the "dual speaker"; 1 the earpiece alone (calls: SpringBoard sets it while one is in progress);
+	 * 2 the speaker alone. Without the speaker: the earpiece alone. Levels: the speaker at half (-6 dB: it runs with
+	 * no DSP, so no speaker protection), the earpiece at half when it is the second speaker (a small driver).
+	 */
+	int route = speaker_on ? audio_route : 1;
 	for (uint32_t i = 0; i < n; i++) {
-		int32_t m = ((int32_t)frames[2 * i] + frames[2 * i + 1]) / 2;
-		int16_t s = (int16_t)((m * (int32_t)g) >> 15);
-		ring[wp * 2] = s;
-		ring[wp * 2 + 1] = s;
+		int32_t l = frames[2 * i], r = frames[2 * i + 1], m = (l + r) / 2;
+		int32_t spk, ear;
+		switch (route) {
+		case 1:  spk = 0;      ear = m;      break;
+		case 2:  spk = m / 2;  ear = 0;      break;
+		default: spk = l / 2;  ear = r / 2;  break;
+		}
+		ring[wp * 2] = (int16_t)((spk * (int32_t)g) >> 15);
+		ring[wp * 2 + 1] = (int16_t)((ear * (int32_t)g) >> 15);
 		wp = (wp + 1) % RING_FRAMES;
 	}
 	__builtin_arm_dsb(0xf);

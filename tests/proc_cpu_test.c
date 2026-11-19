@@ -20,6 +20,35 @@ struct proc_taskinfo {
 	int32_t pti_syscalls_mach, pti_syscalls_unix, pti_csw, pti_threadnum, pti_numrunning, pti_priority;
 };
 
+/* and backboardd's threads by name (y99: backboardd half a core to a core with a video; which of its threads) */
+#define PROC_PIDTHREADINFO      5
+#define PROC_PIDLISTTHREADS     6
+struct proc_threadinfo {
+	uint64_t pth_user_time, pth_system_time;
+	int32_t pth_cpu_usage, pth_policy, pth_run_state, pth_flags, pth_sleep_time, pth_curpri, pth_priority, pth_maxpriority;
+	char pth_name[64];
+};
+#define MAXT 256
+struct thr { uint64_t id, ns; char name[40]; };
+
+static int
+threads_of(int pid, struct thr *s)
+{
+	static uint64_t ids[MAXT];
+	int bytes = proc_pidinfo(pid, PROC_PIDLISTTHREADS, 0, ids, sizeof(ids)), n = 0;
+	for (int i = 0; i < bytes / 8 && n < MAXT; i++) {
+		struct proc_threadinfo ti;
+		if (proc_pidinfo(pid, PROC_PIDTHREADINFO, ids[i], &ti, sizeof(ti)) != (int)sizeof(ti)) {
+			continue;
+		}
+		s[n].id = ids[i];
+		s[n].ns = ti.pth_user_time + ti.pth_system_time;
+		snprintf(s[n].name, sizeof(s[n].name), "%s", ti.pth_name[0] ? ti.pth_name : "?");
+		n++;
+	}
+	return n;
+}
+
 #define MAXP 1024
 struct proc { int pid; uint64_t t; char name[32]; };
 
@@ -53,9 +82,55 @@ main(int argc, char **argv)
 	setvbuf(stdout, NULL, _IOLBF, 0);
 
 	int na = take(a);
+	static struct thr ta[MAXT], tb[MAXT];
+	static char thistory[3000];
+	int bb = -1, nta = 0;
+	for (int i = 0; i < na; i++) {
+		if (strcmp(a[i].name, "backboardd") == 0) {
+			bb = a[i].pid;
+		}
+	}
+	if (bb > 0) {
+		nta = threads_of(bb, ta);
+	}
 	for (int w = 1; w * 3 <= seconds; w++) {
 		sleep(3);
 		int nb = take(b);
+		if (bb > 0) {
+			int ntb = threads_of(bb, tb);
+			char tl[300];
+			int to = snprintf(tl, sizeof(tl), "t=%d:", w * 3);
+			for (int pick = 0; pick < 4; pick++) {
+				int best = -1;
+				double bp = 3.0;
+				for (int j = 0; j < ntb; j++) {
+					uint64_t before = tb[j].ns;
+					for (int i = 0; i < nta; i++) {
+						if (ta[i].id == tb[j].id) {
+							before = ta[i].ns;
+						}
+					}
+					double p = 100.0 * (double)(tb[j].ns - before) / 3e9;
+					if (p > bp && tb[j].name[0] != 0) {
+						bp = p;
+						best = j;
+					}
+				}
+				if (best < 0) {
+					break;
+				}
+				to += snprintf(tl + to, sizeof(tl) - (size_t)to, " %s %.0f%%;", tb[best].name, bp);
+				tb[best].name[0] = 0;            /* (picked) */
+			}
+			ntb = threads_of(bb, tb);        /* names again, and the times for the next window */
+			memcpy(ta, tb, sizeof(tb[0]) * (size_t)ntb);
+			nta = ntb;
+			if (strlen(thistory) + strlen(tl) + 4 < sizeof(thistory)) {
+				strcat(thistory, " | ");
+				strcat(thistory, tl);
+			}
+			printf("BBTHREADS%s\n", thistory);
+		}
 		/* the top five of this window */
 		int top[5] = { -1, -1, -1, -1, -1 };
 		double pct[MAXP];

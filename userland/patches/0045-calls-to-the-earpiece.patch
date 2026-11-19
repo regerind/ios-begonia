@@ -1,0 +1,72 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2255,6 +2255,61 @@
+ }
+ 
+ /*
++ * begonia: in a call, the earpiece alone. The kernel plays Darwin's sound on the bottom speaker and the earpiece
++ * together (kern.begonia_audio_route 0); while a call is in progress (CallKit's CXCallObserver: a call that has not
++ * ended -- FaceTime, VoIP apps) it is the earpiece alone (1), as on any phone. Looked at every second.
++ */
++static void
++calls_to_the_earpiece(void)
++{
++	static id observer;
++	int probe = 0;
++	size_t size = sizeof(probe);
++
++	if (sysctlbyname("kern.begonia_audio_route", &probe, &size, NULL, 0) != 0) {
++		say("hakios: calls: no kern.begonia_audio_route
++");
++		return;
++	}
++	dlopen("/System/Library/Frameworks/CallKit.framework/CallKit", RTLD_NOW);
++	Class cls = objc_getClass("CXCallObserver");
++	if (cls == Nil) {
++		say("hakios: calls: no CXCallObserver
++");
++		return;
++	}
++	observer = SEND(id, SEND(id, (id)cls, "alloc"), "init");
++	if (observer != nil) {
++		SEND(id, observer, "retain");
++	}
++	dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
++	dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), NSEC_PER_SEC, NSEC_PER_SEC / 4);
++	dispatch_source_set_event_handler(timer, ^{
++		static int sent = -1;
++		int in_call = 0;
++		id calls = observer ? SEND(id, observer, "calls") : nil;
++		unsigned long n = calls ? ((unsigned long (*)(id, SEL))objc_msgSend)(calls, sel_registerName("count")) : 0;
++		for (unsigned long i = 0; i < n; i++) {
++			id call = ((id (*)(id, SEL, unsigned long))objc_msgSend)(calls, sel_registerName("objectAtIndex:"), i);
++			if (!((BOOL (*)(id, SEL))objc_msgSend)(call, sel_registerName("hasEnded"))) {
++				in_call = 1;
++			}
++		}
++		if (in_call != sent) {
++			int route = in_call ? 1 : 0;
++			sysctlbyname("kern.begonia_audio_route", NULL, NULL, &route, sizeof(route));
++			say("hakios: calls: %s: sound to %s
++", in_call ? "a call" : "no call", in_call ? "the earpiece alone" :
++			    "the speaker and the earpiece");
++			sent = in_call;
++		}
++	});
++	dispatch_resume(timer);
++	say("hakios: calls: CallKit watched (in a call: the earpiece alone)
++");
++}
++
++/*
+  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
+  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
+  */
+@@ -2812,6 +2867,7 @@
+ 	display_link_rates();
+ 	torch_for_control_centre();
+ 	brightness_to_the_lcd();
++	calls_to_the_earpiece();
+ 	accessibility_settings();
+ 	/*
+ 	 * The tweaks of the package manager's prefix, if one is installed: ElleKit's loader

@@ -341,6 +341,26 @@ clone(int from, int to, char *out, size_t len, size_t o)
 	return regs_of(to, out, len, o);
 }
 
+/*
+ * The speaker amp's bus made usable (begonia_audio.c): what "clone 5 6" and "tfa" did by hand in y82..y86 -- bus 6
+ * set up as bus 5, the pins 45/46 to I2C, the amp's reset pulsed if GPIO24 is still a GPIO; then the revision (0x03).
+ */
+int
+begonia_i2c_amp_ready(uint16_t *rev)
+{
+	static char scratch[512];
+	uint8_t reg = 0x03, v[2] = { 0, 0 };
+
+	if (!gpio_map()) {
+		return -1;
+	}
+	(void)clone(5, 6, scratch, sizeof(scratch), 0);
+	(void)tfa(scratch, sizeof(scratch), 0);
+	int e = begonia_i2c_xfer(6, 0x34, &reg, 1, v, 2);
+	*rev = (uint16_t)(v[0] << 8 | v[1]);
+	return e;
+}
+
 /* the torch for Control Centre: MT6360 (I2C 5, 0x34) flash LED 1, current selector 0..31 (lowest 0), or off */
 int
 begonia_torch(int level)
