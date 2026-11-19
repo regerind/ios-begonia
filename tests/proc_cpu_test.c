@@ -8,7 +8,223 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <pthread.h>
+#include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <mach/mach_vm.h>
+
+/*
+ * A sampling profiler (y103): every 10 ms, the running threads of a few processes are stopped for a moment
+ * (thread_get_state) and their place read -- the program counter and up to 12 callers by the frame pointers. Code
+ * of the shared cache is named by dladdr() here (the cache is at the same place in every process of a boot); other
+ * code is "image+page". Each 3 s window: the five functions most often running ("LEAF") and the five most often on
+ * the stack ("IN"), per process. As root, task_for_pid() is allowed (bsd/vm/vm_unix.c).
+ */
+enum { NS = 4 };
+static const char *const sampled[NS] = { "SpringBoard", "backboardd", "com.apple.WebKit.GPU", "com.apple.WebKit.Networking" };
+static const char *const stag[NS] = { "SB", "BB", "WKGPU", "WKNET" };
+#define SYMS 512
+struct sym { const void *key; char name[48]; unsigned leaf, in; };
+static struct sym syms[NS][SYMS];
+static unsigned samples[NS];
+static pthread_mutex_t sym_lock = PTHREAD_MUTEX_INITIALIZER;
+
+int proc_listallpids(void *buffer, int buffersize);
+int proc_name(int pid, void *buffer, uint32_t buffersize);
+
+static struct sym *
+sym_of(int p, uint64_t pc)
+{
+	Dl_info info;
+	const void *key;
+	char name[48];
+
+	if (dladdr((const void *)pc, &info) && info.dli_sname != NULL) {
+		key = info.dli_saddr;
+		snprintf(name, sizeof(name), "%s", info.dli_sname);
+	} else {
+		key = (const void *)(pc & ~0xfffULL);
+		snprintf(name, sizeof(name), "pc %llx", (unsigned long long)(pc & ~0xfffULL));
+	}
+	unsigned h = (unsigned)(((uintptr_t)key >> 2) * 2654435761u) % SYMS;
+	for (unsigned n = 0; n < SYMS; n++, h = (h + 1) % SYMS) {
+		struct sym *s = &syms[p][h];
+		if (s->key == key) {
+			return s;
+		}
+		if (s->key == NULL) {
+			s->key = key;
+			memcpy(s->name, name, sizeof(name));
+			return s;
+		}
+	}
+	return NULL;
+}
+
+static void
+sample_task(int p, task_t task)
+{
+	thread_act_array_t threads;
+	mach_msg_type_number_t count;
+
+	if (task_threads(task, &threads, &count) != KERN_SUCCESS) {
+		return;
+	}
+	for (unsigned t = 0; t < count; t++) {
+		thread_basic_info_data_t bi;
+		mach_msg_type_number_t bn = THREAD_BASIC_INFO_COUNT;
+		arm_thread_state64_t st;
+		mach_msg_type_number_t sn = ARM_THREAD_STATE64_COUNT;
+
+		if (thread_info(threads[t], THREAD_BASIC_INFO, (thread_info_t)&bi, &bn) != KERN_SUCCESS ||
+		    bi.run_state != TH_STATE_RUNNING ||
+		    thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&st, &sn) != KERN_SUCCESS) {
+			mach_port_deallocate(mach_task_self(), threads[t]);
+			continue;
+		}
+		uint64_t pcs[13];
+		int n = 0;
+		pcs[n++] = __darwin_arm_thread_state64_get_pc(st);
+		pcs[n++] = __darwin_arm_thread_state64_get_lr(st);
+		uint64_t fp = __darwin_arm_thread_state64_get_fp(st);
+		while (n < 13 && fp != 0 && (fp & 7) == 0) {
+			uint64_t frame[2];
+			mach_vm_size_t got = 0;
+			if (mach_vm_read_overwrite(task, fp, sizeof(frame), (mach_vm_address_t)frame, &got) != KERN_SUCCESS ||
+			    got != sizeof(frame) || frame[0] <= fp) {
+				break;
+			}
+			pcs[n++] = frame[1];
+			fp = frame[0];
+		}
+		pthread_mutex_lock(&sym_lock);
+		samples[p]++;
+		const void *seen[13];
+		int ns = 0;
+		for (int i = 0; i < n; i++) {
+			struct sym *s = sym_of(p, pcs[i]);
+			if (s == NULL) {
+				continue;
+			}
+			if (i == 0) {
+				s->leaf++;
+			}
+			int dup = 0;
+			for (int j = 0; j < ns; j++) {
+				dup |= seen[j] == s->key;
+			}
+			if (!dup) {
+				s->in++;
+				seen[ns++] = s->key;
+			}
+		}
+		pthread_mutex_unlock(&sym_lock);
+		mach_port_deallocate(mach_task_self(), threads[t]);
+	}
+	vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof(threads[0]));
+}
+
+static void *
+sampler(void *unused)
+{
+	(void)unused;
+	int pids[NS] = { 0 };
+	task_t tasks[NS] = { 0 };
+	unsigned tick = 0;
+	static int all[4096];
+
+	for (;;) {
+		if (tick++ % 100 == 0) {                /* the processes again every second (they come and go) */
+			int n = proc_listallpids(all, sizeof(all));
+			for (int p = 0; p < NS; p++) {
+				int found = 0;
+				for (int i = 0; i < n; i++) {
+					char name[64] = "";
+					if (proc_name(all[i], name, sizeof(name)) > 0 && strcmp(name, sampled[p]) == 0) {
+						found = all[i];
+					}
+				}
+				if (found != pids[p]) {
+					if (tasks[p]) {
+						mach_port_deallocate(mach_task_self(), tasks[p]);
+					}
+					tasks[p] = 0;
+					pids[p] = found;
+					if (found && task_for_pid(mach_task_self(), found, &tasks[p]) != KERN_SUCCESS) {
+						static int said;
+						if (said++ < 4) {
+							printf("SAMPLE: task_for_pid(%s) refused\n", sampled[p]);
+						}
+						tasks[p] = 0;
+					}
+				}
+			}
+		}
+		for (int p = 0; p < NS; p++) {
+			if (tasks[p]) {
+				sample_task(p, tasks[p]);
+			}
+		}
+		usleep(10000);
+	}
+	return NULL;
+}
+
+/* a window's top five, by leaf or by on-the-stack, into line; the counts cleared */
+static void
+sample_window(int w, char hist[NS][4000])
+{
+	pthread_mutex_lock(&sym_lock);
+	for (int p = 0; p < NS; p++) {
+		if (samples[p] < 5) {
+			memset(syms[p], 0, sizeof(syms[p]));
+			samples[p] = 0;
+			continue;
+		}
+		char line[700], brief[300];
+		int o = snprintf(line, sizeof(line), "t=%d n=%u LEAF", w * 3, samples[p]);
+		int bo = snprintf(brief, sizeof(brief), "t=%d:", w * 3);
+		for (int pass = 0; pass < 2; pass++) {
+			if (pass == 1) {
+				o += snprintf(line + o, sizeof(line) - (size_t)o, " IN");
+				bo += snprintf(brief + bo, sizeof(brief) - (size_t)bo, " /");
+			}
+			for (int k = 0; k < 5; k++) {
+				struct sym *best = NULL;
+				for (int i = 0; i < SYMS; i++) {
+					struct sym *s = &syms[p][i];
+					unsigned v = pass ? s->in : s->leaf;
+					if (s->key && v && (best == NULL || v > (pass ? best->in : best->leaf))) {
+						best = s;
+					}
+				}
+				if (best == NULL) {
+					break;
+				}
+				unsigned v = pass ? best->in : best->leaf;
+				o += snprintf(line + o, sizeof(line) - (size_t)o, " %.40s %u%%;", best->name, v * 100 / samples[p]);
+				if (k < (pass ? 4 : 2) && bo < (int)sizeof(brief)) {
+					bo += snprintf(brief + bo, sizeof(brief) - (size_t)bo, " %.26s %u", best->name, v * 100 / samples[p]);
+				}
+				if (pass) {
+					best->in = 0;
+				} else {
+					best->leaf = 0;
+				}
+			}
+		}
+		(void)line;
+		if (strlen(hist[p]) + strlen(brief) + 4 < 4000) {
+			strcat(hist[p], " | ");
+			strcat(hist[p], brief);
+		}
+		printf("SAMPLES %s%s\n", stag[p], hist[p]);
+		memset(syms[p], 0, sizeof(syms[p]));
+		samples[p] = 0;
+	}
+	pthread_mutex_unlock(&sym_lock);
+}
 
 int proc_listallpids(void *buffer, int buffersize);
 int proc_name(int pid, void *buffer, uint32_t buffersize);
@@ -82,6 +298,9 @@ main(int argc, char **argv)
 	setvbuf(stdout, NULL, _IOLBF, 0);
 
 	int na = take(a);
+	static char shist[NS][4000];
+	pthread_t sampler_thread;
+	pthread_create(&sampler_thread, NULL, sampler, NULL);
 	/*
 	 * The threads of the processes the stalls point at (y99-y101): backboardd (the compositor), SpringBoard (the
 	 * far-left/far-right panes), chronod (the widgets), the WebKit GPU process (video). A window's threads over 3%.
@@ -140,7 +359,7 @@ main(int argc, char **argv)
 				strcat(thistory[k], " | ");
 				strcat(thistory[k], tl);
 			}
-			printf("THR %s%s\n", tag[k], thistory[k]);
+			(void)tag;           /* (y103: the sampler says more; the log ring is small) */
 		}
 		/* the top five of this window */
 		int top[5] = { -1, -1, -1, -1, -1 };
@@ -173,12 +392,13 @@ main(int argc, char **argv)
 				o += snprintf(line + o, sizeof(line) - (size_t)o, " %s %.0f%%;", b[top[s]].name, pct[top[s]]);
 			}
 		}
-		printf("CPU %s\n", line);
+		(void)0;
 		if (strlen(history) + strlen(line) + 4 < sizeof(history)) {
 			strcat(history, " | ");
 			strcat(history, line);
 		}
 		printf("CPU HISTORY%s\n", history);
+		sample_window(w, shist);
 		memcpy(a, b, sizeof(b[0]) * (size_t)nb);
 		na = nb;
 	}
