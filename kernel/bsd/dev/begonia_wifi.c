@@ -3188,7 +3188,22 @@ vw_worker(__unused void *arg, __unused wait_result_t wr)
 		if (log[0]) {
 			printf("BEGONIA WIFI: %s", log);
 		}
-		struct timespec ts = { 0, (busy ? 1 : link ? 2 : 20) * NSEC_PER_MSEC };
+		/*
+		 * Polled (no interrupt here yet): fast only while there is traffic. Joined but quiet for 200 ms, the rings
+		 * are looked at every 10 ms instead of every 2 (500 wake-ups a second for nothing: the phone's heat).
+		 */
+		static uint64_t lastBusy, lastPackets;
+		uint64_t nowAbs = mach_absolute_time(), quiet, packets = (uint64_t)sj.rx + sj.tx;     /* data frames only */
+		if (packets != lastPackets) {
+			lastPackets = packets;
+			busy = true;
+		}
+		if (busy) {
+			lastBusy = nowAbs;
+		}
+		absolutetime_to_nanoseconds(nowAbs - lastBusy, &quiet);
+		uint32_t ms = busy ? 1 : link ? (quiet < 200 * NSEC_PER_MSEC ? 2 : 10) : 20;
+		struct timespec ts = { 0, ms * NSEC_PER_MSEC };
 		lck_mtx_lock(&vs_mtx);
 		if (vs.req == 0 && vs.txn == 0) {
 			(void)msleep(&vw_chan, &vs_mtx, PZERO | PDROP, "begoniawifi", up ? &ts : NULL);
