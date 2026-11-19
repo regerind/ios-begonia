@@ -1,41 +1,50 @@
 --- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
 +++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
-@@ -263,6 +263,34 @@
+@@ -263,6 +263,43 @@
  static TUNABLE(uint32_t, gBeam, "fb_beam", 1);
  extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
  static inline uint32_t refreshHz(void);
 +/*
-+ * begonia, boot-arg fb_shot=SECONDS: what is on the panel, into the log, SECONDS after boot and again 15 s later --
-+ * for sessions nobody watches. Every eighth pixel of every eighth row, its brightness as one of 64 characters
-+ * ("SHOTn ROW chars"; C:\begonia-private\sh\shot.py makes pictures of them again).
++ * begonia, boot-arg fb_shot=SECONDS: what is on the panel, into the log, SECONDS after boot and again every
++ * fb_shot_gap seconds (15), fb_shot_n times in all (2) -- for sessions nobody watches. Every fb_shot_step'th pixel
++ * (8) of every such row between fb_shot_top and fb_shot_bottom (percent of the height, 0 and 100), its brightness as
++ * one of 64 characters ("SHOTn ROW chars"; C:\begonia-private\sh\shot.py makes pictures of them again).
 + */
 +static TUNABLE(uint32_t, gShot, "fb_shot", 0);
++static TUNABLE(uint32_t, gShotGap, "fb_shot_gap", 15);
++static TUNABLE(uint32_t, gShotCount, "fb_shot_n", 2);
++static TUNABLE(uint32_t, gShotStep, "fb_shot_step", 8);
++static TUNABLE(uint32_t, gShotTop, "fb_shot_top", 0);
++static TUNABLE(uint32_t, gShotBottom, "fb_shot_bottom", 100);
 +
 +static void
 +panelShot(const uint8_t * base, uint32_t width, uint32_t height, uint32_t rowBytes, unsigned number)
 +{
 +	static const char marks[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/";
-+	char line[260];
++	static char line[1200];
++	uint32_t step = gShotStep >= 1 && gShotStep <= 64 ? gShotStep : 8;
++	uint32_t top = gShotTop < 100 ? height * gShotTop / 100 : 0;
++	uint32_t bottom = gShotBottom <= 100 && gShotBottom > gShotTop ? height * gShotBottom / 100 : height;
 +
-+	IOLog("SHOT%u begins: %u x %u, every 8th\n", number, width, height);
-+	for (uint32_t y = 0; y < height; y += 8) {
++	IOLog("SHOT%u begins: %u x %u, every %uth, rows %u to %u\n", number, width, height, step, top, bottom);
++	for (uint32_t y = top; y < bottom; y += step) {
 +		unsigned n = 0;
 +
-+		for (uint32_t x = 0; x < width && n < sizeof(line) - 1; x += 8) {
++		for (uint32_t x = 0; x < width && n < sizeof(line) - 1; x += step) {
 +			uint32_t pixel = *(const volatile uint32_t *) (base + (size_t) y * rowBytes + (size_t) x * 4);
 +			uint32_t grey = (((pixel >> 16) & 255) * 2 + ((pixel >> 8) & 255) * 5 + (pixel & 255)) >> 3;
 +
 +			line[n++] = marks[grey >> 2];
 +		}
 +		line[n] = 0;
-+		IOLog("SHOT%u %03u %s\n", number, y / 8, line);
++		IOLog("SHOT%u %03u %s\n", number, (y - top) / step, line);
 +	}
 +	IOLog("SHOT%u ends\n", number);
 +}
  
  /*
   * Boot-arg fb_intf=PHYSICAL: the registers of the display interface the panel is on, for a port. Without it the SoC the kernel
-@@ -1624,6 +1652,15 @@
+@@ -1624,6 +1661,15 @@
  		fLayersShown = layers;
  	}
  
@@ -44,7 +53,7 @@
 +		uint64_t up;
 +
 +		absolutetime_to_nanoseconds(mach_absolute_time(), &up);
-+		if (shots < 2 && up / NSEC_PER_SEC >= gShot + 15 * shots) {
++		if (shots < gShotCount && shots < 9 && up / NSEC_PER_SEC >= gShot + gShotGap * shots) {
 +			panelShot(fBase, fPanelWidth, fPanelHeight, fRowBytes, ++shots);
 +		}
 +	}
