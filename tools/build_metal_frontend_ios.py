@@ -459,8 +459,8 @@ for old,new in hooks:
 # (the front end's warnings -- "returning stub pipeline" and the like -- on the console too: an application's NSLog
 # reaches no kept log)
 assert mtext.count('NSLog(@"[BegoniaMetal] WARNING: ')>0
-mtext=mtext.replace('#define NBLOG(','#define NBWARN(...) do{NSString *nbWarning=[NSString stringWithFormat:__VA_ARGS__];NSLog(@"[BegoniaMetal] WARNING: %@",nbWarning);nbConsole(nbWarning);}while(0)\n#define NBLOG(',1)
 mtext=mtext.replace('NSLog(@"[BegoniaMetal] WARNING: ','NBWARN(@"')
+mtext=mtext.replace('#define NBLOG(','#define NBWARN(...) do{NSString *nbWarning=[NSString stringWithFormat:__VA_ARGS__];NSLog(@"[BegoniaMetal] WARNING: %@",nbWarning);nbConsole(nbWarning);}while(0)\n#define NBLOG(',1)
 
 frontend = mtext
 if a.quartzcore:
