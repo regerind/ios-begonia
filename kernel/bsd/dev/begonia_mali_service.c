@@ -223,6 +223,7 @@ void hakios_mali_tag(uint64_t address,uint32_t kind,uint32_t width,uint32_t heig
  uint32_t format,uint32_t offset) {
  (void)address;(void)kind;(void)width;(void)height;(void)row;(void)format;(void)offset;
 }
+static void say_submitters(void);
 static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queued,unsigned depth) {
  uint64_t took=ended-began,ns;
  stat_jobs++;stat_fragment+=fragment;stat_busy+=took;stat_waited+=began-queued;
@@ -267,6 +268,7 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
   ns/1000000,busy/1000/stat_jobs,longest/1000,busy*100/ns,waited/1000/stat_jobs,stat_deepest,
   async_jobs?"queued":"run in the submit");
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
+ say_submitters();
 }
 /* One job on the GPU, start to finish; nobody else touches its registers meanwhile. 1: done. */
 static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,unsigned depth) {
@@ -331,8 +333,32 @@ static void job_thread(void *argument,wait_result_t result) {
   lck_mtx_unlock(queue_lock);
  }
 }
+/*
+ * y117: with YouTube open the GPU was 82-91% busy with 4000-5000 jobs a second and a queue 349 deep; whose jobs?
+ * Counted by the process that submits (the submit runs on its thread), said with the 5-second statistics.
+ */
+extern int proc_selfpid(void);
+extern void proc_selfname(char *buf,int size);
+static struct {int pid;char name[20];uint32_t jobs,fragments;} by_proc[8];
+static void count_submitter(bool fragment) {
+ int pid=proc_selfpid(),slot=-1,least=0;
+ for(int i=0;i<8;i++) {
+  if(by_proc[i].pid==pid){slot=i;break;}
+  if(by_proc[i].jobs<by_proc[least].jobs)least=i;
+ }
+ if(slot<0){slot=least;by_proc[slot].pid=pid;by_proc[slot].jobs=by_proc[slot].fragments=0;proc_selfname(by_proc[slot].name,sizeof(by_proc[slot].name));}
+ by_proc[slot].jobs++;by_proc[slot].fragments+=fragment;
+}
+static void say_submitters(void) {
+ char line[400];int o=0;
+ for(int i=0;i<8;i++)if(by_proc[i].jobs && o<(int)sizeof(line)-60)
+  o+=snprintf(line+o,sizeof(line)-o," %s[%d] %u/%u;",by_proc[i].name,by_proc[i].pid,by_proc[i].jobs,by_proc[i].fragments);
+ if(o)printf("BEGONIA GPU BY PROCESS (jobs/fragment in 5 s):%s\n",line);
+ for(int i=0;i<8;i++)by_proc[i].jobs=by_proc[i].fragments=0;
+}
 uint64_t hakios_mali_enqueue(uint64_t chain,bool fragment) {
  if(!hakios_mali_ready() || !space.count || !chain || (chain&63))return 0;
+ count_submitter(fragment);
  lck_mtx_lock(vm_lock);
  uint64_t mapped=beg_gpu_vm_translate(&space,chain);
  lck_mtx_unlock(vm_lock);
