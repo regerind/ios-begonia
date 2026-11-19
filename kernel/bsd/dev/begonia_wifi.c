@@ -221,6 +221,7 @@ static int begonia_pwrap_write_regulator(uint32_t addr, uint32_t mask, uint32_t 
 #define EMI_DATE_BT             0x68300
 #define EMI_DATE_WIFI           0x68310
 #define EMI_DATE_MCU            0x68320
+#define EMI_DATE_PATCH_MCU      0x68330
 
 /*
  * PMIC MT6359 (or MT6359P, by HWCID): the Wi-Fi rails are VCN18 (fixed 1.8 V) and VCN33_1 (3.3 V, its "wifi" enable
@@ -891,6 +892,54 @@ wifi_wmt(char *out, size_t len, size_t o)
 	static const uint8_t sstp[] = { 0x01, 0x04, 0x05, 0x00, 0x03, 0xdb, 0x0e, 0x68, 0x01 };
 	static const uint8_t sstpEv[] = { 0x02, 0x04, 0x02, 0x00, 0x00, 0x03 };
 	(void)wmt_cmd("query stp", qstp, sizeof(qstp), qstpDef, sizeof(qstpDef), 1000, ev, sizeof(ev), out, len, &o);
+	/*
+	 * The MCU ROM patch, still in "mand" mode (mtk_wcn_soc_sw_init step 6, MT6785: pda_dl_patch_flag 1, options
+	 * OPT_PATCH_CHECKSUM): soc1_0_patch_mcu_2a_1_hdr.bin = 28-byte header + 2-byte checksum + body. The target address
+	 * is the header's patch word with its flag byte (0x11) cleared: 0x0001C000 (gen4m CONNAC_PATCH_START_ADDR).
+	 * PDA config (WMT_PATCH_PDA_CFG_CMD), then raw on BTIF (no STP framing, mtk_wcn_stp_send_data_raw): a 12-byte
+	 * header holding body + 12, the body in 1000-byte pieces; then "wmt reset" (init_table_3). y59 went on without it
+	 * and the RF calibration was never answered.
+	 */
+	{
+		const uint8_t *p = g_begonia_fw_patch_mcu;
+		uint32_t body = (uint32_t)g_begonia_fw_patch_mcu_len - 30;
+		uint32_t addr = ((uint32_t)p[25] << 8) | ((uint32_t)p[26] << 16) | ((uint32_t)p[27] << 24);
+		uint8_t cfg[] = { 0x01, 0x01, 0x11, 0x00, 0x00, (uint8_t)addr, (uint8_t)(addr >> 8), (uint8_t)(addr >> 16),
+			          (uint8_t)(addr >> 24), (uint8_t)body, (uint8_t)(body >> 8), (uint8_t)(body >> 16),
+			          (uint8_t)(body >> 24), 0, 0, 0, 0, 0x2f, 0x02, 0x02, 0x00 };
+		static const uint8_t cfgEv[] = { 0x02, 0x01, 0x01, 0x00, 0x00 };
+		uint8_t hdr[12] = { (uint8_t)(body + 12), (uint8_t)((body + 12) >> 8), (uint8_t)((body + 12) >> 16),
+			            (uint8_t)((body + 12) >> 24) };
+
+		say("wmt: rom patch %.16s, %.4s, patch word %02x %02x %02x %02x -> address 0x%08x, %u bytes\n", (const char *)p,
+		    (const char *)p + 16, p[24], p[25], p[26], p[27], addr, body);
+		if (p[24] != 0x11 || addr != 0x0001c000) {
+			say("wmt: rom patch: unexpected header, not sent\n");
+			return o;
+		}
+		int pn = wmt_cmd("rom patch pda config", cfg, sizeof(cfg), cfgEv, sizeof(cfgEv), 1000, ev, sizeof(ev), out, len, &o);
+		if (pn < (int)sizeof(cfgEv) || memcmp(ev, cfgEv, sizeof(cfgEv)) != 0) {
+			say("wmt: rom patch: pda config refused\n");
+			return o;
+		}
+		bool sent = btif_put(hdr, sizeof(hdr));
+		for (uint32_t off = 0; sent && off < body; off += 1000) {
+			sent = btif_put(p + 30 + off, MIN(1000u, body - off));
+		}
+		say("wmt: rom patch: %s\n", sent ? "sent raw" : "BTIF did not take it");
+		if (!sent) {
+			return o;
+		}
+		if (vw.emi != NULL) {                    /* its build date in EMI, as mtk_wcn_soc_patch_dwn does */
+			memcpy((char *)vw.emi + EMI_DATE_PATCH_MCU, p, 16);
+			begonia_wifi_emi_flush(EMI_DATE_PATCH_MCU & ~63u, 64);
+		}
+		static const uint8_t rst[] = { 0x01, 0x07, 0x01, 0x00, 0x04 };
+		static const uint8_t rstEv[] = { 0x02, 0x07, 0x01, 0x00, 0x00 };
+		if (wmt_cmd("wmt reset", rst, sizeof(rst), rstEv, sizeof(rstEv), 3000, ev, sizeof(ev), out, len, &o) < 0) {
+			return o;
+		}
+	}
 	if (wmt_cmd("set stp full", sstp, sizeof(sstp), sstpEv, sizeof(sstpEv), 1000, ev, sizeof(ev), out, len, &o) < 0) {
 		return o;
 	}

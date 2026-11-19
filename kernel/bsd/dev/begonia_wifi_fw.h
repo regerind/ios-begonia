@@ -24,6 +24,9 @@ extern const size_t g_begonia_fw_ram_wifi_len;
 extern const uint8_t g_begonia_fw_ram_code[631016];
 extern const size_t g_begonia_fw_ram_code_len;
 
+extern const uint8_t g_begonia_fw_patch_mcu[22366];
+extern const size_t g_begonia_fw_patch_mcu_len;
+
 extern const uint8_t g_begonia_fw_nvram[2050];
 extern const size_t g_begonia_fw_nvram_len;
 
