@@ -42,6 +42,12 @@ text=text.replace('tried = true;','tried = true;\n\t\tsetenv("PAN_I_WANT_A_BROKE
 f.write_text(text)
 
 mf=source/'NativeBridgeMetalFrontend.mm';original_mtext=mf.read_text();mtext=original_mtext
+# begonia (y128): Apple's frameworks ask an encoder for its trace object ID; NBEncoder had none, and MediaRemoteUI (the
+# lock screen's Now Playing) died of "unrecognized selector -[NBComputeEncoder globalTraceObjectID]" as a video began,
+# again and again (y117: a core at 93-100%). Every encoder (compute, render, blit) answers 0, as with no tracing.
+trace_anchor='- (void)popDebugGroup {}\n// Stage 0 compute, 1 vertex, 2 fragment'
+assert mtext.count(trace_anchor)==1
+mtext=mtext.replace(trace_anchor,'- (void)popDebugGroup {}\n- (uint64_t)globalTraceObjectID {return 0;}\n// Stage 0 compute, 1 vertex, 2 fragment')
 mtext=mtext.replace('- (void)dealloc {nmb_library_release(_handle);}', '- (void)dealloc {if(_handle)nmb_library_release(_handle);}')
 mtext=mtext.replace('if(!name || !values || !methodABI(values,@selector(newIndexedConstantArray),"@16@0:8") || !methodABI(values,@selector(newNamedConstantArray),"@16@0:8")) {',
                     'if(!_handle){NBFunction *stub=[NBFunction new];stub.handle=nullptr;stub.name=name?:@"stub";stub.functionType=[name containsString:@"vert"]?MTLFunctionTypeVertex:MTLFunctionTypeFragment;if(error)*error=nil;return (id<MTLFunction>)stub;}\n if(!name || !values || !methodABI(values,@selector(newIndexedConstantArray),"@16@0:8") || !methodABI(values,@selector(newNamedConstantArray),"@16@0:8")) {')
