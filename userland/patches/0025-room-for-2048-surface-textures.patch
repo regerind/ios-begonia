@@ -1,0 +1,57 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -273,7 +273,15 @@
+ 	id object;                      /* the EAGLContext */
+ 	struct hakios_gl *gl;
+ 	unsigned long api;
+-	struct image images[256];
++	/*
++	 * begonia (x50): 2048, not 256. With the table full, a texture asked to be an IOSurface got no picture at all
++	 * (my_texImageIOSurface gave up: "more textures with IOSurfaces than there is room for") and was drawn with as it
++	 * was, nothing in it, which samples as opaque black: the black boxes on the emoji keyboard and on text
++	 * (x48/x49: whole columns of the emoji grid after a fast scroll, 68 and 112 refusals; x22: 298; a home screen
++	 * alone stays under 256 and showed none). image_hint: where a texture's entry was last found (image_of()).
++	 */
++	struct image images[2048];
++	uint16_t image_hint[1024];
+ 	unsigned image_count;
+ 	GLuint framebuffer;             /* the one bound */
+ 	GLuint colour;                  /* ... and the texture that is its colour attachment (0: none, or no texture) */
+@@ -614,6 +622,8 @@
+ 	say("hakios-gl:   all textures drawn with (every 30th frame): %u looked at, %u incomplete; tall narrow surfaces shown: "
+ 	    "%u (%u shared, %u wrapped), %u of them all zeroes when copied, %u copied again later\n", any_checked,
+ 	    any_incomplete, column_seen, column_shared, column_wrapped, column_empty, column_again);
++	say("hakios-gl:   textures that are IOSurfaces now: %u of %zu places\n", e->image_count,
++	    sizeof(e->images) / sizeof(e->images[0]));
+ 	say("hakios-gl:   calls that set what was set already: glBindTexture %u, glUseProgram %u, glActiveTexture %u, "
+ 	    "glBindFramebuffer %u\n", same_texture, same_program, same_unit, same_framebuffer);
+ 	{
+@@ -647,8 +657,15 @@
+ static struct image *
+ image_of(struct eagl *e, GLuint texture)
+ {
++	unsigned hint = e->image_hint[texture & 1023];
++
++	/* (the table is eight times what it was: first where this texture was found before, then all of it) */
++	if (hint < e->image_count && e->images[hint].texture == texture) {
++		return &e->images[hint];
++	}
+ 	for (unsigned i = 0; i < e->image_count; i++) {
+ 		if (e->images[i].texture == texture) {
++			e->image_hint[texture & 1023] = (uint16_t)i;
+ 			return &e->images[i];
+ 		}
+ 	}
+@@ -662,7 +679,11 @@
+ 
+ 	if (image == NULL) {
+ 		if (e->image_count == sizeof(e->images) / sizeof(e->images[0])) {
+-			say("hakios-gl: more textures with IOSurfaces than there is room for\n");
++			static unsigned refused;
++
++			if (refused++ < 8 || refused % 256 == 0) {
++				say("hakios-gl: more textures with IOSurfaces than there is room for (%u refused: they draw as black)\n", refused);
++			}
+ 			return NULL;
+ 		}
+ 		image = &e->images[e->image_count++];
