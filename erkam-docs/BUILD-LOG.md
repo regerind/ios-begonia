@@ -36,4 +36,5 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y119 | 03:5x | y118 + `vblur=0` (değişken yarıçaplı bulanıklık kapalı: geçiş sayısının kaynağı mı?) | Fark yok (backboardd 20–27 bin iş / 5 sn, kare başına 36 temizleme): değişken bulanıklık sebep değil |
 | y120 | 04:0x | y118 + `gltrace_at=85` (video sırasında bir karenin bütün GL çağrıları) | İz yok: süre pencere sunucusunun başlangıcından sayılıyor, 85 sn oturumun dışına düştü |
 | y121 | 04:1x | y118 + `gltrace_at=62` | Çağrı izi yine yok (bu yol bırakıldı). Özet aynı: kare başına 37–45 framebuffer değişimi, 17–21 temizleme |
-| y122 | 04:3x | GPU servisi: `begonia_gpu_spin=50` (uyumadan önce 500 µs yoklama; varsayılan 100 µs). Hipotez: ~66 µs'lik binlerce küçük işte uykudan uyanma gecikmesi kuyruğu tıkıyor | (sonuç bekleniyor) |
+| y122 | 04:3x | GPU servisi: `begonia_gpu_spin=50` (uyumadan önce 500 µs yoklama; varsayılan 100 µs). Hipotez: ~66 µs'lik binlerce küçük işte uykudan uyanma gecikmesi kuyruğu tıkıyor | **Hipotez yanlış**: değişiklik yok. Çizim işleri gerçekten 300–333 µs (saniyede ~2.600), geometri işleri 45–58 µs. Darboğaz CoreAnimation'ın GL çizicisinin kare başına ~45 ekran dışı geçişi |
+| y123 | 04:4x | Deney: backboardd de Metal'de (`metal=3`, istemci listesine backboardd). 7 Kasım'da (v63–v69) bu başarısız olmuştu | (sonuç bekleniyor) |
