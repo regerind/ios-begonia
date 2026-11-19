@@ -34,7 +34,7 @@ driver_files = [
     'begonia_wpa.h','begonia_wpa.c',
     'begonia_wifi_fw.h','begonia_wifi_fw.c',
     'begonia_bt.h','begonia_bt.c',
-    'begonia_buttons.c', 'begonia_backlight.c', 'begonia_battery.c', 'begonia_wifi_cmd.c'
+    'begonia_buttons.c', 'begonia_backlight.c', 'begonia_battery.c', 'begonia_wifi_cmd.c', 'begonia_i2c.c'
 ]
 for name in driver_files:
     shutil.copyfile(root/'kernel/bsd/dev'/name,tree/'bsd/dev'/name)
@@ -56,7 +56,8 @@ for entry in [
     'bsd/dev/begonia_buttons.c standard',
     'bsd/dev/begonia_backlight.c standard',
     'bsd/dev/begonia_battery.c standard',
-    'bsd/dev/begonia_wifi_cmd.c standard'
+    'bsd/dev/begonia_wifi_cmd.c standard',
+    'bsd/dev/begonia_i2c.c standard'
 ]:
     if entry not in bsd_files:
         bsd_files += '\n' + entry + '\n'

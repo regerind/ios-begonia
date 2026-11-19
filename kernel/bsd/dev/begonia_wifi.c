@@ -771,12 +771,21 @@ stp_ack(void)
 }
 
 /* One WMT packet in the current STP mode (stp_core.c mtk_wcn_stp_send_data, mand / full). */
+static bool stp_send_type(uint8_t type, const uint8_t *p, uint32_t n);
+
 static bool
 stp_send(const uint8_t *p, uint32_t n)
 {
+	return stp_send_type(STP_TYPE_WMT, p, n);
+}
+
+/* STP channels: 0 Bluetooth (HCI, H4 type byte first), 1 FM, 2 GPS, 3 Wi-Fi, 4 WMT (stp_core.h *_TASK_INDX) */
+static bool
+stp_send_type(uint8_t type, const uint8_t *p, uint32_t n)
+{
 	uint8_t h[4], c[2] = { 0, 0 };
 	h[0] = (uint8_t)(0x80 | (st.txseq << 3) | (st.full ? st.txack : 0));
-	h[1] = (uint8_t)((STP_TYPE_WMT << 4) | ((n >> 8) & 0xf));
+	h[1] = (uint8_t)((type << 4) | ((n >> 8) & 0xf));
 	h[2] = (uint8_t)n;
 	h[3] = st.full ? (uint8_t)(h[0] + h[1] + h[2]) : 0;
 	if (st.full) {
@@ -967,6 +976,52 @@ wifi_wmt(char *out, size_t len, size_t o)
 	/* (MT6785 is not co-clock: no efuse PALDO to turn off after the calibration, mtk_wcn_consys_hw_efuse_paldo_ctrl) */
 	vw.wmt = c >= 0;
 	say("wmt: %s. Next: wifi fw\n", c >= 0 ? "done" : "calibration FAILED");
+	return o;
+}
+
+/*
+ * ---- Bluetooth, first step: the controller on and answering HCI ----
+ * After WMT (the same MCU: its BT RAM patch is in EMI with the others): WMT FUNC_CTRL for BT on (wmt_core.c
+ * wmt_core_func_ctrl_cmd: 01 06 02 00 <type 0 = BT> <1 = on>, answered 02 06 01 00 <status>), then HCI over STP
+ * channel 0 with the H4 type byte first: Reset (01 03 0c 00) and Read BD_ADDR (01 09 10 00), every answer said.
+ * iOS's side (bluetoothd and its transport) is not here yet: this shows whether the controller lives.
+ */
+static size_t
+bt_up(char *out, size_t len, size_t o)
+{
+	uint8_t ev[64], type = 0;
+	if (!vw.wmt) {
+		say("bt: WMT not done (wifi up first)\n");
+		return o;
+	}
+	static const uint8_t on[] = { 0x01, 0x06, 0x02, 0x00, 0x00, 0x01 };
+	static const uint8_t onEv[] = { 0x02, 0x06, 0x01, 0x00, 0x00 };
+	if (wmt_cmd("bt func on", on, sizeof(on), onEv, sizeof(onEv), 3000, ev, sizeof(ev), out, len, &o) < 0) {
+		return o;
+	}
+	static const struct { const char *what; uint8_t cmd[4]; } hci[] = {
+		{ "hci reset", { 0x01, 0x03, 0x0c, 0x00 } }, { "hci read bd_addr", { 0x01, 0x09, 0x10, 0x00 } },
+	};
+	for (unsigned i = 0; i < sizeof(hci) / sizeof(hci[0]); i++) {
+		if (!stp_send_type(0, hci[i].cmd, 4)) {
+			say("bt: %s: BTIF did not take it\n", hci[i].what);
+			return o;
+		}
+		int n = -1;
+		for (int k = 0; k < 4; k++) {
+			n = stp_recv(ev, sizeof(ev), 2000, &type);
+			if (n < 0 || type == 0) {
+				break;
+			}
+			say("bt: %s: a frame on channel %u (%d bytes) first\n", hci[i].what, type, n);
+		}
+		say("bt: %s ->", hci[i].what);
+		for (int j = 0; j < n && j < 16; j++) {
+			say(" %02x", ev[j]);
+		}
+		say("%s\n", n < 0 ? " NO ANSWER" : (n >= 7 && ev[0] == 0x04 && ev[1] == 0x0e && ev[6] == 0x00) ?
+		    "  (command complete, status 0)" : "");
+	}
 	return o;
 }
 
@@ -3499,6 +3554,9 @@ begonia_wifi_link(const char *args, char *out, size_t len)
 	} else if (strncmp(args, "off", 3) == 0) {
 		sta_leave(out, len, &o);
 		o = wifi_off(out, len, o);
+	} else if (strncmp(args, "bt", 2) == 0) {
+		printf("BEGONIA WIFI: bluetooth on\n");
+		o = bt_up(out, len, o);
 	} else if (strncmp(args, "detect", 6) == 0) {
 		if (vw.on) {
 			say("detect: CONN is on (wifi off first)\n");
