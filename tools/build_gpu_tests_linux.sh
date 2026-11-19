@@ -25,5 +25,6 @@ base=("$CC" -arch arm64 -isysroot "$SDK" -mios-version-min=16.5 -O1 -Wall -Wextr
 "${base[@]}" "$R/tests/superpatch2_test.c" -o "$O/superpatch2_test"
 "${base[@]}" "$R/tests/superpatch3_test.c" -o "$O/superpatch3_test"
 "${base[@]}" "$R/tests/superpatch4_test.c" -o "$O/superpatch4_test"
+"${base[@]}" "$R/tests/superpatch5_test.c" -o "$O/superpatch5_test"
 ls -la "$O"
 echo "gpu tests: built"
