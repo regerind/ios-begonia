@@ -422,6 +422,38 @@ new_func_const_validate = ''' if(!name || !values || !methodABI(values,@selector
 assert mtext.count(old_func_const_validate) == 1
 mtext = mtext.replace(old_func_const_validate, new_func_const_validate)
 
+# begonia: pipeline reflection (userland/metal/frontend_reflection.mm.inc): the objects, and every reflection:
+# out-parameter answered with them instead of nil, the completion-handler forms too.
+reflection_code=(root/'userland/metal/frontend_reflection.mm.inc').read_text()
+hooks=[
+ ('#define NBLOG(', '#include <atomic>\n#include <sys/sysctl.h>\n'+reflection_code+'\n#define NBLOG('),
+ (' const NmbPipelineOptions creation={(uint64_t)options,archives.data(),archives.size()};\n const uint64_t pipelineBegan=nowUs();const NBCost costBegan=NBCost::now();',
+  ' if(reflection)*reflection=renderReflection(p,d.label);\n const NmbPipelineOptions creation={(uint64_t)options,archives.data(),archives.size()};\n const uint64_t pipelineBegan=nowUs();const NBCost costBegan=NBCost::now();'),
+ (' NmbComputePipeline *handle=nmb_compute_pipeline_new_with_descriptor(gDevice,&p,&creation);',
+  ' if(reflection)*reflection=computeReflection(&p,d.label);\n NmbComputePipeline *handle=nmb_compute_pipeline_new_with_descriptor(gDevice,&p,&creation);'),
+ (' NmbComputePipeline *handle=nmb_compute_pipeline_new_with_options(gDevice,[(NBFunction *)function handle],&creation);',
+  ' if(reflection){NmbComputePipelineDescriptor q={};q.function=[(NBFunction *)function handle];*reflection=computeReflection(&q,function.name);}\n'
+  ' NmbComputePipeline *handle=nmb_compute_pipeline_new_with_options(gDevice,[(NBFunction *)function handle],&creation);'),
+ ('  NSError *error=nil;id<MTLRenderPipelineState> state=[(id<MTLDevice>)self newRenderPipelineStateWithDescriptor:snapshot options:options reflection:nil error:&error];\n'
+  '  if(handler)dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{handler(state,nil,error);});',
+  '  NSError *error=nil;MTLRenderPipelineReflection *reflection=nil;\n'
+  '  id<MTLRenderPipelineState> state=[(id<MTLDevice>)self newRenderPipelineStateWithDescriptor:snapshot options:options reflection:&reflection error:&error];\n'
+  '  if(handler)dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{handler(state,reflection,error);});'),
+ ('  NSError *error=nil;id<MTLComputePipelineState> state=[(id)self newComputePipelineStateWithDescriptor:snapshot options:options reflection:nil error:&error];\n'
+  '  if(handler)dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{handler(state,nil,error);});',
+  '  NSError *error=nil;MTLComputePipelineReflection *reflection=nil;\n'
+  '  id<MTLComputePipelineState> state=[(id)self newComputePipelineStateWithDescriptor:snapshot options:options reflection:&reflection error:&error];\n'
+  '  if(handler)dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{handler(state,reflection,error);});'),
+ ('  NSError *error=nil;id<MTLComputePipelineState> state=[(id<MTLDevice>)self newComputePipelineStateWithFunction:function options:options reflection:nil error:&error];\n'
+  '  if(handler)dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{handler(state,nil,error);});',
+  '  NSError *error=nil;MTLComputePipelineReflection *reflection=nil;\n'
+  '  id<MTLComputePipelineState> state=[(id<MTLDevice>)self newComputePipelineStateWithFunction:function options:options reflection:&reflection error:&error];\n'
+  '  if(handler)dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{handler(state,reflection,error);});'),
+]
+for old,new in hooks:
+ assert mtext.count(old)==1,'reflection hook does not fit: '+old[:90]
+ mtext=mtext.replace(old,new)
+
 frontend = mtext
 if a.quartzcore:
     implementation = '@implementation NBDeviceMethods\n'

@@ -1,0 +1,171 @@
+// begonia: a pipeline's reflection, as Metal's objects (MTLArgument, MTLBinding, MTLRenderPipelineReflection,
+// MTLComputePipelineReflection). Put into NativeBridgeMetalFrontend.mm by tools/build_metal_frontend_ios.py.
+//
+// The front end answered every reflection: out-parameter with nil. Freeform asks with MTLPipelineOptionArgumentInfo |
+// BufferTypeInfo (3), then looks in vertexArguments and fragmentArguments for a buffer (type 0) of a struct (data type
+// 1) by its name -- its uniforms: their index and size -- and for a sampler (type 3) by its name; given nil it aborts
+// at launch ("Failed to create pipeline reflection object", y24 to y26). The bindings come from the runtime
+// (nmb_render_pipeline_reflection, userland/metal/bridge/begonia_reflection.rs), read off the functions' AIR.
+// Boot-arg metal_reflection=0: nil again, as before.
+
+@interface NBArgument : MTLArgument <MTLBinding> {
+ @public
+ NSString *_bgName;
+ NSUInteger _bgType, _bgAccess, _bgIndex, _bgFlags, _bgBufferAlignment, _bgBufferSize, _bgBufferDataType;
+ NSUInteger _bgTextureType, _bgTextureDataType, _bgArrayLength, _bgThreadgroupAlignment, _bgThreadgroupSize;
+}
+@end
+@implementation NBArgument
+- (NSString *)name {return _bgName;}
+- (MTLArgumentType)type {return (MTLArgumentType)_bgType;}
+- (MTLArgumentAccess)access {return (MTLArgumentAccess)_bgAccess;}
+- (NSUInteger)index {return _bgIndex;}
+- (BOOL)isActive {return (_bgFlags & 1) != 0;}
+- (BOOL)active {return (_bgFlags & 1) != 0;}
+- (BOOL)isUsed {return (_bgFlags & 1) != 0;}
+- (BOOL)used {return (_bgFlags & 1) != 0;}
+- (BOOL)isArgument {return (_bgFlags & 2) != 0;}
+- (BOOL)argument {return (_bgFlags & 2) != 0;}
+- (NSUInteger)bufferAlignment {return _bgBufferAlignment;}
+- (NSUInteger)bufferDataSize {return _bgBufferSize;}
+- (MTLDataType)bufferDataType {return (MTLDataType)_bgBufferDataType;}
+- (MTLStructType *)bufferStructType {return nil;}
+- (MTLPointerType *)bufferPointerType {return nil;}
+- (NSUInteger)threadgroupMemoryAlignment {return _bgThreadgroupAlignment;}
+- (NSUInteger)threadgroupMemoryDataSize {return _bgThreadgroupSize;}
+- (MTLTextureType)textureType {return (MTLTextureType)_bgTextureType;}
+- (MTLDataType)textureDataType {return (MTLDataType)_bgTextureDataType;}
+- (BOOL)isDepthTexture {return (_bgFlags & 32) != 0;}
+- (BOOL)depthTexture {return (_bgFlags & 32) != 0;}
+- (NSUInteger)arrayLength {return _bgArrayLength;}
+- (NSString *)description {
+ return [NSString stringWithFormat:@"%@ type %lu index %lu%s size %lu data type %lu", _bgName, (unsigned long)_bgType,
+         (unsigned long)_bgIndex, (_bgFlags & 1) ? "" : " (unused)", (unsigned long)_bgBufferSize, (unsigned long)_bgBufferDataType];
+}
+@end
+@interface NBBufferArgument : NBArgument <MTLBufferBinding>
+@end
+@implementation NBBufferArgument
+@end
+@interface NBTextureArgument : NBArgument <MTLTextureBinding>
+@end
+@implementation NBTextureArgument
+@end
+@interface NBThreadgroupArgument : NBArgument <MTLThreadgroupBinding>
+@end
+@implementation NBThreadgroupArgument
+@end
+
+@interface NBRenderReflection : MTLRenderPipelineReflection {
+ @public
+ NSArray *_bgVertex, *_bgFragment, *_bgTile, *_bgObject, *_bgMesh;
+}
+@end
+@implementation NBRenderReflection
+- (NSArray *)vertexBindings {return _bgVertex ?: @[];}
+- (NSArray *)fragmentBindings {return _bgFragment ?: @[];}
+- (NSArray *)tileBindings {return _bgTile ?: @[];}
+- (NSArray *)objectBindings {return _bgObject ?: @[];}
+- (NSArray *)meshBindings {return _bgMesh ?: @[];}
+- (NSArray *)vertexArguments {return _bgVertex ?: @[];}
+- (NSArray *)fragmentArguments {return _bgFragment ?: @[];}
+- (NSArray *)tileArguments {return _bgTile ?: @[];}
+@end
+@interface NBComputeReflection : MTLComputePipelineReflection {
+ @public
+ NSArray *_bgBindings;
+}
+@end
+@implementation NBComputeReflection
+- (NSArray *)bindings {return _bgBindings ?: @[];}
+- (NSArray *)arguments {return _bgBindings ?: @[];}
+@end
+
+static void nbConsole(NSString *what) {
+ static int fd = -2;
+ if (fd == -2) fd = isatty(2) ? 2 : open("/dev/console", O_WRONLY | O_NOCTTY);
+ if (fd < 0) return;
+ char line[700];
+ int n = snprintf(line, sizeof line, "metal: %s[%d]: %s\n", getprogname(), getpid(), what.UTF8String ?: "?");
+ if (n > (int)sizeof line - 1) n = (int)sizeof line - 1;
+ if (n > 0) (void)write(fd, line, (size_t)n);
+}
+
+static bool nbReflectionWanted() {
+ static int wanted = -1;
+ if (wanted < 0) {
+  char args[1024] = ""; size_t size = sizeof(args) - 1;
+  wanted = !(sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_reflection=0") != NULL);
+ }
+ return wanted != 0;
+}
+
+static NSArray *nbArguments(const NmbBinding *b, uint64_t n) {
+ NSMutableArray *out = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
+ for (uint64_t i = 0; i < n; i++) {
+  Class cls = (b[i].flags & 4) ? [NBBufferArgument class] : (b[i].flags & 8) ? [NBTextureArgument class] :
+              (b[i].flags & 16) ? [NBThreadgroupArgument class] : [NBArgument class];
+  NBArgument *a = [[cls alloc] init];
+  char name[97]; memcpy(name, b[i].name, 96); name[96] = 0;
+  a->_bgName = [NSString stringWithUTF8String:name] ?: @"";
+  a->_bgType = b[i].binding_type; a->_bgAccess = b[i].access; a->_bgIndex = b[i].index; a->_bgFlags = b[i].flags;
+  a->_bgBufferAlignment = (NSUInteger)b[i].buffer_alignment; a->_bgBufferSize = (NSUInteger)b[i].buffer_data_size;
+  a->_bgBufferDataType = b[i].buffer_data_type; a->_bgTextureType = b[i].texture_type;
+  a->_bgTextureDataType = b[i].texture_data_type; a->_bgArrayLength = b[i].array_length;
+  a->_bgThreadgroupAlignment = (NSUInteger)b[i].threadgroup_alignment; a->_bgThreadgroupSize = (NSUInteger)b[i].threadgroup_size;
+  [out addObject:a];
+ }
+ return out;
+}
+
+// The bindings of every stage, one after the other, and how many each stage has; false: the runtime gave none.
+static bool nbReflect(bool render, const void *descriptor, uint64_t *counts, std::vector<NmbBinding> &all) {
+ all.resize(64);
+ for (int attempt = 0; attempt < 3; attempt++) {
+  int64_t n = render ? nmb_render_pipeline_reflection((const NmbRenderPipelineDescriptor *)descriptor, all.data(), all.size(), counts)
+                     : nmb_compute_pipeline_reflection((const NmbComputePipelineDescriptor *)descriptor, all.data(), all.size(), counts);
+  if (n < 0) return false;
+  bool fits = (uint64_t)n <= all.size();
+  all.resize((size_t)n);
+  if (fits) return true;
+ }
+ return false;
+}
+
+static void nbSayReflection(NSString *label, const char *stage, NSArray *arguments) {
+ static std::atomic<unsigned> said{0};
+ if (said.fetch_add(1) >= 40) return;
+ nbConsole([NSString stringWithFormat:@"reflection of '%@', %s: %@", label ?: @"-", stage,
+            [[arguments valueForKey:@"description"] componentsJoinedByString:@"; "]]);
+}
+
+// Never nil when asked for: a caller that asks gets an object, empty when the runtime could not say (Freeform aborts
+// on nil, and an empty list only makes it fall back to its defaults).
+static MTLRenderPipelineReflection *renderReflection(const NmbRenderPipelineDescriptor *p, NSString *label) {
+ if (!nbReflectionWanted()) return nil;
+ NBRenderReflection *r = [[NBRenderReflection alloc] init];
+ std::vector<NmbBinding> all; uint64_t counts[5] = {0, 0, 0, 0, 0};
+ if (!nbReflect(true, p, counts, all)) {
+  nbConsole([NSString stringWithFormat:@"reflection of '%@' not known: %s; an empty one given", label ?: @"-", nmb_last_error()]);
+  return r;
+ }
+ uint64_t at = 0; NSArray *stages[5];
+ for (int s = 0; s < 5; s++) {stages[s] = nbArguments(all.data() + at, counts[s]); at += counts[s];}
+ r->_bgVertex = stages[0]; r->_bgFragment = stages[1]; r->_bgTile = stages[2]; r->_bgObject = stages[3]; r->_bgMesh = stages[4];
+ nbSayReflection(label, "vertex", stages[0]);
+ nbSayReflection(label, "fragment", stages[1]);
+ return r;
+}
+
+static MTLComputePipelineReflection *computeReflection(const NmbComputePipelineDescriptor *p, NSString *label) {
+ if (!nbReflectionWanted()) return nil;
+ NBComputeReflection *r = [[NBComputeReflection alloc] init];
+ std::vector<NmbBinding> all; uint64_t counts[1] = {0};
+ if (!nbReflect(false, p, counts, all)) {
+  nbConsole([NSString stringWithFormat:@"reflection of kernel '%@' not known: %s; an empty one given", label ?: @"-", nmb_last_error()]);
+  return r;
+ }
+ r->_bgBindings = nbArguments(all.data(), counts[0]);
+ nbSayReflection(label, "kernel", r->_bgBindings);
+ return r;
+}
