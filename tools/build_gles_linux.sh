@@ -56,8 +56,11 @@ if [ ! -f "$B/ios/build.ninja" ]; then
 		-Dgallium-xa=disabled -Dlmsensors=disabled -Dbuild-tests=false -Dmesa-clc=auto -Dprecomp-compiler=system \
 		> "$B/ios-setup.log" 2>&1 || { tail -30 "$B/ios-setup.log"; exit 1; }
 fi
-# begonia: the shader cache on (y104: first-use compiles stalled the screen); an existing build is reconfigured
-meson configure "$B/ios" -Dshader-cache=enabled > "$B/ios-reconfigure.log" 2>&1 || { tail -20 "$B/ios-reconfigure.log"; exit 1; }
+# begonia: the shader cache built in (y104); an existing build is reconfigured once (y136: reconfiguring every time
+# printed meson's "-Werror=..." lines, which auto_build.sh's "grep error | head -8" cut short, and the build stopped)
+if ! grep -q '"name": "shader-cache", "value": "enabled"' "$B/ios/meson-info/intro-buildoptions.json" 2>/dev/null; then
+	meson configure "$B/ios" -Dshader-cache=enabled > "$B/ios-reconfigure.log" 2>&1 || { tail -20 "$B/ios-reconfigure.log"; exit 1; }
+fi
 echo "gles: building libOSMesa (log: $B/ios-build.log)"
 ninja -C "$B/ios" src/gallium/targets/osmesa/libOSMesa.8.dylib > "$B/ios-build.log" 2>&1 ||
 	{ grep -E "error|Error" "$B/ios-build.log" | head -30; exit 1; }
