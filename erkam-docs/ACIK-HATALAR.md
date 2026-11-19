@@ -12,6 +12,10 @@ ya da onay gerekiyor). En üstteki en önemlisi.
 - **Şüphe:** İlk kullanılan efektlerin (bulanıklık, materyaller) GPU programlarının CPU'da derlenmesi. Mesa'nın shader
   disk önbelleği kapalıydı (`-Dshader-cache=disabled`), yani her açılışta her şey yeniden derleniyordu.
 - **Durum:** düzeltme denendi. y104: GL (backboardd) tarafında disk önbelleği açıldı (Mesa yaması 0006, userland 0046).
+  Otomatik testlerde (y109, y114) paneller açılıştan 30+ sn sonra açıldığında duraklama görülmedi (en uzun kare
+  35–86 ms). Ağır yük açılışın ilk 10–20 saniyesinde: SpringBoard 100–200%, çoğu dyld (kütüphane yükleme), launchd,
+  wifid. Kullanıcının 1 dakikalık oturumlarda panele erken gitmesi bu fırtınaya denk geliyor olabilir; ya da gerçek
+  parmak hareketinde başka bir şey var. Kalıcı imajda (açılıştan dakikalar sonra) denenmesi gerekiyor.
   y104 ve y105'te (önbellek açık) karelerin yalnızca %9'u 18 ms altındaydı; y106'da (kapalı) %56. Önbellek her karede
   bir şeye mal oluyor; neden olduğu bilinmiyor. y107'den itibaren varsayılan kapalı (`glcache=1` ile açılır). Yani
   panel donması için önbellek çözümü şimdilik işe yaramadı; profiler sonucu bekleniyor.
