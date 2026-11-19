@@ -48,6 +48,20 @@ mf=source/'NativeBridgeMetalFrontend.mm';original_mtext=mf.read_text();mtext=ori
 trace_anchor='- (void)popDebugGroup {}\n// Stage 0 compute, 1 vertex, 2 fragment'
 assert mtext.count(trace_anchor)==1
 mtext=mtext.replace(trace_anchor,'- (void)popDebugGroup {}\n- (uint64_t)globalTraceObjectID {return 0;}\n// Stage 0 compute, 1 vertex, 2 fragment')
+# y129: next, "-[NBCommandBuffer userDictionary]" (a private mutable dictionary the frameworks hang their own state on)
+cb_anchor='@implementation NBCommandBuffer\n- (instancetype)init {'
+assert mtext.count(cb_anchor)==1
+mtext=mtext.replace(cb_anchor,'''@implementation NBCommandBuffer
+- (NSMutableDictionary *)userDictionary {
+ static char key;
+ @synchronized(self) {
+  NSMutableDictionary *d=objc_getAssociatedObject(self,&key);
+  if(!d){d=[NSMutableDictionary dictionary];objc_setAssociatedObject(self,&key,d,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+  return d;
+ }
+}
+- (uint64_t)globalTraceObjectID {return 0;}
+- (instancetype)init {''')
 mtext=mtext.replace('- (void)dealloc {nmb_library_release(_handle);}', '- (void)dealloc {if(_handle)nmb_library_release(_handle);}')
 mtext=mtext.replace('if(!name || !values || !methodABI(values,@selector(newIndexedConstantArray),"@16@0:8") || !methodABI(values,@selector(newNamedConstantArray),"@16@0:8")) {',
                     'if(!_handle){NBFunction *stub=[NBFunction new];stub.handle=nullptr;stub.name=name?:@"stub";stub.functionType=[name containsString:@"vert"]?MTLFunctionTypeVertex:MTLFunctionTypeFragment;if(error)*error=nil;return (id<MTLFunction>)stub;}\n if(!name || !values || !methodABI(values,@selector(newIndexedConstantArray),"@16@0:8") || !methodABI(values,@selector(newNamedConstantArray),"@16@0:8")) {')
