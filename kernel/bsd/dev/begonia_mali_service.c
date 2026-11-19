@@ -66,8 +66,16 @@ static int wait(unsigned o,uint32_t mask,uint32_t value) {
  * nothing whenever anything moves, the phone's heat. Ten quick looks (a short job), then naps of 50 us
  * (assert_wait_timeout: a sleep, whatever the processor's idle latency), until 100 ms as before.
  */
+/*
+ * y121: with YouTube the job thread ran 5000-5600 jobs a second, most of them ~66 us on the GPU, one at a time: a
+ * nap's wake-up may cost more than such a job. Boot-arg begonia_gpu_spin=N: N quick looks (10 us apart) before the
+ * naps (10 as before), to measure what the naps cost the queue.
+ */
+static uint32_t spin_looks=10;
 static int wait_job(unsigned o,uint32_t mask,uint32_t value) {
- for(unsigned i=0;i<10;i++) {if((rd(o)&mask)==value)return 0;delay(10);}
+ static int asked;
+ if(!asked){asked=1;(void)PE_parse_boot_argn("begonia_gpu_spin",&spin_looks,sizeof spin_looks);if(spin_looks>2000)spin_looks=2000;}
+ for(unsigned i=0;i<spin_looks;i++) {if((rd(o)&mask)==value)return 0;delay(10);}
  uint64_t deadline;
  nanoseconds_to_absolutetime(100*NSEC_PER_MSEC,&deadline);
  deadline+=mach_absolute_time();
