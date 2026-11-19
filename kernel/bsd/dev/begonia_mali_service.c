@@ -13,6 +13,7 @@
  * where the synchronous transport did.
  */
 #include <kern/clock.h>
+#include <kern/cpu_number.h>
 #include <kern/locks.h>
 #include <kern/sched_prim.h>
 #include <kern/thread.h>
@@ -47,6 +48,8 @@ static uint64_t stat_jobs,stat_fragment,stat_busy,stat_longest,stat_waited,stat_
 static unsigned stat_deepest;
 /* x33: callers that slept in hakios_mali_wait() for a job (Mesa waiting on the GPU), and for how long in all */
 static uint64_t stat_sleeps,stat_slept;
+static int32_t job_cpu=4;               /* x34: begonia_gpu_cpu (job_thread()) */
+static int job_bound=-1;
 static uint32_t rd(unsigned o) {return *(volatile uint32_t *)(gpu+o);}
 static void wr(unsigned o,uint32_t v) {*(volatile uint32_t *)(gpu+o)=v;__asm__ volatile("dsb sy":::"memory");}
 static int wait(unsigned o,uint32_t mask,uint32_t value) {
@@ -205,8 +208,9 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
  absolutetime_to_nanoseconds(stat_waited,&waited);
  uint64_t sleeps=__atomic_exchange_n(&stat_sleeps,0,__ATOMIC_RELAXED),slept;
  absolutetime_to_nanoseconds(__atomic_exchange_n(&stat_slept,0,__ATOMIC_RELAXED),&slept);
- printf("BEGONIA GPU WAITS: callers slept for a job %llu times, %llu ms in all (of %llu ms)\n",sleeps,slept/1000000,
-  ns/1000000);
+ printf("BEGONIA GPU WAITS: callers slept for a job %llu times, %llu ms in all (of %llu ms); jobs run on processor %d "
+  "(begonia_gpu_cpu=%d: %s)\n",sleeps,slept/1000000,ns/1000000,cpu_number(),job_cpu,
+  job_bound<0?"not asked":job_bound?"bound":"NOT bound");
  printf("BEGONIA GPU SERVICE: %llu jobs (%llu fragment) in %llu ms: %llu us each on the GPU, the longest %llu; "
   "GPU busy %llu%%; queued %llu us each before starting, queue up to %u deep; %s\n",stat_jobs,stat_fragment,
   ns/1000000,busy/1000/stat_jobs,longest/1000,busy*100/ns,waited/1000/stat_jobs,stat_deepest,
@@ -239,8 +243,18 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
  job_stats(began,mach_absolute_time(),fragment,queued,depth);
  return success;
 }
+/*
+ * x34: the thread that runs the jobs waits for each by polling the GPU (wait(): delay(10)), at kernel priority.
+ * Woken by a submit, it tended to run where the submitter ran -- the window server's drawing thread, which is
+ * bound to processor 6 (gl_cpu) and so could not go elsewhere while the job ran: x33, 74 us a draw and the
+ * drawing thread off its processor most of the time (x32 glprof). Boot-arg begonia_gpu_cpu=N: this thread on
+ * processor N; default 4, an A55 (XNU's 5 and 6 are the A76s); -1: wherever the scheduler puts it.
+ */
+extern kern_return_t sysctl_thread_bind_cpuid(int32_t cpuid);
 static void job_thread(void *argument,wait_result_t result) {
  (void)argument;(void)result;
+ (void)PE_parse_boot_argn("begonia_gpu_cpu",&job_cpu,sizeof job_cpu);
+ if(job_cpu>=0)job_bound=sysctl_thread_bind_cpuid(job_cpu)==KERN_SUCCESS;
  for(;;) {
   lck_mtx_lock(queue_lock);
   while(queue_head==queue_tail)
