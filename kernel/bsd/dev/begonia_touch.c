@@ -245,7 +245,17 @@ static void touch_thread(__unused void *arg,__unused wait_result_t result) {
    printf("BEGONIA TOUCH: reasons invalid=%u recovery=%u watchdog=%u id=%u duplicate=%u bounds=%u last=%02x%02x%02x%02x%02x%02x\n",
     reasons[1],reasons[2],reasons[3],reasons[4],reasons[5],reasons[6],report[0],report[1],report[2],report[3],report[4],report[5]);
   }
-  delay_for_interval(8,NSEC_PER_MSEC);
+  /*
+   * begonia: every read is ~650 us of 1 MHz SPI with interrupts off, busy (max_read_us 671): at 8 ms that was 7.5% of
+   * a core spinning with nobody touching the phone (y77: the kernel 12.4% of a core idle). 8 ms while touches come
+   * (an event in the last second), 20 ms once quiet: a first touch is seen at most 12 ms later.
+   */
+  {
+   static unsigned seen_events;static uint64_t last_active;uint64_t now=mach_absolute_time(),quiet_ns;
+   if(events!=seen_events) {seen_events=events;last_active=now;}
+   absolutetime_to_nanoseconds(now-last_active,&quiet_ns);
+   delay_for_interval(quiet_ns<NSEC_PER_SEC?8:20,NSEC_PER_MSEC);
+  }
  }
 stop:
  {uint8_t empty[65]={0};if(xmax && ymax)(void)begonia_touch_decode(&contacts,empty,sizeof(empty),xmax,ymax,emit,NULL);}
