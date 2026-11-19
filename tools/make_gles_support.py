@@ -16,8 +16,8 @@ metal_tests=''
 if a.metal_client:
  # Metal for applications (the window server stays on OpenGL ES): the Vulkan driver, the Metal-on-Vulkan runtime, the
  # plug-in Metal loads and the list of programs that are shown the device. Built by tools/build_panvk_linux.sh,
- # tools/build_metal2vulkan_linux.sh and tools/build_metal_frontend_ios.py --cc. init puts ext/ over the system
- # volume's Extensions (userland patch 0035), where Metal looks for the plug-in.
+ # tools/build_metal2vulkan_linux.sh and tools/build_metal_frontend_ios.py --cc. The kernel names the plug-in by a
+ # path that leads from the system volume's Extensions to ext/ here (kernel patch 0018).
  # (stripped, and the runtime built for size if there is such a build: the boot partition's 64 MB hold this image, the
  # kernel and the fallback's ramdisk, and y21 did not fit)
  small=root/'out/metal2vulkan-target-ios-small/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib'
