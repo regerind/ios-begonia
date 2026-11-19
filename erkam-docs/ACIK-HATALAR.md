@@ -42,16 +42,29 @@ ya da onay gerekiyor). En üstteki en önemlisi.
 - **Şüphe:** WebKit'in Metal ile çizdiği katmanlarda yanlış tamponun gösterilmesi (WebKit.GPU Metal istemcisi).
 - **Durum:** inceleniyor.
 
-## 4. Video oynarken her şey ağırlaşıyor (CPU 4–5 çekirdek)
-- **Kanıt (y102):** WebKit.Networking 100–134% (video verisi indirmek için çok anormal: Wi-Fi sürücüsü veya ağ
-  yolu şüpheli), WebContent 80–128%, backboardd 85–93%, WebKit.GPU 50–77%, mediaserverd ~50% (yazılımla kodek çözme).
-- **Durum:** inceleniyor (profiler bekleniyor).
+## 4. YouTube açıkken her şey 30 fps'e düşüyor: GPU doymuş
+- **Kanıt (y117–y122):** YouTube sayfasında GPU %82–91 meşgul.
+  - 5 sn'de 20–28 bin iş, bunların 11–14 bini çizim geçişi; kuyruk 350'ye kadar uzuyor, iş başına 33–51 ms bekleniyor.
+  - Bu işlerin neredeyse tamamı backboardd'den (ekranı birleştiren CoreAnimation, GL yolu). Safari'nin GPU süreci 5 sn'de yalnızca 10–250 iş gönderiyor.
+  - Kare başına 37–45 framebuffer değişimi ve 17–36 temizleme var. Her çizim geçişi GPU'da ~300 µs sürüyor (tam ekran boyutunda geçişler).
+- **Elenenler:**
+  - Değişken bulanıklık değil (y119, `vblur=0`: fark yok).
+  - GPU servisinin yoklama gecikmesi değil (y122, 500 µs yoklama: fark yok).
+  - Çağrı izi alınamadı (y120/y121).
+- **Denenen:** backboardd'yi Metal'e almak (y123): backboardd çöktü, yenisi kare üretemedi.
+- **Durum:** inceleniyor. Sıradaki: CRC'siz geçişler (y124); geçişleri neyin ürettiğini bulmak için kare izi
+  (`gltrace=KARE-KARE`); CoreAnimation'ın Metal çizicisi (uzun iş).
+- **Önceki kanıt (y102):** WebKit.Networking 100–134%, WebContent 80–128%, backboardd 85–93%, mediaserverd ~50%. y111'den
+  beri AES/SHA donanımı programlara bildiriliyor; MP4 indirirken ağ süreci %20–33.
+- **MediaRemoteUI:** Video başlarken %93–100 CPU (y117); bakılmadı.
 
 ## 5. Ekranı birleştiren katmanın (backboardd) CPU masrafı
-- **Kanıt:** Kare başına ~113 çizim; Mesa'nın kendi glDrawElements'inde ~4 ms, karenin tamamı ~10 ms CPU.
-  backboardd'nin `com.apple.coreanimation.display.primary` iş parçacığı videoda 40–75%.
-- **Not:** Kopyalama değil. Video kareleri ve büyük yüzey kopyaları oturum başına ~60 MB, saniyede 1 MB'den az.
-- **Durum:** beklemede (profiler sonrası).
+- **İyileşti (y110–y111):** Video kareleri artık kopyalanmıyor (backboardd videoda %85–93'ten %20–50'ye). Değişiklik
+  kontrolü seyrekleşti: kare başına GL 4,2 → 3,3 ms.
+- **Kalan:** Çekirdekteki GPU çağrıları toplam ~%6–7 çekirdek (y115). Panele kareler CPU'da ölçeklenerek yazılıyor:
+  iPhone X'in 1125×2436'sından panelin 1080×2400'üne, 3 iş parçacığında kare başına ~2,6 ms. GPU ile ölçeklemek
+  mümkün ama büyük bir iş.
+- **Durum:** kısmen çözüldü.
 
 ## 6. Duvar kâğıdı ayarı: yükleniyor simgesi, mor ekran, dokununca çökme
 - **Şüphe:** iOS'un kayıtlı wallpaper resimleri (.atx, büyük ihtimalle sıkıştırılmış doku, ASTC olabilir) bu yolda
