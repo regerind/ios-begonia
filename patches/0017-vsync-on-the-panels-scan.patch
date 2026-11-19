@@ -1,0 +1,36 @@
+--- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
++++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+@@ -1858,12 +1858,33 @@
+ 	((IOMobileFramebufferUserClient *) self)->vsync();
+ }
+ 
++/*
++ * begonia, boot-arg fb_vsync_scan=1: once the panel's scan is known (fb_beam, fb_line), the refresh told to the window
++ * server is the beginning of the panel's next scan, not a timer of 1/60 s. The scan takes 16.603 ms here and the
++ * timer 16.667, so the two slid past each other every four seconds or so, and for a part of that time frames came
++ * just too late for their scan: the same build and gestures gave 91% of intervals under 18 ms in one session and
++ * 73% in another (x63, x66), with the GPU a third busy.
++ */
++static TUNABLE(uint32_t, gVSyncScan, "fb_vsync_scan", 0);
++
+ /* With the lock held. */
+ void
+ IOMobileFramebufferUserClient::armVSync(void)
+ {
+ 	uint64_t period, now = mach_absolute_time();
+ 
++	if (gVSyncScan && fOwner != NULL && fOwner->fBeamIntf != 0 && fOwner->fBeamPeriod != 0 && fOwner->fBeamLines != 0) {
++		uint32_t line = *(volatile uint32_t *)(fOwner->fBeamIntf + INTF_LINE_COUNT);
++		uint64_t scan = fOwner->fBeamPeriod;
++		uint64_t next = now - scan * (line < fOwner->fBeamLines ? line : fOwner->fBeamLines - 1) / fOwner->fBeamLines + scan;
++
++		if (next < now + scan / 4) {            /* (told late: the scan after) */
++			next += scan;
++		}
++		fVSyncTime = next;
++		thread_call_enter_delayed(fVSyncCall, fVSyncTime);
++		return;
++	}
+ 	/* one refresh after the last, not after whenever we got round to this: the rate does not drift */
+ 	nanoseconds_to_absolutetime(NSEC_PER_SEC / refreshHz(), &period);
+ 	fVSyncTime += period;
