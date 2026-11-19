@@ -15,6 +15,8 @@
 #include <pexpert/pexpert.h>
 #include <sys/systm.h>
 #include <sys/sysctl.h>
+#include <kern/clock.h>
+#include <mach/mach_time.h>
 
 void begonia_perf_note(const char *format, ...) __printflike(1, 2);
 int begonia_i2c_xfer(int bus, uint8_t addr, const uint8_t *out, unsigned n, uint8_t *in, unsigned m);
@@ -94,6 +96,9 @@ begonia_backlight_set(uint32_t level)
 	int e = powered ? apply(level_set) : 0;
 	if (said++ < 24) {
 		printf("BEGONIA BACKLIGHT: level %u%s\n", level_set, !powered ? " (kept: the display is off)" : e ? " NOT set (I2C)" : " set");
+		if (said <= 8) {
+			begonia_perf_note("BEGONIA BACKLIGHT: level %u%s", level_set, !powered ? " (display off)" : e ? " NOT set" : "");
+		}
 	}
 }
 
@@ -106,6 +111,11 @@ begonia_backlight_power(bool on)
 	int e = apply(on ? level_set : 0);
 	if (said++ < 16) {
 		printf("BEGONIA BACKLIGHT: display %s (level %u)%s\n", on ? "on" : "off", level_set, e ? " NOT set (I2C)" : "");
+		/* kept in the notes, which are said again and again (a session's lock is minutes before its log is read) */
+		uint64_t ns;
+		absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
+		begonia_perf_note("BEGONIA BACKLIGHT: display %s at %llu s (level %u)%s", on ? "on" : "off", ns / NSEC_PER_SEC,
+		    level_set, e ? " NOT set" : "");
 	}
 }
 
