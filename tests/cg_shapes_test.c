@@ -11,6 +11,7 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #define SIZE 256
 
@@ -131,6 +132,7 @@ main(void)
 	CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
 	CGBitmapInfo info = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
 	static uint32_t plain[SIZE * SIZE];
+	static char summary[512];
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	printf("CG SHAPES: CGIOSurfaceContextCreate is %s\n", create ? "there" : "NOT THERE");
@@ -145,21 +147,38 @@ main(void)
 			CGContextRelease(c);
 			a = covered(plain);
 		}
+		/* the surface counted three times: at once, 200 ms later, and once more after a full lock/unlock of it
+		 * (growing counts: CoreGraphics draws later than the flush; the same low count: the CPU sees stale memory) */
+		unsigned b2 = 0, b3 = 0, seed1 = 0, seed2 = 0;
 		IOSurfaceRef s = make_surface();
 		if (s != NULL && create != NULL && (c = create(s, SIZE, SIZE, 8, 32, space, info)) != NULL) {
 			shape(c, which);
 			CGContextFlush(c);
 			CGContextRelease(c);
+			seed1 = IOSurfaceGetSeed(s);
 			IOSurfaceLock(s, kIOSurfaceLockReadOnly, &seed);
 			b = covered(IOSurfaceGetBaseAddress(s));
 			IOSurfaceUnlock(s, kIOSurfaceLockReadOnly, &seed);
+			usleep(200000);
+			IOSurfaceLock(s, kIOSurfaceLockReadOnly, &seed);
+			b2 = covered(IOSurfaceGetBaseAddress(s));
+			IOSurfaceUnlock(s, kIOSurfaceLockReadOnly, &seed);
+			IOSurfaceLock(s, 0, &seed);
+			IOSurfaceUnlock(s, 0, &seed);
+			IOSurfaceLock(s, kIOSurfaceLockReadOnly, &seed);
+			b3 = covered(IOSurfaceGetBaseAddress(s));
+			IOSurfaceUnlock(s, kIOSurfaceLockReadOnly, &seed);
+			seed2 = IOSurfaceGetSeed(s);
 		}
 		if (s != NULL) {
 			CFRelease(s);
 		}
-		printf("CG SHAPES: %s: bitmap %u, iosurface %u%s\n", names[which], a, b,
-		    a == 0 ? "  (NOTHING in the plain bitmap)" : (b * 10 < a * 9 || b * 10 > a * 11) ? "  (DIFFERENT)" : "");
+		snprintf(summary + strlen(summary), sizeof(summary) - strlen(summary), " %d:%u/%u/%u/%u", which, a, b, b2, b3);
+		printf("CG SHAPES: %s: bitmap %u, iosurface %u / %u after 200 ms / %u after a lock (seed %u -> %u)%s\n", names[which],
+		    a, b, b2, b3, seed1, seed2,
+		    a == 0 ? "  (NOTHING in the plain bitmap)" : (b3 * 10 < a * 9 || b3 * 10 > a * 11) ? "  (DIFFERENT)" : "");
 	}
+	printf("CG SHAPES SUMMARY (shape:bitmap/iosurface/200ms/locked):%s\n", summary);
 	printf("CG SHAPES: end\n");
 	return 0;
 }
