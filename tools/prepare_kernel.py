@@ -34,7 +34,7 @@ driver_files = [
     'begonia_wpa.h','begonia_wpa.c',
     'begonia_wifi_fw.h','begonia_wifi_fw.c',
     'begonia_bt.h','begonia_bt.c',
-    'begonia_buttons.c', 'begonia_backlight.c'
+    'begonia_buttons.c', 'begonia_backlight.c', 'begonia_battery.c'
 ]
 for name in driver_files:
     shutil.copyfile(root/'kernel/bsd/dev'/name,tree/'bsd/dev'/name)
@@ -54,7 +54,8 @@ for entry in [
     'bsd/dev/begonia_wifi_fw.c standard',
     'bsd/dev/begonia_bt.c standard',
     'bsd/dev/begonia_buttons.c standard',
-    'bsd/dev/begonia_backlight.c standard'
+    'bsd/dev/begonia_backlight.c standard',
+    'bsd/dev/begonia_battery.c standard'
 ]:
     if entry not in bsd_files:
         bsd_files += '\n' + entry + '\n'
@@ -84,6 +85,8 @@ hakios_input_init(void)
 \tbegonia_buttons_init();
 \textern void begonia_backlight_init(void);
 \tbegonia_backlight_init();
+\textern void begonia_battery_init(void);
+\tbegonia_battery_init();
 \textern void begonia_wlan_init(void);
 \textern void BegoniaWLANStart(void);
 \tbegonia_wlan_init();
