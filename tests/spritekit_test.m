@@ -94,7 +94,8 @@ int main(void) {
             MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
             pass.colorAttachments[0].texture = target;
             pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-            pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
+            /* (SKRenderer paints no background: the scene's colour is the pass's clear, as with an SKView's own) */
+            pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 1, 1);
             pass.colorAttachments[0].storeAction = MTLStoreActionStore;
             id<MTLCommandBuffer> commands = [queue commandBuffer];
             [renderer renderWithViewport:CGRectMake(0, 0, W, H) commandBuffer:commands renderPassDescriptor:pass];
@@ -109,7 +110,8 @@ int main(void) {
         check(px, 128, 20, 0, 0, 255, "background");
         check(px, 48, 48, 255, 0, 0, "red sprite");
         check(px, 208, 48, 0, 255, 0, "rotated green sprite, middle");
-        check(px, 208 + 40, 48, 0, 0, 255, "rotated green sprite, beyond its corner");
+        check(px, 208 + 40, 48, 0, 255, 0, "rotated green sprite, near its right tip (45 px from the middle)");
+        check(px, 208 + 28, 48 + 28, 0, 0, 255, "rotated green sprite, beyond its upper right edge");
         check(px, 30, 208, 255, 255, 255, "textured sprite, left (white)");
         check(px, 66, 208, 255, 255, 0, "textured sprite, right (yellow)");
         check(px, 208, 208, 255, 0, 255, "circle shape");
