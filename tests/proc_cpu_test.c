@@ -28,6 +28,9 @@ static const char *const stag[NS] = { "SB", "BB", "WKGPU", "WKNET" };
 struct sym { const void *key; char name[48]; unsigned leaf, in; };
 static struct sym syms[NS][SYMS];
 static unsigned samples[NS];
+/* what the sampler got as far as (y103: nothing at all): task_threads calls, threads, infos, running, states */
+static volatile unsigned dbg[NS][5];
+static volatile int dbg_kr[NS][3], dbg_tfp[NS] = { 99, 99, 99, 99 }, dbg_pid[NS];
 static pthread_mutex_t sym_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int proc_listallpids(void *buffer, int buffersize);
@@ -68,7 +71,10 @@ sample_task(int p, task_t task)
 	thread_act_array_t threads;
 	mach_msg_type_number_t count;
 
-	if (task_threads(task, &threads, &count) != KERN_SUCCESS) {
+	kern_return_t kr = task_threads(task, &threads, &count);
+	dbg[p][0]++;
+	if (kr != KERN_SUCCESS) {
+		dbg_kr[p][0] = kr;
 		return;
 	}
 	for (unsigned t = 0; t < count; t++) {
@@ -77,12 +83,26 @@ sample_task(int p, task_t task)
 		arm_thread_state64_t st;
 		mach_msg_type_number_t sn = ARM_THREAD_STATE64_COUNT;
 
-		if (thread_info(threads[t], THREAD_BASIC_INFO, (thread_info_t)&bi, &bn) != KERN_SUCCESS ||
-		    bi.run_state != TH_STATE_RUNNING ||
-		    thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&st, &sn) != KERN_SUCCESS) {
+		dbg[p][1]++;
+		kr = thread_info(threads[t], THREAD_BASIC_INFO, (thread_info_t)&bi, &bn);
+		if (kr != KERN_SUCCESS) {
+			dbg_kr[p][1] = kr;
 			mach_port_deallocate(mach_task_self(), threads[t]);
 			continue;
 		}
+		dbg[p][2]++;
+		if (bi.run_state != TH_STATE_RUNNING) {
+			mach_port_deallocate(mach_task_self(), threads[t]);
+			continue;
+		}
+		dbg[p][3]++;
+		kr = thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&st, &sn);
+		if (kr != KERN_SUCCESS) {
+			dbg_kr[p][2] = kr;
+			mach_port_deallocate(mach_task_self(), threads[t]);
+			continue;
+		}
+		dbg[p][4]++;
 		uint64_t pcs[13];
 		int n = 0;
 		pcs[n++] = __darwin_arm_thread_state64_get_pc(st);
@@ -151,7 +171,9 @@ sampler(void *unused)
 					}
 					tasks[p] = 0;
 					pids[p] = found;
-					if (found && task_for_pid(mach_task_self(), found, &tasks[p]) != KERN_SUCCESS) {
+					dbg_pid[p] = found;
+					dbg_tfp[p] = found ? task_for_pid(mach_task_self(), found, &tasks[p]) : 98;
+					if (found && dbg_tfp[p] != KERN_SUCCESS) {
 						static int said;
 						if (said++ < 4) {
 							printf("SAMPLE: task_for_pid(%s) refused\n", sampled[p]);
@@ -177,6 +199,9 @@ sample_window(int w, char hist[NS][4000])
 {
 	pthread_mutex_lock(&sym_lock);
 	for (int p = 0; p < NS; p++) {
+		printf("SAMPLEDBG %s pid %d tfp %d: calls %u threads %u infos %u running %u states %u; kr %x %x %x; samples %u\n",
+		    stag[p], dbg_pid[p], dbg_tfp[p], dbg[p][0], dbg[p][1], dbg[p][2], dbg[p][3], dbg[p][4], dbg_kr[p][0],
+		    dbg_kr[p][1], dbg_kr[p][2], samples[p]);
 		if (samples[p] < 5) {
 			memset(syms[p], 0, sizeof(syms[p]));
 			samples[p] = 0;

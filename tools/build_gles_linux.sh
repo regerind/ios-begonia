@@ -51,11 +51,13 @@ if [ ! -f "$B/ios/build.ninja" ]; then
 	meson setup "$B/ios" "$M" --cross-file "$B/cross.ini" --wrap-mode=nofallback --buildtype=release -Db_ndebug=true \
 		-Dplatforms= -Dgallium-drivers=panfrost,softpipe -Dvulkan-drivers= -Dglx=disabled -Degl=disabled -Dgbm=disabled \
 		-Dosmesa=true -Dllvm=disabled -Dshared-glapi=enabled -Dgles1=disabled -Dgles2=enabled -Dopengl=true \
-		-Dzstd=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dshader-cache=disabled -Dvalgrind=disabled \
+		-Dzstd=disabled -Dxmlconfig=disabled -Dexpat=disabled -Dshader-cache=enabled -Dvalgrind=disabled \
 		-Dlibunwind=disabled -Dglvnd=disabled -Dvideo-codecs= -Dtools= -Dgallium-vdpau=disabled -Dgallium-va=disabled \
 		-Dgallium-xa=disabled -Dlmsensors=disabled -Dbuild-tests=false -Dmesa-clc=auto -Dprecomp-compiler=system \
 		> "$B/ios-setup.log" 2>&1 || { tail -30 "$B/ios-setup.log"; exit 1; }
 fi
+# begonia: the shader cache on (y104: first-use compiles stalled the screen); an existing build is reconfigured
+meson configure "$B/ios" -Dshader-cache=enabled > "$B/ios-reconfigure.log" 2>&1 || { tail -20 "$B/ios-reconfigure.log"; exit 1; }
 echo "gles: building libOSMesa (log: $B/ios-build.log)"
 ninja -C "$B/ios" src/gallium/targets/osmesa/libOSMesa.8.dylib > "$B/ios-build.log" 2>&1 ||
 	{ grep -E "error|Error" "$B/ios-build.log" | head -30; exit 1; }
