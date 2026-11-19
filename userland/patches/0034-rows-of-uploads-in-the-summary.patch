@@ -1,0 +1,39 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -144,6 +144,7 @@
+ static int frame_lines;                 /* boot-arg glframes=1: a line for every frame (see frame_end()) */
+ static int latency_lines;               /* boot-arg touch_lat=1: when every frame began and ended (see frame_end()) */
+ static uint64_t slow_calls_us;          /* boot-arg glslow=US: a line for every call that takes longer (eagl_leave()) */
++static void store_summary(void);        /* begonia: how rows of uploads were said to lie, with every summary */
+ static uint64_t call_began_us;          /* (when the call in progress began) */
+ /*
+  * begonia (x31): of a frame's time on the drawing thread, how much is inside GL calls (this bridge and Mesa,
+@@ -587,6 +588,7 @@
+ 	    e->frames, e->all_calls / frames, e->all_draws / frames, e->all_triangles / frames, e->most_calls,
+ 	    e->most_triangles, e->frame_us / frames, e->flush_us / frames, e->wait_us / frames, e->readback_us / frames,
+ 	    e->attach_us / frames, e->shared, e->refused, e->shaders, e->programs, widest_texture, tallest_texture, e->errors);
++	store_summary();
+ 	say("hakios-gl:   looking for changes: %llu us and %llu KB a frame; changes the seed did not show: %u of %u looks "
+ 	    "at surfaces of their own, %u of %u at wrapped memory\n", hash_us / frames, (hash_bytes / frames) >> 10,
+ 	    seed_missed[0], seed_looks[0], seed_missed[1], seed_looks[1]);
+@@ -4127,6 +4129,20 @@
+ static unsigned upload_kinds, upload_rows_said, upload_rows_odd;
+ 
+ static void
++store_summary(void)
++{
++	char line[900] = "";
++	size_t used = 0;
++
++	for (unsigned i = 0; i < store_kinds && used < sizeof(line) - 24; i++) {
++		used += (size_t)snprintf(line + used, sizeof(line) - used, " %#x=%d", store_seen[i].name, store_seen[i].value);
++	}
++	say("hakios-gl:   rows of uploads: %u kinds of upload so far; row bytes said as a row length for %u uploads, %u could not "
++	    "be; now row bytes %d, row length %d, alignment %d; glPixelStorei was called with:%s\n", upload_kinds, upload_rows_said,
++	    upload_rows_odd, store_row_bytes, store_row_length, store_alignment, line);
++}
++
++static void
+ my_glPixelStorei(void *context, GLenum name, GLint value)
+ {
+ 	struct eagl *e = context;
