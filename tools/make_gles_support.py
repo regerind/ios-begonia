@@ -53,7 +53,7 @@ if a.metal_client:
   if (sysimage/'metallibs'/path).exists():
    (dest/'ext/metallib'/path).parent.mkdir(parents=True,exist_ok=True)
    shutil.copy2(sysimage/'metallibs'/path,dest/'ext/metallib'/path);print('metal: /'+path)
- for t in ('metal_frontend_test','vulkan_device_test','metal_game_test','spritekit_test','scenekit_test'):
+ for t in ('metal_frontend_test','vulkan_device_test','spritekit_test','scenekit_test','metal_game_test'):
   if (root/'out/native-gpu-tests'/t).exists():
    shutil.copy2(root/'out/native-gpu-tests'/t,dest/'bin'/t);metal_tests+='/redwood/bin/'+t+'\n'
 shutil.copy2(stage/'libOSMesa.8.dylib',dest/'lib/libOSMesa.8.dylib')
