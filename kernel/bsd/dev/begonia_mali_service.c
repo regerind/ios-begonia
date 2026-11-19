@@ -49,6 +49,7 @@ static unsigned stat_deepest;
 /* x33: callers that slept in hakios_mali_wait() for a job (Mesa waiting on the GPU), and for how long in all */
 static uint64_t stat_sleeps,stat_slept;
 static int32_t job_cpu=4;               /* x34: begonia_gpu_cpu (job_thread()) */
+static uint64_t stat_busy_fragment;
 static int job_bound=-1;
 static uint32_t rd(unsigned o) {return *(volatile uint32_t *)(gpu+o);}
 static void wr(unsigned o,uint32_t v) {*(volatile uint32_t *)(gpu+o)=v;__asm__ volatile("dsb sy":::"memory");}
@@ -198,6 +199,7 @@ void hakios_mali_tag(uint64_t address,uint32_t kind,uint32_t width,uint32_t heig
 static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queued,unsigned depth) {
  uint64_t took=ended-began,ns;
  stat_jobs++;stat_fragment+=fragment;stat_busy+=took;stat_waited+=began-queued;
+ if(fragment)stat_busy_fragment+=took;      /* x45: the pixel jobs' share of the GPU's time */
  if(took>stat_longest)stat_longest=took;
  if(depth>stat_deepest)stat_deepest=depth;
  if(!stat_since)stat_since=began;
@@ -209,6 +211,11 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
  { extern void HakiosMaliCacheSecond(void); HakiosMaliCacheSecond(); }   /* x35: with mcp=1, begonia.mali.cpp's own counts */
  uint64_t sleeps=__atomic_exchange_n(&stat_sleeps,0,__ATOMIC_RELAXED),slept;
  absolutetime_to_nanoseconds(__atomic_exchange_n(&stat_slept,0,__ATOMIC_RELAXED),&slept);
+ { uint64_t pixels;absolutetime_to_nanoseconds(stat_busy_fragment,&pixels);
+   printf("BEGONIA GPU JOBS: fragment %llu, %llu us each; the others (vertex and tiler) %llu, %llu us each
+",stat_fragment,
+    stat_fragment?pixels/1000/stat_fragment:0,stat_jobs-stat_fragment,
+    stat_jobs>stat_fragment?(busy-pixels)/1000/(stat_jobs-stat_fragment):0);stat_busy_fragment=0; }
  printf("BEGONIA GPU WAITS: callers slept for a job %llu times, %llu ms in all (of %llu ms); jobs run on processor %d "
   "(begonia_gpu_cpu=%d: %s)\n",sleeps,slept/1000000,ns/1000000,cpu_number(),job_cpu,
   job_bound<0?"not asked":job_bound?"bound":"NOT bound");

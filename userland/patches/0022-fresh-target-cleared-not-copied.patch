@@ -1,0 +1,87 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -1041,6 +1041,63 @@
+  * first; the copy is turned over as target_to_surface() turns it back.
+  */
+ static unsigned mirror_fills;
++/*
++ * begonia (x45): a surface nobody has written to yet (its seed is the one it was made with: the kernel counts every
++ * lock for writing, MiniIOSurface.cpp) holds zeroes, and CoreAnimation makes such a one for nearly every frame. Copying
++ * it into the target was a full-screen job for the GPU every frame, which has 16 ms of work a frame as it is (x44: the
++ * GPU 85% busy, jobs 17 ms in its queue). The target is cleared instead: the same pixels, no reading.
++ * Boot-arg glfill=1: copied in any case, as before.
++ */
++static int fill_fresh;
++static unsigned fresh_clears;
++
++static void
++target_cleared(struct eagl *e, struct image *image)
++{
++	GLint draw = 0, row_length = 0, unpack = 0;
++	GLfloat colour[4] = { 0, 0, 0, 0 };
++	GLboolean mask[4] = { 1, 1, 1, 1 }, scissor;
++
++	glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length);
++	glGetIntegerv(0x88ef /* GL_PIXEL_UNPACK_BUFFER_BINDING */, &unpack);
++	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++	if (unpack != 0) {
++		glBindBuffer(0x88ec /* GL_PIXEL_UNPACK_BUFFER */, 0);
++	}
++	glTexImage2D(GL_TEXTURE_2D, 0, (GLint)internal_format(image->internal, image->format), image->width, image->height, 0,
++	    image->format, image->type, NULL);
++	if (unpack != 0) {
++		glBindBuffer(0x88ec, (GLuint)unpack);
++	}
++	glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
++	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
++	glGetFloatv(0x0c22 /* GL_COLOR_CLEAR_VALUE */, colour);
++	glGetBooleanv(0x0c23 /* GL_COLOR_WRITEMASK */, mask);
++	scissor = glIsEnabled(GL_SCISSOR_TEST);
++	if (e->writer == 0) {
++		glGenFramebuffers(1, &e->writer);
++	}
++	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, e->writer);
++	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image->texture, 0);
++	if (scissor) {
++		glDisable(GL_SCISSOR_TEST);
++	}
++	glColorMask(1, 1, 1, 1);
++	glClearColor(0, 0, 0, 0);
++	glClear(GL_COLOR_BUFFER_BIT);
++	glClearColor(colour[0], colour[1], colour[2], colour[3]);
++	glColorMask(mask[0], mask[1], mask[2], mask[3]);
++	if (scissor) {
++		glEnable(GL_SCISSOR_TEST);
++	}
++	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)draw);
++	image->seed = IOSurfaceGetSeed(image->surface);
++	if (fresh_clears++ < 4 || fresh_clears % 500 == 0) {
++		say("hakios-gl: target %u of the new surface %u cleared, not copied from it (%d x %d), %u so far; %u copied\n",
++		    image->texture, IOSurfaceGetID(image->surface), image->width, image->height, fresh_clears, mirror_fills);
++	}
++}
++
+ static void
+ mirror_to_target(struct eagl *e, struct image *image)
+ {
+@@ -4664,7 +4721,11 @@
+ 	 */
+ 	began = now_us();
+ 	if (surface_mirrored(e, image)) {
+-		mirror_to_target(e, image);             /* begonia: by the GPU, from the surface's memory */
++		if (!fill_fresh && IOSurfaceGetSeed(surface) <= 1) {
++			target_cleared(e, image);       /* begonia (x45): nothing in it yet */
++		} else {
++			mirror_to_target(e, image);     /* begonia: by the GPU, from the surface's memory */
++		}
+ 	} else if (!surface_shared(e, image)) {
+ 		surface_changed(e, image);              /* (what it adds up to now) */
+ 		surface_to_texture(e, image);
+@@ -4840,6 +4901,7 @@
+ 		}
+ 		sync_frames = strstr(arguments, "glsync=0") == NULL;
+ 		hash_wrapped = strstr(arguments, "glwraphash=1") != NULL;
++		fill_fresh = strstr(arguments, "glfill=1") != NULL;
+ 		if (strstr(arguments, "glwait=0") != NULL || (strstr(arguments, "glwait=1") == NULL && display_waits())) {
+ 			wait_for_frames = 0;
+ 		}

@@ -1,0 +1,76 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -150,6 +150,25 @@
+  * eagl_enter() to eagl_leave()) and so how much is between them: CoreAnimation's own work.
+  */
+ static uint64_t inside_began, inside_us;
++/*
++ * begonia (x45): of the time in glDrawElements' entry, how much is the library's own call (Mesa: the rest is this
++ * bridge around it), and by which way the draws go; and of a frame's time, how much the thread was on a processor.
++ */
++static uint64_t draw_lib_us, frame_cpu_began, frame_cpu_us;
++static unsigned draw_group, draw_plain, draw_other;
++
++static uint64_t
++thread_cpu_us(void)
++{
++	thread_basic_info_data_t basic;
++	mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
++
++	if (thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, (thread_info_t)&basic, &count) != KERN_SUCCESS) {
++		return 0;
++	}
++	return (uint64_t)basic.user_time.seconds * 1000000 + (uint64_t)basic.user_time.microseconds +
++	    (uint64_t)basic.system_time.seconds * 1000000 + (uint64_t)basic.system_time.microseconds;
++}
+ static uint64_t now_us(void);
+ static void eagl_trace(const char *format, ...) __attribute__((format(printf, 1, 2)));
+ static void eagl_trace_floats(const float *values, int count);
+@@ -580,6 +599,9 @@
+ 			    slot_calls[best] ? slot_us[best] / slot_calls[best] : 0);
+ 		}
+ 	}
++	say("hakios-gl:   glDrawElements: %llu us a frame in the library's own call; by way, a frame: %u in a group, %u plain, "
++	    "%u as they come; the frame's %llu us: %llu with the thread on a processor\n", draw_lib_us / frames,
++	    draw_group / frames, draw_plain / frames, draw_other / frames, e->frame_us / frames, frame_cpu_us / frames);
+ 	say("hakios-gl:   calls that set what was set already: glBindTexture %u, glUseProgram %u, glActiveTexture %u, "
+ 	    "glBindFramebuffer %u\n", same_texture, same_program, same_unit, same_framebuffer);
+ 	{
+@@ -1489,6 +1511,7 @@
+ 	}
+ 	e->in_frame = true;
+ 	e->began = now_us();
++	frame_cpu_began = thread_cpu_us();
+ 	if (bind_cpu >= 0) {
+ 		int cpu = bind_cpu, failed;
+ 
+@@ -1641,6 +1664,7 @@
+ 	e->attach_us += e->attaching;
+ 	e->flush_us += e->flushing;
+ 	e->frame_us += after - e->began;
++	frame_cpu_us += thread_cpu_us() - frame_cpu_began;
+ 	if (e->calls > e->most_calls) {
+ 		e->most_calls = e->calls;
+ 	}
+@@ -3777,11 +3801,21 @@
+ 	if (skipping != 0 && skip_draw(e)) {
+ 		/* glskip=N: see my_glDrawArrays */
+ 	} else if (group_draw_begin(e, enabled)) {
++		uint64_t began = now_us();
++
+ 		glDrawElements(mode, count, type, indices);
++		draw_lib_us += now_us() - began;
++		draw_group++;
+ 		group_draw_end(e, enabled);
+ 	} else {
++		uint64_t began;
++
+ 		plain = plain_draw_begin(e, enabled);
++		began = now_us();
+ 		glDrawElements(mode, count, type, indices);
++		draw_lib_us += now_us() - began;
++		draw_plain += plain;
++		draw_other += !plain;
+ 		if (plain) {
+ 			plain_draw_end(e, enabled);
+ 		}
