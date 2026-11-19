@@ -65,7 +65,25 @@ int xnu_main(void) {
     for(uint64_t i=0;i<p->adt_size;i++)attempt=(attempt^((const uint8_t *)p)[p->adt_off+i])*0x01000193;
     uint32_t request=attempt^0xb00610deu;
     if(!request)request=1;
+    /*
+     * begonia_persist=1 in the payload's command line: a phone, not a test. iOS on every boot, warm or cold, with no
+     * one-shot latch (a test image runs once and then falls back, which on a plain restart looked like a hang on the
+     * Redmi logo). The way out stays the boot loader's: Power + Volume-Down at power-on is LK's fastboot, before this
+     * code runs. And Volume-Up held while the logo shows chains the fallback kernel (serial) instead of iOS: the
+     * keypad's KPD_MEM (0x10010004, begonia_buttons.c) has bit 0 low for Volume-Up, bit 1 low for Volume-Down; only
+     * "up low, down high" counts, read three times, so an unclocked keypad (all zeroes) never keeps iOS from booting.
+     */
+    int persist=arg_number(p->cmdline,"begonia_persist=")==1;
+    if(persist) {
+        volatile uint32_t *kpd=(volatile uint32_t *)0x10010004UL;
+        int held=1;
+        for(int i=0;i<3;i++)held=held && (kpd[0]&3)==2;
+        if(held){begonia_emit_text("BEGONIA XNU: volume up held; chaining fallback kernel\n");*mark=0;return 0;}
+        begonia_emit_text("BEGONIA XNU: persistent boot (begonia_persist=1)\n");
+        *mark=request;__asm__ volatile("dsb sy" ::: "memory");
+    }
 #ifdef XNU_FORCE_TEST
+    if(!persist) {
     volatile uint64_t *saved=(volatile uint64_t *)0x1b7e00000ULL;
     volatile uint32_t *boot_done=(volatile uint32_t *)BEGONIA_LATCH_ADDR;
     if((saved[0]==0x3230474f4c474542ULL && saved[8]==request) || *boot_done==request){
@@ -77,6 +95,7 @@ int xnu_main(void) {
     begonia_emit_text("BEGONIA XNU: explicit native test; warm fallback after log capture\n");
     *boot_done=request;
     *mark=request;__asm__ volatile("dsb sy" ::: "memory");
+    }
 #endif
     if(*mark!=request){begonia_emit_text("BEGONIA XNU: no explicit request; chaining fallback kernel\n");return 0;}
     /* Consume before any risky setup. Cold or warm resets default to Linux. */
@@ -148,6 +167,8 @@ int xnu_main(void) {
             break;
         }
     }
+    /* a phone has no session deadline: its reset would only come back here and start iOS again */
+    if(persist)seconds=0;
 #endif
     if(!watcher_start(lp,np,cp,seconds,request)){begonia_emit_text("BEGONIA XNU: supervisor unavailable; returning to Linux\n");return 0;}
     __asm__ volatile("dsb sy; ic iallu; dsb sy; isb" ::: "memory");
