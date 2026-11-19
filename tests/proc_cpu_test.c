@@ -22,20 +22,75 @@ kern_return_t mach_vm_read_overwrite(vm_map_t, mach_vm_address_t, mach_vm_size_t
  * code is "image+page". Each 3 s window: the five functions most often running ("LEAF") and the five most often on
  * the stack ("IN"), per process. As root, task_for_pid() is allowed (bsd/vm/vm_unix.c).
  */
-enum { NS = 4 };
-static const char *const sampled[NS] = { "SpringBoard", "backboardd", "com.apple.WebKit.GPU", "com.apple.WebKit.Networking" };
-static const char *const stag[NS] = { "SB", "BB", "WKGPU", "WKNET" };
+enum { NS = 6 };
+static const char *const sampled[NS] = { "SpringBoard", "backboardd", "com.apple.WebKit.GPU", "com.apple.WebKit.Networking", "chronod", "com.apple.WebKit.WebContent" };
+static const char *const stag[NS] = { "SB", "BB", "WKGPU", "WKNET", "CHRONO", "WKWEB" };
 #define SYMS 512
 struct sym { const void *key; char name[48]; unsigned leaf, in; };
 static struct sym syms[NS][SYMS];
 static unsigned samples[NS];
 /* what the sampler got as far as (y103: nothing at all): task_threads calls, threads, infos, running, states */
 static volatile unsigned dbg[NS][5];
-static volatile int dbg_kr[NS][3], dbg_tfp[NS] = { 99, 99, 99, 99 }, dbg_pid[NS];
+static volatile int dbg_kr[NS][3], dbg_tfp[NS] = { 99, 99, 99, 99, 99, 99 }, dbg_pid[NS];
 static pthread_mutex_t sym_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int proc_listallpids(void *buffer, int buffersize);
 int proc_name(int pid, void *buffer, uint32_t buffersize);
+
+/*
+ * The target's own images (y108: code outside the shared cache was only "pc 104e12000"; that is libOSMesa, metal2vulkan,
+ * panvk -- loaded at their own places in each process): dyld's list, read from the target (TASK_DYLD_INFO), kept
+ * sorted by load address; refreshed with the process list.
+ */
+#include <mach-o/dyld_images.h>
+#define IMAGES 600
+struct image { uint64_t base; char name[40]; };
+static struct image images[NS][IMAGES];
+static int nimages[NS];
+
+static int
+image_cmp(const void *a, const void *b)
+{
+	uint64_t x = ((const struct image *)a)->base, y = ((const struct image *)b)->base;
+	return x < y ? -1 : x > y;
+}
+
+static void
+images_of(int p, task_t task)
+{
+	struct task_dyld_info di;
+	mach_msg_type_number_t n = TASK_DYLD_INFO_COUNT;
+	uint32_t head[4];
+	mach_vm_size_t got;
+
+	nimages[p] = 0;
+	if (task_info(task, TASK_DYLD_INFO, (task_info_t)&di, &n) != KERN_SUCCESS ||
+	    mach_vm_read_overwrite(task, di.all_image_info_addr, sizeof(head), (mach_vm_address_t)head, &got) != KERN_SUCCESS) {
+		return;
+	}
+	uint32_t count = head[1];
+	uint64_t array = (uint64_t)head[2] | (uint64_t)head[3] << 32;
+	for (uint32_t i = 0; i < count && nimages[p] < IMAGES; i++) {
+		uint64_t e[3];
+		char path[256];
+		if (mach_vm_read_overwrite(task, array + i * sizeof(e), sizeof(e), (mach_vm_address_t)e, &got) != KERN_SUCCESS) {
+			break;
+		}
+		Dl_info here;
+		if (dladdr((const void *)e[0], &here) && here.dli_fbase == (void *)e[0]) {
+			continue;               /* in the shared cache: named here by dladdr */
+		}
+		memset(path, 0, sizeof(path));
+		if (mach_vm_read_overwrite(task, e[1], sizeof(path) - 1, (mach_vm_address_t)path, &got) != KERN_SUCCESS) {
+			continue;
+		}
+		const char *slash = strrchr(path, '/');
+		images[p][nimages[p]].base = e[0];
+		snprintf(images[p][nimages[p]].name, sizeof(images[p][0].name), "%s", slash ? slash + 1 : path);
+		nimages[p]++;
+	}
+	qsort(images[p], (size_t)nimages[p], sizeof(images[p][0]), image_cmp);
+}
 
 static struct sym *
 sym_of(int p, uint64_t pc)
@@ -44,12 +99,36 @@ sym_of(int p, uint64_t pc)
 	const void *key;
 	char name[48];
 
-	if (dladdr((const void *)pc, &info) && info.dli_sname != NULL) {
+	if (dladdr((const void *)pc, &info) && info.dli_sname != NULL && strcmp(info.dli_sname, "<redacted>") != 0) {
 		key = info.dli_saddr;
 		snprintf(name, sizeof(name), "%s", info.dli_sname);
+	} else if (info.dli_fname != NULL && info.dli_fbase != NULL && dladdr((const void *)pc, &info)) {
+		/* the shared cache's private functions: image!offset of the function's start */
+		const char *slash = strrchr(info.dli_fname, '/');
+		uint64_t start = info.dli_saddr ? (uint64_t)info.dli_saddr : pc;
+		key = (const void *)start;
+		snprintf(name, sizeof(name), "%.24s!%llx", slash ? slash + 1 : info.dli_fname,
+		    (unsigned long long)(start - (uint64_t)info.dli_fbase));
 	} else {
-		key = (const void *)(pc & ~0xfffULL);
-		snprintf(name, sizeof(name), "pc %llx", (unsigned long long)(pc & ~0xfffULL));
+		/* the target's own images: image+offset (in 64-byte steps), for the host's symbols */
+		int lo = 0, hi = nimages[p] - 1, at = -1;
+		while (lo <= hi) {
+			int mid = (lo + hi) / 2;
+			if (images[p][mid].base <= pc) {
+				at = mid;
+				lo = mid + 1;
+			} else {
+				hi = mid - 1;
+			}
+		}
+		if (at >= 0 && pc - images[p][at].base < (64u << 20)) {
+			uint64_t off = (pc - images[p][at].base) & ~0x3fULL;
+			key = (const void *)(images[p][at].base + off);
+			snprintf(name, sizeof(name), "%.24s+%llx", images[p][at].name, (unsigned long long)off);
+		} else {
+			key = (const void *)(pc & ~0xfffULL);
+			snprintf(name, sizeof(name), "pc %llx", (unsigned long long)(pc & ~0xfffULL));
+		}
 	}
 	unsigned h = (unsigned)(((uintptr_t)key >> 2) * 2654435761u) % SYMS;
 	for (unsigned n = 0; n < SYMS; n++, h = (h + 1) % SYMS) {
@@ -188,6 +267,11 @@ sampler(void *unused)
 						}
 						tasks[p] = 0;
 					}
+				}
+				if (tasks[p] && tick % 300 == 1) {     /* the images, every 3 s (plug-ins are loaded late) */
+					pthread_mutex_lock(&sym_lock);
+					images_of(p, tasks[p]);
+					pthread_mutex_unlock(&sym_lock);
 				}
 			}
 		}
