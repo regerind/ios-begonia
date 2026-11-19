@@ -1,6 +1,6 @@
 --- a/userland/src/inject_sb.c
 +++ b/userland/src/inject_sb.c
-@@ -2255,6 +2255,70 @@
+@@ -2255,6 +2255,71 @@
  }
  
  /*
@@ -72,7 +72,7 @@
   * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
   * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
   */
-@@ -2812,6 +2876,7 @@
+@@ -2812,6 +2877,7 @@
  	display_link_rates();
  	torch_for_control_centre();
  	brightness_to_the_lcd();
