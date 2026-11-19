@@ -1,0 +1,26 @@
+--- a/osfmk/arm/commpage/commpage.c
++++ b/osfmk/arm/commpage/commpage.c
+@@ -421,6 +421,23 @@
+ 	gARM_FEAT_AES = 1;
+ 	gARM_FEAT_SHA256 = 1;
+ 	bits |= kHasARMv8Crypto;
++#else
++	/*
++	 * begonia: this kernel is built with the BCM2837 board configuration (a Cortex-A53 without the crypto
++	 * extensions), so __ARM_V8_CRYPTO_EXTENSIONS__ is not defined and every program was told there is no AES, SHA or
++	 * PMULL: corecrypto and boringssl ran in plain software (y109: the WebKit network process's TLS a third of its
++	 * time while a video played). The MT6785's Cortex-A76/A55 say what they have in ID_AA64ISAR0_EL1; the bit
++	 * stands for all four (kHasFeatAES == kHasFeatSHA1 == kHasFeatSHA256 == kHasFeatPMULL), so all four are asked.
++	 */
++	if ((isar0 & ID_AA64ISAR0_EL1_AES_MASK) >= ID_AA64ISAR0_EL1_AES_PMULL_EN &&
++	    (isar0 & ID_AA64ISAR0_EL1_SHA1_MASK) >= ID_AA64ISAR0_EL1_SHA1_EN &&
++	    (isar0 & ID_AA64ISAR0_EL1_SHA2_MASK) >= ID_AA64ISAR0_EL1_SHA2_EN) {
++		gARM_FEAT_PMULL = 1;
++		gARM_FEAT_SHA1 = 1;
++		gARM_FEAT_AES = 1;
++		gARM_FEAT_SHA256 = 1;
++		bits |= kHasARMv8Crypto;
++	}
+ #endif /* __ARM_V8_CRYPTO_EXTENSIONS__ */
+ 
+ 	*commpage_bits |= bits;
