@@ -91,6 +91,27 @@ HakiosMaliCacheSecond(void)
 	maliCallsSaid();''')
 change('\tIOReturn ret = kIOReturnSuccess;\n\n\tif (args->structureInput == NULL || size > sizeof(r) || fBuffers == NULL) {',
        '\tIOReturn ret = kIOReturnSuccess;\n\tMaliCallTimer timed(selector);\n\n\tif (args->structureInput == NULL || size > sizeof(r) || fBuffers == NULL) {')
+# x57: a buffer closed while a job queued or running still names it is freed later, not waited for.
+# freeBuffer() waited up to 2 s for the buffer's last job with the driver's lock held: x56 (glslow=4000) has
+# glDeleteTextures over 4 ms 191 times in 35 s, 7 ms each, with the GPU's queue 10 to 15 ms deep.
+change('\tstruct mali_cpu_cache_stamp cpuCache;\n};',
+       '\tstruct mali_cpu_cache_stamp cpuCache;\n\tbool dying;                             /* closed by its client; freed when its last job has ended (reapBuffers()) */\n};')
+change('\tuint32_t                fNextBuffer;\n',
+       '\tuint32_t                fNextBuffer;\n\tuint16_t                fDying[512];            /* buffers closed and not freed yet */\n\tuint32_t                fDyingCount;\n\tbool                    fClosing;\n')
+change('\tvoid freeBuffer(struct mali_buffer * b);\n',
+       '\tvoid freeBuffer(struct mali_buffer * b);\n\tvoid reapBuffers(void);\n')
+change('\tif (handle == 0 || handle > MALI_BUFFERS || fBuffers[handle - 1].memory == NULL) {\n\t\treturn NULL;\n\t}\n\treturn &fBuffers[handle - 1];',
+       '\tif (handle == 0 || handle > MALI_BUFFERS || fBuffers[handle - 1].memory == NULL || fBuffers[handle - 1].dying) {\n\t\treturn NULL;\n\t}\n\treturn &fBuffers[handle - 1];')
+change("\t/* not while a job queued or running may still use it (jobs are run in a queue) */\n\tif (b->last_seq != 0) {\n\t\t(void)hakios_mali_wait(b->last_seq, 2ull * NSEC_PER_SEC);\n\t}\n",
+       "\t/* not while a job queued or running may still use it (jobs are run in a queue): later, then (reapBuffers()) */\n\tif (b->last_seq != 0 && !hakios_mali_wait(b->last_seq, 0)) {\n\t\tif (!fClosing && !b->dying && fDyingCount < sizeof(fDying) / sizeof(fDying[0])) {\n\t\t\tb->dying = true;\n\t\t\tfDying[fDyingCount++] = (uint16_t) (b - fBuffers);\n\t\t\treturn;\n\t\t}\n\t\t(void)hakios_mali_wait(b->last_seq, 2ull * NSEC_PER_SEC);\n\t}\n")
+change("/*\n * A handle and GPU addresses for `size` bytes of `memory` from byte `from` on, every page entered into the GPU's tables.",
+       "/* With the lock held: the buffers closed while a job still named them, those whose job has ended since. */\nvoid\nHakiosMaliUserClient::reapBuffers(void)\n{\n\tuint32_t kept = 0;\n\n\tfor (uint32_t i = 0; i < fDyingCount; i++) {\n\t\tstruct mali_buffer * b = &fBuffers[fDying[i]];\n\n\t\tif (b->memory == NULL || !b->dying) {\n\t\t\tcontinue;\n\t\t}\n\t\tif (fClosing || b->last_seq == 0 || hakios_mali_wait(b->last_seq, 0)) {\n\t\t\tfreeBuffer(b);\n\t\t} else {\n\t\t\tfDying[kept++] = fDying[i];\n\t\t}\n\t}\n\tfDyingCount = kept;\n}\n\n/*\n * A handle and GPU addresses for `size` bytes of `memory` from byte `from` on, every page entered into the GPU's tables.")
+change('\t\tif (fBuffers[i].memory != NULL && fBuffers[i].surface == s) {',
+       '\t\tif (fBuffers[i].memory != NULL && !fBuffers[i].dying && fBuffers[i].surface == s) {')
+change('\tIOLockLock(gMaliLock);\n\tfor (uint32_t i = 0; fBuffers != NULL && i < MALI_BUFFERS; i++) {',
+       '\tIOLockLock(gMaliLock);\n\tfClosing = true;\n\tfDyingCount = 0;\n\tfor (uint32_t i = 0; fBuffers != NULL && i < MALI_BUFFERS; i++) {')
+change('\tIOLockLock(gMaliLock);\n\tif (fRequests++ < 32) {',
+       '\tIOLockLock(gMaliLock);\n\tif (fDyingCount != 0) {\n\t\treapBuffers();\n\t}\n\tif (fRequests++ < 32) {')
 (tree/'iokit/Kernel/begonia.mali.cpp').write_text(text)
 for name in ['hakios.mali_va.h','hakios.mali_cpu_cache.h']:
     shutil.copyfile(source/name,tree/'bsd/dev'/name)
