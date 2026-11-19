@@ -57,6 +57,11 @@ if a.metal_client:
  for t in a.metal_test or ('metal_frontend_test','vulkan_device_test','spritekit_test','scenekit_test','metal_game_test'):
   if (root/'out/native-gpu-tests'/t).exists():
    shutil.copy2(root/'out/native-gpu-tests'/t,dest/'bin'/t);metal_tests+='/redwood/bin/'+t+'\n'
+else:
+ # (programs run late in the session without Metal too: wifi_cmd, ...)
+ for t in a.metal_test:
+  if (root/'out/native-gpu-tests'/t).exists():
+   shutil.copy2(root/'out/native-gpu-tests'/t,dest/'bin'/t);metal_tests+='/redwood/bin/'+t+'\n'
 shutil.copy2(stage/'libOSMesa.8.dylib',dest/'lib/libOSMesa.8.dylib')
 shutil.copy2(stage/'gles_render_test',dest/'bin/gles_render_test')
 if a.ui:

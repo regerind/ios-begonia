@@ -16,5 +16,6 @@ base=("$CC" -arch arm64 -isysroot "$SDK" -mios-version-min=16.5 -O1 -Wall -Wextr
 "${base[@]}" "$R/tests/scenekit_test.m" -fobjc-arc -framework Foundation -framework Metal -framework SceneKit \
 	-framework UIKit -framework CoreGraphics -o "$O/scenekit_test"
 "${base[@]}" "$R/tests/metal_game_test.m" -fobjc-arc -framework Foundation -framework Metal -o "$O/metal_game_test"
+"${base[@]}" "$R/tests/wifi_cmd.c" -o "$O/wifi_cmd"
 ls -la "$O"
 echo "gpu tests: built"
