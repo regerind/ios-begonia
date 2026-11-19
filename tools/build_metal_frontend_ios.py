@@ -473,12 +473,32 @@ hooks=[
 # (a pass attachment's resolve target, MSAA resolve: the bridge's record has it now, userland/metal/bridge/patches/0001)
 hooks.append(('  out.texture=texture.handle;out.level=a.level;out.slice=a.slice;out.depth_plane=a.depthPlane;out.load=a.loadAction;out.store=a.storeAction;\n',
               '  out.texture=texture.handle;out.level=a.level;out.slice=a.slice;out.depth_plane=a.depthPlane;out.load=a.loadAction;out.store=a.storeAction;\n'
+              '  const bool resolves=a.storeAction==MTLStoreActionMultisampleResolve||a.storeAction==MTLStoreActionStoreAndMultisampleResolve;\n'
               '  if(a.resolveTexture) {\n'
               '   if(![(id)a.resolveTexture isKindOfClass:[NBTexture class]])return false;\n'
               '   NBTexture *resolve=(NBTexture *)a.resolveTexture;if(resolve.surface)[_surfaces addObject:resolve];\n'
               '   [_resourceOwners addObject:resolve];\n'
-              '   out.resolve_texture=resolve.handle;out.resolve_level=a.resolveLevel;out.resolve_slice=a.resolveSlice;out.resolve_depth_plane=a.resolveDepthPlane;\n'
+              '   if(!nbRealMsaa()&&resolves) {\n'
+              '    // (MSAA emulated: the pass draws at one sample straight into what it would have resolved into)\n'
+              '    out.texture=resolve.handle;out.level=a.resolveLevel;out.slice=a.resolveSlice;out.depth_plane=a.resolveDepthPlane;\n'
+              '    out.store=MTLStoreActionStore;\n'
+              '   } else {\n'
+              '    out.resolve_texture=resolve.handle;out.resolve_level=a.resolveLevel;out.resolve_slice=a.resolveSlice;out.resolve_depth_plane=a.resolveDepthPlane;\n'
+              '   }\n'
+              '  } else if(!nbRealMsaa()&&resolves) {\n'
+              '   out.store=MTLStoreActionDontCare;\n'
               '  }\n'))
+# MSAA emulated by default (PanVK's multisampled fragment jobs fault on this Bifrost v7: JS_STATUS 0x58, y43): textures asked for
+# with samples are made with one, pipelines rasterize one, a resolving attachment is drawn into its resolve target (above). Games
+# draw right, without the smoothing of edges. Boot-arg metal_msaa=1: real multisampling.
+hooks.append((' *out={(uint64_t)d.textureType,(uint64_t)d.pixelFormat,d.width,d.height,d.depth,d.mipmapLevelCount,d.sampleCount,d.arrayLength,(uint64_t)d.usage,(uint64_t)d.resourceOptions};\n return true;',
+              ' *out={(uint64_t)d.textureType,(uint64_t)d.pixelFormat,d.width,d.height,d.depth,d.mipmapLevelCount,d.sampleCount,d.arrayLength,(uint64_t)d.usage,(uint64_t)d.resourceOptions};\n'
+              ' if(!nbRealMsaa()&&out->samples>1){if(out->type==MTLTextureType2DMultisample)out->type=MTLTextureType2D;else if(out->type==MTLTextureType2DMultisampleArray)out->type=MTLTextureType2DArray;out->samples=1;}\n'
+              ' return true;'))
+hooks.append((' p->depth_format=d.depthAttachmentPixelFormat;p->stencil_format=d.stencilAttachmentPixelFormat;p->samples=d.rasterSampleCount;',
+              ' p->depth_format=d.depthAttachmentPixelFormat;p->stencil_format=d.stencilAttachmentPixelFormat;p->samples=nbRealMsaa()?d.rasterSampleCount:1;'))
+hooks.append((' pass.width=d.renderTargetWidth;pass.height=d.renderTargetHeight;pass.array_length=d.renderTargetArrayLength;pass.samples=d.defaultRasterSampleCount;',
+              ' pass.width=d.renderTargetWidth;pass.height=d.renderTargetHeight;pass.array_length=d.renderTargetArrayLength;pass.samples=nbRealMsaa()?d.defaultRasterSampleCount:1;'))
 # (shader source: userland/metal/frontend_source.mm.inc, a category of the device's methods, after their class)
 hooks.append(('// Bare AIR bitcode (no metallib wrapper), which Metal itself refuses: for the bridge\'s own fixtures only.',
               (root/'userland/metal/frontend_source.mm.inc').read_text()+'\n// Bare AIR bitcode (no metallib wrapper), which Metal itself refuses: for the bridge\'s own fixtures only.'))

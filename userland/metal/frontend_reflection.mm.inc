@@ -172,6 +172,16 @@ static void nbConsole(NSString *what) {
  if (n > 0) (void)write(fd, line, (size_t)n);
 }
 
+// boot-arg metal_msaa=1: real multisampling (else emulated at one sample: tools/build_metal_frontend_ios.py says why)
+static bool nbRealMsaa() {
+ static int real = -1;
+ if (real < 0) {
+  char args[1024] = ""; size_t size = sizeof(args) - 1;
+  real = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, "metal_msaa=1") != NULL;
+ }
+ return real != 0;
+}
+
 static bool nbReflectionWanted() {
  static int wanted = -1;
  if (wanted < 0) {

@@ -356,7 +356,13 @@ bool hakios_mali_wait(uint64_t seq,uint64_t timeout) {
   __atomic_fetch_add(&stat_sleeps,1,__ATOMIC_RELAXED);
   __atomic_fetch_add(&stat_slept,mach_absolute_time()-asleep,__ATOMIC_RELAXED);
  }
- return seq<=__atomic_load_n(&completed,__ATOMIC_ACQUIRE) && seq!=__atomic_load_n(&failed,__ATOMIC_ACQUIRE);
+ /*
+  * begonia (y43): a job that failed has ended too. Answered "not done", a program's wait for it (WAIT_BO: a timeout) was
+  * asked again for ever -- a Metal program froze on the fragment job of a multisampled pass that faulted -- and the
+  * buffers it named were never freed. The failure is said (BEGONIA GPU FAILURES) and the GPU recovered; what the job
+  * should have written is not there, which is no worse than a program that never wakes.
+  */
+ return seq<=__atomic_load_n(&completed,__ATOMIC_ACQUIRE);
 }
 void begonia_mali_service_begin(vm_offset_t registers) {
  uint32_t enabled=0;
