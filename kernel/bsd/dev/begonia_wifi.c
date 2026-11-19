@@ -306,11 +306,22 @@ rails_map(uint32_t *hwcid)
 	return *hwcid >= 0x5930 ? &rails_mt6359p : &rails_mt6359;
 }
 
+/*
+ * begonia_wifi_rails=1: the enable bits of VCN18 and VCN33_1. =2: also VCN33_1's voltage selector, to 3.3 V (13), and
+ * only from 3.3..3.5 V while the rail is off (the user's approval of 2026-11-19: y58 found it at 15, 3.5 V); the old
+ * selector is put back when the rail goes off again. Anything else: nothing is written.
+ */
+static uint32_t
+rails_level(void)
+{
+	uint32_t v = 0;
+	return PE_parse_boot_argn("begonia_wifi_rails", &v, sizeof(v)) && (v == 1 || v == 2) ? v : 0;
+}
+
 static bool
 rails_permitted(void)
 {
-	uint32_t v = 0;
-	return PE_parse_boot_argn("begonia_wifi_rails", &v, sizeof(v)) && v == 1;
+	return rails_level() != 0;
 }
 
 static size_t
@@ -414,6 +425,8 @@ static struct {
 	uint64_t emiPA;
 	const struct wifi_rails *r;
 	uint32_t old18, old33;          /* the enable registers as they were */
+	bool     voselSet;              /* VCN33_1's selector was changed to 3.3 V (begonia_wifi_rails=2) */
+	uint32_t oldVosel33;
 	uint32_t oldM1, oldM2, oldDrv;
 } vw;
 
@@ -457,6 +470,10 @@ rails_restore(void)
 	delay(300);
 	begonia_pwrap_write_regulator(vw.r->vcn18_en, 1, vw.old18);
 	vw.railed = false;
+	if (vw.voselSet && !(pmic(vw.r->vcn33_mon) & 1)) {      /* the selector as it was, with the rail off */
+		begonia_pwrap_write_regulator(vw.r->vcn33_vosel, 0xf00, vw.oldVosel33 << 8);
+		vw.voselSet = false;
+	}
 }
 
 static void
@@ -506,10 +523,34 @@ wifi_on(char *out, size_t len, size_t o)
 		say("on: stopped before any write (%s)\n", vw.r == NULL ? "unknown PMIC" : "boot with begonia_wifi_rails=1");
 		return o;
 	}
-	if (VOSEL(pmic(vw.r->vcn33_vosel)) != VCN33_VOSEL_3V3 || VOSEL(pmic(vw.r->vcn18_vosel)) != VCN18_VOSEL_1V8) {
-		say("on: a rail's voltage is not what Wi-Fi needs (VCN33_1 3.3 V, VCN18 1.8 V); voltages are never set "
-		    "here: stopped before any write\n");
+	if (VOSEL(pmic(vw.r->vcn18_vosel)) != VCN18_VOSEL_1V8) {
+		say("on: VCN18 is not at 1.8 V: stopped before any write\n");
 		return o;
+	}
+	{
+		uint32_t v33 = VOSEL(pmic(vw.r->vcn33_vosel));
+		bool off = !(pmic(vw.r->vcn33_en) & VCN33_EN_BIT) && !(pmic(vw.r->vcn33_mon) & 1);
+
+		if (v33 != VCN33_VOSEL_3V3) {
+			if (rails_level() != 2 || !off || v33 < VCN33_VOSEL_3V3 || v33 > 15) {
+				say("on: VCN33_1 selector %u (13 = 3.3 V), rail %s; changing it needs begonia_wifi_rails=2 and the rail "
+				    "off, from 3.3..3.5 V: stopped before any write\n", v33, off ? "off" : "ON");
+				return o;
+			}
+			vw.oldVosel33 = v33;
+			int e = begonia_pwrap_write_regulator(vw.r->vcn33_vosel, 0xf00, VCN33_VOSEL_3V3 << 8);
+			vw.voselSet = e == 0 || VOSEL(pmic(vw.r->vcn33_vosel)) != v33;
+			say("on: VCN33_1 selector %u -> %u (%s), read back %u\n", v33, VCN33_VOSEL_3V3, e ? "WRITE FAILED" : "written",
+			    VOSEL(pmic(vw.r->vcn33_vosel)));
+			if (e || VOSEL(pmic(vw.r->vcn33_vosel)) != VCN33_VOSEL_3V3) {
+				if (vw.voselSet) {
+					begonia_pwrap_write_regulator(vw.r->vcn33_vosel, 0xf00, v33 << 8);
+					vw.voselSet = false;
+				}
+				say("on: stopped\n");
+				return o;
+			}
+		}
 	}
 	if (conn_powered()) {
 		say("on: CONN was already powered, power cycling via conn_off\n");
