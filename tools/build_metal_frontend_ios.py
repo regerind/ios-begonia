@@ -198,8 +198,21 @@ mtext = mtext.replace(old_comp_desc, new_comp_desc)
 
 old_note_problem = '''static void noteProblem(NSString *what) {
  gProblems++;'''
-new_note_problem = '''static void noteProblem(NSString *what) {
+new_note_problem = '''#include <fcntl.h>
+#include <unistd.h>
+static void noteProblem(NSString *what) {
  NSLog(@"[BegoniaMetal] noteProblem: %@", what);
+ {
+  // begonia: an application's NSLog reaches no log that a test session keeps; its problems go to the console too
+  // (the program started by hand has the console as its stderr already).
+  static int consoleFd=-2;
+  if(consoleFd==-2)consoleFd=isatty(2)?-1:open("/dev/console",O_WRONLY|O_NOCTTY);
+  if(consoleFd>=0 && ![what hasPrefix:@"native-metal: no device answer"]){
+   char line[600];int n=snprintf(line,sizeof line,"metal: %s[%d]: %s\\n",getprogname(),getpid(),what.UTF8String?:"?");
+   if(n>(int)sizeof line-1)n=(int)sizeof line-1;
+   if(n>0)(void)write(consoleFd,line,(size_t)n);
+  }
+ }
  gProblems++;'''
 assert mtext.count(old_note_problem) == 1
 mtext = mtext.replace(old_note_problem, new_note_problem)
