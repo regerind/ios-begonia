@@ -35,4 +35,5 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y118 | 03:4x | y117 + küçük çekimler; çekirdekte GPU işleri süreç başına sayılıyor (ilk deneme komut satırı 600 karakteri aştığı için derlenmedi; `begonia_audio=1` çıkarıldı) | **GPU'yu dolduran backboardd**: 5 sn'de 22.700–28.000 iş (11.500–14.100 çizim geçişi), WebKit GPU yalnızca 23–251. Kare başına: 45 framebuffer değişimi, 36 temizleme, 161 çizim, ~1 framebuffer yaratılıp siliniyor. Karelerin %97'si 30 fps bandında. Çekimler yine yok |
 | y119 | 03:5x | y118 + `vblur=0` (değişken yarıçaplı bulanıklık kapalı: geçiş sayısının kaynağı mı?) | Fark yok (backboardd 20–27 bin iş / 5 sn, kare başına 36 temizleme): değişken bulanıklık sebep değil |
 | y120 | 04:0x | y118 + `gltrace_at=85` (video sırasında bir karenin bütün GL çağrıları) | İz yok: süre pencere sunucusunun başlangıcından sayılıyor, 85 sn oturumun dışına düştü |
-| y121 | 04:1x | y118 + `gltrace_at=62` | (sonuç bekleniyor) |
+| y121 | 04:1x | y118 + `gltrace_at=62` | Çağrı izi yine yok (bu yol bırakıldı). Özet aynı: kare başına 37–45 framebuffer değişimi, 17–21 temizleme |
+| y122 | 04:3x | GPU servisi: `begonia_gpu_spin=50` (uyumadan önce 500 µs yoklama; varsayılan 100 µs). Hipotez: ~66 µs'lik binlerce küçük işte uykudan uyanma gecikmesi kuyruğu tıkıyor | (sonuç bekleniyor) |
