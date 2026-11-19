@@ -6,6 +6,7 @@
  * The keys iOS writes are said (the first ones), so the rest of what it expects can be learned from a session's log.
  */
 #include <IOKit/IOService.h>
+#include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IOLib.h>
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSNumber.h>
