@@ -516,13 +516,10 @@ clear_played(__unused thread_call_param_t a, __unused thread_call_param_t b)
 			    r32(infra, INFRA1_CG_STA));
 		}
 	}
+	/* what DL1 has played: silence (the writer's place is the sink's alone; a writer left behind is the sink's to see) */
 	while (cleared != rd) {
-		if (cleared != wp) {                    /* (what is written but not played yet stays) */
-			ring[cleared * 2] = 0;
-			ring[cleared * 2 + 1] = 0;
-		} else {
-			wp = (wp + 1) % RING_FRAMES;     /* the writer is behind: keep it ahead of what is cleared */
-		}
+		ring[cleared * 2] = 0;
+		ring[cleared * 2 + 1] = 0;
 		cleared = (cleared + 1) % RING_FRAMES;
 	}
 	__builtin_arm_dsb(0xf);
@@ -570,8 +567,23 @@ sink(const int16_t *frames, uint32_t count)
 	 * first sound).
 	 */
 	uint32_t g = volume_gain;
+	/*
+	 * How far the writer is ahead of DL1. It is never let ahead by more than half the ring (170 ms), so "more than
+	 * half" means DL1 has passed it (a gap in what Darwin wrote: buffering, a pause): it starts again 40 ms ahead.
+	 * y97/y98: a writer left behind looked like a ring all but full, and almost everything after a gap was refused
+	 * (34 of 39 s; the user heard a second of sound).
+	 */
 	uint32_t rd = read_frame();
-	uint32_t room = (rd + RING_FRAMES - wp - 1) % RING_FRAMES;
+	uint32_t ahead = (wp + RING_FRAMES - rd) % RING_FRAMES;
+	if (ahead > RING_FRAMES / 2) {
+		static unsigned said;
+		if (said++ < 4) {
+			begonia_perf_note("BEGONIA AUDIO: the writer was behind DL1 (a gap); 40 ms ahead again");
+		}
+		wp = (rd + 1920) % RING_FRAMES;
+		ahead = 1920;
+	}
+	uint32_t room = RING_FRAMES / 2 - ahead;
 	uint32_t n = count < room ? count : room;
 	for (uint32_t i = 0; i < n; i++) {
 		int32_t m = ((int32_t)frames[2 * i] + frames[2 * i + 1]) / 2;
