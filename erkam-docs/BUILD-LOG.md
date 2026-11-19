@@ -19,4 +19,5 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y102 | 23:3x | proc_cpu_test: SpringBoard / chronod / backboardd / WebKit.GPU iş parçacıkları | Panelde SpringBoard ana iş parçacığı 80–94%; videoda WebKit.Networking 100–134% |
 | y103 | 23:4x | Örnekleyici profiler (her 10 ms, fonksiyon adlarıyla) | Profiler hiç örnek toplamadı (sebep bilinmiyor) |
 | y104 | 23:5x | Mesa shader disk önbelleği (GL): Mesa 0006, userland 0046; profiler tanılama sayaçları | Profiler yine yok (eski test ikilisi pakete girdi). Kare maliyeti arttı: GL içinde ~8 ms, kareler %93 18–35 ms bandında. Önbellekten mi, kullanımdan mı? Kontrol ediliyor |
-| y105 | 2026-11-20 00:0x | y104 + doğru derlenmiş profiler; önbellek ikinci açılışta dolu | (sonuç bekleniyor) |
+| y105 | 2026-11-20 00:0x | y104 + doğru derlenmiş profiler; önbellek ikinci açılışta dolu | Profiler: task_for_pid başarılı ama port işe yaramıyor (task_threads 0x10000003; platform süreçlerinin kontrol portu). Kare 8,3 ms (GL içinde 7 ms), %80'i 18–35 ms: önbellek doluyken de yavaş, gerileme önbellekten görünüyor |
+| y106 | 2026-11-20 00:1x | Profiler `task_read_for_pid` ile; `glenv=MESA_SHADER_CACHE_DISABLE=true` (shader önbelleği kapalı, karşılaştırma için) | (sonuç bekleniyor) |

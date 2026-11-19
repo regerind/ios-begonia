@@ -11,8 +11,9 @@ ya da onay gerekiyor). En üstteki en önemlisi.
 - **Şüphe:** İlk kullanılan efektlerin (bulanıklık, materyaller) GPU programlarının CPU'da derlenmesi. Mesa'nın shader
   disk önbelleği kapalıydı (`-Dshader-cache=disabled`), yani her açılışta her şey yeniden derleniyordu.
 - **Durum:** düzeltme denendi. y104: GL (backboardd) tarafında disk önbelleği açıldı (Mesa yaması 0006, userland 0046).
-  y104'te kare süresi kötüleşti (GL içinde ~5 ms'den ~8 ms'ye); bunun önbellekten mi kullanımdan mı olduğu y105'te
-  kontrol ediliyor. Metal/Vulkan (panvk) tarafında önbellek hâlâ kapalı.
+  y104 ve y105'te kare süresi kötüleşti: GL içinde ~5 ms'den 7–8 ms'ye çıktı, kareler çoğunlukla 18–35 ms (30 fps)
+  bandında. y105'te önbellek doluyken de aynı olduğu için gerileme büyük ihtimalle önbelleğin kendisinden. y106'da
+  önbellek kapatılıp karşılaştırılıyor. Metal/Vulkan (panvk) tarafında önbellek hâlâ kapalı.
 - Profiler (proc_cpu_test, örnekleyici) SpringBoard'ın ne yaptığını fonksiyon adlarıyla gösterecek; y103/y104'te
   çalışmadı (y104: eski test ikilisi pakete girdi).
 
