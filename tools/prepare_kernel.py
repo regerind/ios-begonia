@@ -18,7 +18,7 @@ for patch in sorted((root/'patches').glob('*.patch')):
     else:
         raise SystemExit(f'Patch does not apply: {patch.name}\n{res.stderr.decode(errors="replace")}')
 # Keep the imported driver's canonical copy in sync; upstream build may recopy it.
-for name in ['0008-framebuffer-release-text-console.patch','0011-begonia-low-secondary-trampoline.patch','0013-framebuffer-scan-line-counter.patch','0014-surface-rows-for-the-gpu.patch','0015-framebuffer-shot.patch']:
+for name in ['0008-framebuffer-release-text-console.patch','0011-begonia-low-secondary-trampoline.patch','0013-framebuffer-scan-line-counter.patch','0014-surface-rows-for-the-gpu.patch','0015-framebuffer-shot.patch','0016-usertrap-kept-with-the-notes.patch']:
     patch=root/'patches'/name
     cmd=['git','-C',str(repo),'apply','--directory=xnu/files']
     if subprocess.run([*cmd,'--reverse','--check',str(patch)],capture_output=True).returncode!=0:

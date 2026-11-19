@@ -1,0 +1,41 @@
+--- a/osfmk/arm64/user_exception_trace.c
++++ b/osfmk/arm64/user_exception_trace.c
+@@ -69,6 +69,38 @@
+ 	    count > 0 ? (unsigned long long)code[0] : 0, count > 1 ? (unsigned long long)code[1] : 0,
+ 	    (unsigned long long)get_saved_state_pc(state), (unsigned long long)get_saved_state_lr(state),
+ 	    (unsigned long long)get_saved_state_sp(state), slide);
++	/*
++	 * begonia: the window server's and SpringBoard's are kept with the start-up notes (begonia_perf.c), which are
++	 * said again and again: the log is a ring of 256 KB and their coming up again fills it (x46 and x52 had the
++	 * window server start anew in the middle of a session, and nothing left of why). With up to eight callers.
++	 */
++	{
++		extern void begonia_perf_note(const char *format, ...);
++		static unsigned kept;
++		const char *name = proc ? proc_name_address(proc) : "?";
++
++		if (kept < 3 && (strncmp(name, "backboardd", 10) == 0 || strncmp(name, "SpringBoard", 11) == 0)) {
++			char callers[8 * 20] = "";
++			size_t at = 0;
++			uint64_t link[2], next = (uint64_t)get_saved_state_fp(state);
++
++			for (int depth = 0; depth < 8 && plausible_user_address(next) && (next & 7) == 0; depth++) {
++				if (copyin((user_addr_t)next, link, sizeof(link)) != 0) {
++					break;
++				}
++				at += (size_t)snprintf(callers + at, sizeof(callers) - at, " %llx", (unsigned long long)link[1]);
++				if (link[0] <= next || at + 20 >= sizeof(callers)) {
++					break;
++				}
++				next = link[0];
++			}
++			kept++;
++			begonia_perf_note("usertrap %s[%d] exception %d code %llx %llx pc %llx lr %llx slide %x from%s", name,
++			    proc ? proc_pid(proc) : -1, exception, count > 0 ? (unsigned long long)code[0] : 0,
++			    count > 1 ? (unsigned long long)code[1] : 0, (unsigned long long)get_saved_state_pc(state),
++			    (unsigned long long)get_saved_state_lr(state), slide, callers);
++		}
++	}
+ 
+ 	for (unsigned i = 0; i < sizeof(message_registers) / sizeof(message_registers[0]); i++) {
+ 		uint64_t value = (uint64_t)get_saved_state_reg(state, message_registers[i]);

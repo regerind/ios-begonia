@@ -1,0 +1,17 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -622,6 +622,14 @@
+ 	say("hakios-gl:   all textures drawn with (every 30th frame): %u looked at, %u incomplete; tall narrow surfaces shown: "
+ 	    "%u (%u shared, %u wrapped), %u of them all zeroes when copied, %u copied again later\n", any_checked,
+ 	    any_incomplete, column_seen, column_shared, column_wrapped, column_empty, column_again);
++	{
++		/* begonia (x59): where the two libraries are, for the addresses of a "usertrap" note of the kernel's (systrace=1) */
++		Dl_info ours = { 0 }, mesa = { 0 };
++
++		(void)dladdr((void *)(uintptr_t)summary, &ours);
++		(void)dladdr((void *)(uintptr_t)glFlush, &mesa);
++		say("hakios-gl:   images: this bridge at %p, the library at %p\n", ours.dli_fbase, mesa.dli_fbase);
++	}
+ 	say("hakios-gl:   textures that are IOSurfaces now: %u of %zu places\n", e->image_count,
+ 	    sizeof(e->images) / sizeof(e->images[0]));
+ 	say("hakios-gl:   calls that set what was set already: glBindTexture %u, glUseProgram %u, glActiveTexture %u, "
