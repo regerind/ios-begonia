@@ -1,6 +1,6 @@
 --- a/userland/src/inject_sb.c
 +++ b/userland/src/inject_sb.c
-@@ -2152,6 +2152,74 @@
+@@ -2152,6 +2152,86 @@
  }
  
  /*
@@ -15,14 +15,26 @@
 +static void
 +brightness_follow(void)
 +{
-+	id screen = SEND(id, objc_getClass("UIScreen"), "mainScreen");
++	/* backboardd's own brightness (what the slider sets) first; UIScreen's copy in SpringBoard did not follow it (y92) */
++	static float (*bks_current)(void);
++	static int looked;
 +	double b;
 +	int level;
 +
-+	if (screen == nil) {
-+		return;
++	if (!looked++) {
++		dlopen("/System/Library/PrivateFrameworks/BackBoardServices.framework/BackBoardServices", RTLD_NOW);
++		bks_current = (float (*)(void))dlsym(RTLD_DEFAULT, "BKSDisplayBrightnessGetCurrent");
++		say("hakios: brightness: BKSDisplayBrightnessGetCurrent %s\n", bks_current ? "there" : "NOT THERE (UIScreen instead)");
 +	}
-+	b = ((double (*)(id, SEL))objc_msgSend)(screen, sel_registerName("brightness"));
++	if (bks_current != NULL) {
++		b = bks_current();
++	} else {
++		id screen = SEND(id, objc_getClass("UIScreen"), "mainScreen");
++		if (screen == nil) {
++			return;
++		}
++		b = ((double (*)(id, SEL))objc_msgSend)(screen, sel_registerName("brightness"));
++	}
 +	if (b < 0.0 || b > 1.0) {
 +		return;
 +	}
@@ -63,7 +75,7 @@
 +		    SEND(id, objc_getClass("NSOperationQueue"), "mainQueue"), (id)block);
 +	}
 +	dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-+	dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), 2 * NSEC_PER_SEC, NSEC_PER_SEC / 4);
++	dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), NSEC_PER_SEC / 2, NSEC_PER_SEC / 10);
 +	dispatch_source_set_event_handler(timer, ^{
 +		brightness_follow();
 +	});
@@ -75,7 +87,7 @@
   * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
   * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
   */
-@@ -2708,6 +2776,7 @@
+@@ -2708,6 +2788,7 @@
  	main_thread_cpu();
  	display_link_rates();
  	torch_for_control_centre();
