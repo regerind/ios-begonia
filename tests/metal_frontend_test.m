@@ -5,6 +5,9 @@
 #import <Metal/Metal.h>
 #import <IOSurface/IOSurfaceRef.h>
 #include <mach/mach.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +23,28 @@ int main(int argc, char **argv) {
     alarm(120);
 
     puts("BEGONIA METAL FRONTEND: begin");
+    {
+        /* Where Metal looks for the plug-in, and whether it loads at all (said before the device is asked for). */
+        static const char *const places[] = { "/System/Library/Extensions/HakiosMetal.bundle/HakiosMetal",
+                                              "/System/Library/Extensions/HakiosMetal.clients",
+                                              "/redwood/ext/HakiosMetal.bundle/HakiosMetal",
+                                              "/redwood/lib/libmetal2vulkan.dylib", "/redwood/lib/libvulkan_panfrost.dylib" };
+        struct stat st;
+        void *plugin;
+
+        for (unsigned i = 0; i < sizeof(places) / sizeof(places[0]); i++) {
+            printf("BEGONIA METAL FRONTEND: %s: %s\n", places[i], stat(places[i], &st) == 0 ? "there" : strerror(errno));
+        }
+        plugin = dlopen(places[0], RTLD_NOW);
+        if (plugin == NULL) {
+            plugin = dlopen(places[2], RTLD_NOW);
+            printf("BEGONIA METAL FRONTEND: the plug-in from Extensions does not load; from /redwood/ext: %s\n",
+                   plugin ? "loads" : dlerror());
+        } else {
+            puts("BEGONIA METAL FRONTEND: the plug-in loads from Extensions");
+        }
+        printf("BEGONIA METAL FRONTEND: class HakiosMetalDevice %s\n", NSClassFromString(@"HakiosMetalDevice") ? "exists" : "does not exist");
+    }
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         if (!device) {
