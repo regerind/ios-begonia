@@ -1,0 +1,37 @@
+--- a/src/panfrost/lib/kmod/panfrost_kmod.c	2026-11-19 03:07:32.214173128 +0300
++++ b/src/panfrost/lib/kmod/panfrost_kmod.c	2026-11-19 03:07:32.258303089 +0300
+@@ -335,7 +335,7 @@
+    return false;
+ }
+ 
+-static void
++static void UNUSED
+ panfrost_kmod_bo_make_evictable(struct pan_kmod_bo *bo)
+ {
+    struct drm_panfrost_madvise req = {
+@@ -346,7 +346,7 @@
+    drmIoctl(bo->dev->fd, DRM_IOCTL_PANFROST_MADVISE, &req);
+ }
+ 
+-static bool
++static bool UNUSED
+ panfrost_kmod_bo_make_unevictable(struct pan_kmod_bo *bo)
+ {
+    struct drm_panfrost_madvise req = {
+@@ -488,8 +488,14 @@
+    .bo_import = panfrost_kmod_bo_import,
+    .bo_get_mmap_offset = panfrost_kmod_bo_get_mmap_offset,
+    .bo_wait = panfrost_kmod_bo_wait,
+-   .bo_make_evictable = panfrost_kmod_bo_make_evictable,
+-   .bo_make_unevictable = panfrost_kmod_bo_make_unevictable,
++   /*
++    * begonia: no madvise. The BO cache marked every buffer it kept DONTNEED and every buffer it
++    * reused WILLNEED, each a round trip into the kernel, and begonia.mali.cpp only answers
++    * "retained" (kPanfrostMadvise): nothing is ever purged. x22 glprof: 6.8% + 3.0% of the
++    * drawing thread. Left unset, pan_kmod.h skips both (and takes a reused buffer as retained).
++    */
++   .bo_make_evictable = NULL,
++   .bo_make_unevictable = NULL,
+    .vm_create = panfrost_kmod_vm_create,
+    .vm_destroy = panfrost_kmod_vm_destroy,
+    .vm_bind = panfrost_kmod_vm_bind,

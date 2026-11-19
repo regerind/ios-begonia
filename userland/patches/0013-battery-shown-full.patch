@@ -1,0 +1,30 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -248,7 +248,26 @@
+ 	int value = -1;
+ 	size_t size = sizeof(value);
+ 
+-	sysctlbyname(name, &value, &size, NULL, 0);
++	if (sysctlbyname(name, &value, &size, NULL, 0) != 0 && strncmp(name, "kern.hakios.battery_", 20) == 0) {
++		/*
++		 * begonia: no fuel gauge driver yet, so no kern.hakios.battery_* and no power source: the
++		 * status bar sat at 1%. Shown instead as a full battery, unplugged (boot-arg battery_full=0:
++		 * as Darwin knows it). Display only: nothing on this port throttles by battery level --
++		 * the clocks are set once by the kernel (begonia_perf.c) and no power controller moves them.
++		 */
++		static int full = -1;
++
++		if (full < 0) {
++			char arguments[1024] = "";
++			size_t length = sizeof(arguments) - 1;
++
++			full = sysctlbyname("kern.bootargs", arguments, &length, NULL, 0) != 0 || strstr(arguments, "battery_full=0") == NULL;
++		}
++		if (full) {
++			value = strcmp(name, "kern.hakios.battery_soc") == 0 ? 100 :
++			    strcmp(name, "kern.hakios.battery_present") == 0 ? 1 : 0;   /* charging, charger_present: no */
++		}
++	}
+ 	return value;
+ }
+ 
