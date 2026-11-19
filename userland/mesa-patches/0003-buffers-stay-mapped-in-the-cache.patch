@@ -1,0 +1,39 @@
+--- a/src/gallium/drivers/panfrost/pan_bo.c
++++ b/src/gallium/drivers/panfrost/pan_bo.c
+@@ -121,6 +121,8 @@
+    return NULL;
+ }
+ 
++static void panfrost_bo_munmap(struct panfrost_bo *bo);
++
+ static void
+ panfrost_bo_free(struct panfrost_bo *bo)
+ {
+@@ -128,6 +130,11 @@
+    struct pan_kmod_vm *vm = bo->dev->kmod.vm;
+    uint64_t gpu_va = bo->ptr.gpu;
+ 
++   /* begonia: a buffer keeps its mapping while it waits in the cache (see
++    * panfrost_bo_unreference()); it goes when the buffer does.
++    */
++   panfrost_bo_munmap(bo);
++
+    /* BO will be freed with the sparse array, but zero to indicate free */
+    memset(bo, 0, sizeof(*bo));
+ 
+@@ -465,7 +472,14 @@
+     */
+    if (p_atomic_read(&bo->refcnt) == 0) {
+       /* When the reference count goes to zero, we need to cleanup */
+-      panfrost_bo_munmap(bo);
++      /* begonia: not unmapped here. Upstream unmaps every buffer that goes to
++       * the cache and maps it again when it is taken back out. Here a mapping
++       * is a message to the kernel's driver, an unmapping a
++       * mach_vm_deallocate(), and every page of the new mapping faults again
++       * when it is first written: x35/x36, 2000 to 3800 mappings in five
++       * seconds for some 30 buffers made, 7% of the drawing thread in
++       * mach_vm_deallocate, 31% in Mach messages. panfrost_bo_free() unmaps.
++       */
+ 
+       if (dev->debug & (PAN_DBG_TRACE | PAN_DBG_SYNC))
+          pandecode_inject_free(dev->decode_ctx, bo->ptr.gpu,
