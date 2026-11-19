@@ -33,7 +33,7 @@
 +		static unsigned kept;
 +		const char *name = proc ? proc_name_address(proc) : "?";
 +
-+		if (kept < 3 && (strncmp(name, "backboardd", 10) == 0 || strncmp(name, "SpringBoard", 11) == 0)) {
++		if (kept < 3 && (strncmp(name, "backboardd", 10) == 0 || strncmp(name, "SpringBoard", 11) == 0 || strncmp(name, "Freeform", 8) == 0)) {
 +			char callers[8 * 20] = "";
 +			size_t at = 0;
 +			uint64_t link[2], next = (uint64_t)get_saved_state_fp(state);
@@ -71,7 +71,7 @@
 +		static unsigned kept;
 +		const char *name = proc ? proc_name_address(proc) : "?";
 +
-+		if (kept < 3 && (strncmp(name, "backboardd", 10) == 0 || strncmp(name, "SpringBoard", 11) == 0)) {
++		if (kept < 3 && (strncmp(name, "backboardd", 10) == 0 || strncmp(name, "SpringBoard", 11) == 0 || strncmp(name, "Freeform", 8) == 0)) {
 +			char callers[8 * 20] = "";
 +			size_t at = 0;
 +			uint64_t link[2], next = (uint64_t)get_saved_state_fp(state);
