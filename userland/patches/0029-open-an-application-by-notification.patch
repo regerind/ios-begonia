@@ -1,0 +1,43 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2309,6 +2309,24 @@
+ 	}
+ }
+ 
++/*
++ * begonia: the notifications com.hakios.open.freeform, .safari and .settings start that application as a tap on
++ * its icon does, for sessions nobody is at (where an icon is depends on the pages of the home screen).
++ */
++static void
++open_application(const char *identifier)
++{
++	id application = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
++	id name = SEND1(id, objc_getClass("NSString"), "stringWithUTF8String:", const char *, identifier);
++	SEL launch = sel_registerName("launchApplicationWithIdentifier:suspended:");
++
++	if (application == NULL || !class_respondsToSelector(object_getClass(application), launch)) {
++		say("hakios: open: %s: SpringBoard has no way here\n", identifier);
++		return;
++	}
++	say("hakios: open: %s: %d\n", identifier, ((BOOL (*)(id, SEL, id, BOOL))objc_msgSend)(application, launch, name, 0));
++}
++
+ __attribute__((constructor))
+ static void
+ hakios_springboard_init(void)
+@@ -2476,6 +2494,15 @@
+ 	notify_register_dispatch("com.hakios.reach", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		reach();
+ 	});
++	notify_register_dispatch("com.hakios.open.freeform", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.freeform");
++	});
++	notify_register_dispatch("com.hakios.open.safari", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.mobilesafari");
++	});
++	notify_register_dispatch("com.hakios.open.settings", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_application("com.apple.Preferences");
++	});
+ 	notify_register_dispatch("com.hakios.pbui", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		pbui();
+ 	});
