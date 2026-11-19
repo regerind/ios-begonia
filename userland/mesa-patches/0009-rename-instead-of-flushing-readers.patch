@@ -63,7 +63,7 @@
 +
 +      if (rename_on < 0) {
 +         const char *v = getenv("PAN_RENAME");
-+         rename_on = v && v[0] == '1';
++         rename_on = !(v && v[0] == '0');   /* (on unless PAN_RENAME=0: y135's glenv did not reach it) */
 +      }
 +      if (rename_on && rsrc->base.target == PIPE_TEXTURE_2D && rsrc->base.last_level == 0 &&
 +          rsrc->base.array_size == 1 && rsrc->base.nr_samples <= 1 && !rsrc->separate_stencil &&
