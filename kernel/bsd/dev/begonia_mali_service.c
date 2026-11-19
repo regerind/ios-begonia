@@ -60,24 +60,6 @@ static int wait(unsigned o,uint32_t mask,uint32_t value) {
  for(unsigned i=0;i<10000;i++) {if((rd(o)&mask)==value)return 0;delay(10);}
  return -1;
 }
-/*
- * begonia: a job's end, waited for asleep. wait()'s delay(10) between looks either spins or sleeps and wakes every
- * 10 us, for as long as the GPU works (milliseconds a job, every frame the window server draws): a processor busy with
- * nothing whenever anything moves, the phone's heat. Ten quick looks (a short job), then naps of 50 us
- * (assert_wait_timeout: a sleep, whatever the processor's idle latency), until 100 ms as before.
- */
-static int wait_job(unsigned o,uint32_t mask,uint32_t value) {
- for(unsigned i=0;i<10;i++) {if((rd(o)&mask)==value)return 0;delay(10);}
- uint64_t deadline;
- nanoseconds_to_absolutetime(100*NSEC_PER_MSEC,&deadline);
- deadline+=mach_absolute_time();
- while(mach_absolute_time()<deadline) {
-  if((rd(o)&mask)==value)return 0;
-  assert_wait_timeout((event_t)&wait_job,THREAD_UNINT,50,NSEC_PER_USEC);
-  thread_block(THREAD_CONTINUE_NULL);
- }
- return (rd(o)&mask)==value?0:-1;
-}
 static int reset(void) {
  wr(0x28,0);wr(0x24,0xffffffff);wr(0x30,1);
  if(wait(0x20,1u<<8,1u<<8)) {
@@ -281,7 +263,7 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
  wr(base+0x40,(uint32_t)chain);wr(base+0x44,chain>>32);
  wr(base+0x50,15);wr(base+0x54,0);wr(base+0x58,(3u<<8)|(3u<<12)|(8u<<16));
  wr(base+0x60,1);
- if(!wait_job(0x1000,(1u<<slot)|(1u<<(slot+16)),1u<<slot) && !rd(0x241c)) {
+ if(!wait(0x1000,(1u<<slot)|(1u<<(slot+16)),1u<<slot) && !rd(0x241c)) {
   success=1;
  } else {
   static unsigned failures;
