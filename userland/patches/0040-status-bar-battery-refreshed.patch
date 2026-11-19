@@ -1,0 +1,60 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -616,14 +616,49 @@
+ 	return original_battery_view_charge_percent ? original_battery_view_charge_percent(self, sel) : 0.0;
+ }
+ 
++/*
++ * begonia: the battery views SpringBoard has set a charge on, weakly held, set again with the level as it is now every
++ * few seconds (battery_post_notifications). SpringBoard's status bar updates its battery from BatteryCenter, which is
++ * empty here, not from UIDevice's notifications: the status bar kept the level of the boot (higher, the voltage then
++ * is), while Control Centre, a status bar made anew each time, showed the level of the moment.
++ */
++static id battery_views;
++
+ static void
+ battery_view_set_charge_percent(id self, SEL sel, double p)
+ {
+ 	int soc = sysctl_int("kern.hakios.battery_soc");
+ 
++	if (battery_views == nil) {
++		id table = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("NSHashTable"), sel_registerName("weakObjectsHashTable"));
++
++		battery_views = table != nil ? ((id (*)(id, SEL))objc_msgSend)(table, sel_registerName("retain")) : nil;
++	}
++	if (battery_views != nil) {
++		((void (*)(id, SEL, id))objc_msgSend)(battery_views, sel_registerName("addObject:"), self);
++	}
+ 	original_battery_view_set_charge_percent(self, sel, (soc >= 0 && soc <= 100 && !battery_power_source()) ? (double)soc / 100.0 : p);
+ }
+ 
++static void
++battery_views_refresh(void)
++{
++	int soc = sysctl_int("kern.hakios.battery_soc");
++	id all;
++	unsigned long count;
++
++	if (battery_views == nil || soc < 0 || soc > 100 || battery_power_source() ||
++	    (all = ((id (*)(id, SEL))objc_msgSend)(battery_views, sel_registerName("allObjects"))) == nil) {
++		return;
++	}
++	count = ((unsigned long (*)(id, SEL))objc_msgSend)(all, sel_registerName("count"));
++	for (unsigned long i = 0; i < count; i++) {
++		id view = ((id (*)(id, SEL, unsigned long))objc_msgSend)(all, sel_registerName("objectAtIndex:"), i);
++
++		((void (*)(id, SEL, double))objc_msgSend)(view, sel_registerName("setChargePercent:"), (double)soc / 100.0);
++	}
++}
++
+ /* The big charging ring on the lock screen (CoverSheet) reads its fill level the same way. */
+ static double
+ ring_charging_level(id self, SEL sel)
+@@ -651,6 +686,7 @@
+ 		((void (*)(id, SEL, id, id))objc_msgSend)(center, post,
+ 		    (id)CFSTR("UIDeviceBatteryStateDidChangeNotification"), device);
+ 	}
++	battery_views_refresh();
+ 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+ 		battery_post_notifications();
+ 	});
