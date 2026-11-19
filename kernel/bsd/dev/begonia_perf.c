@@ -169,7 +169,7 @@ static void clock_correct(vm_offset_t pll, vm_offset_t div)
  */
 /* What the clock and rail work said, kept: the console's ring in RAM holds a few minutes, and these
  * lines are from the first seconds. begonia_mali_service.c says them again with its statistics. */
-char begonia_perf_notes[4096];
+char begonia_perf_notes[8192];          /* (4096 was full before the audio's notes in y100) */
 int begonia_notes_urgent;
 void begonia_perf_note(const char *format,...) __printflike(1,2);
 void begonia_perf_note(const char *format,...)

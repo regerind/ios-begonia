@@ -673,7 +673,11 @@ come_up(__unused thread_call_param_t a, __unused thread_call_param_t b)
 {
 	static char log[2048];
 	bool ok;
-	size_t o = hw_up(log, sizeof(log), 0, false, 8, &ok);
+	/*
+	 * The receiver at +4 dB (index 4; 8 = 0 dB): y100, with the bottom speaker beside it at -6 dB, the earpiece at
+	 * 0 dB and half level was not heard at all (it is made for an ear against it).
+	 */
+	size_t o = hw_up(log, sizeof(log), 0, false, 4, &ok);
 	(void)o;
 	printf("%s", log);
 	if (!ok || ring == NULL) {
@@ -695,6 +699,8 @@ come_up(__unused thread_call_param_t a, __unused thread_call_param_t b)
 		m32(afe, AFE_CONN4, 1u << 5 | 1u << 6, 1u << 6);
 		printf("BEGONIA AUDIO: the speaker %s\n", speaker_on ? "is on (left channel); the earpiece the right" :
 		    "DID NOT COME UP: the earpiece alone");
+		begonia_perf_note("BEGONIA AUDIO: speaker %s; CONN0 %x CONN1 %x CONN3 %x CONN4 %x ZCD3 %x", speaker_on ? "on" : "OFF",
+		    r32(afe, AFE_CONN0), r32(afe, AFE_CONN1), r32(afe, AFE_CONN3), r32(afe, AFE_CONN4), pm(ZCD_CON3));
 	}
 	cleared = read_frame();
 	wp = (cleared + 1920) % RING_FRAMES;            /* 40 ms ahead of DL1 */
@@ -752,7 +758,7 @@ sink(const int16_t *frames, uint32_t count)
 		switch (route) {
 		case 1:  spk = 0;      ear = m;      break;
 		case 2:  spk = m / 2;  ear = 0;      break;
-		default: spk = l / 2;  ear = r / 2;  break;
+		default: spk = l / 2;  ear = r;      break;
 		}
 		ring[wp * 2] = (int16_t)((spk * (int32_t)g) >> 15);
 		ring[wp * 2 + 1] = (int16_t)((ear * (int32_t)g) >> 15);

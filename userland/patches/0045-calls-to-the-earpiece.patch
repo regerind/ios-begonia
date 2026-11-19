@@ -1,6 +1,6 @@
 --- a/userland/src/inject_sb.c
 +++ b/userland/src/inject_sb.c
-@@ -2255,6 +2255,57 @@
+@@ -2255,6 +2255,70 @@
  }
  
  /*
@@ -20,6 +20,7 @@
 +		return;
 +	}
 +	dlopen("/System/Library/Frameworks/CallKit.framework/CallKit", RTLD_NOW);
++	dlopen("/System/Library/Frameworks/AVFAudio.framework/AVFAudio", RTLD_NOW);
 +	Class cls = objc_getClass("CXCallObserver");
 +	if (cls == Nil) {
 +		say("hakios: calls: no CXCallObserver\n");
@@ -42,11 +43,24 @@
 +				in_call = 1;
 +			}
 +		}
++		/* in a call, the call screen's "Speaker" button chooses: the route's output is then the built-in speaker */
++		if (in_call) {
++			id session = SEND(id, objc_getClass("AVAudioSession"), "sharedInstance");
++			id outputs = session ? SEND(id, SEND(id, session, "currentRoute"), "outputs") : nil;
++			unsigned long k = outputs ? ((unsigned long (*)(id, SEL))objc_msgSend)(outputs, sel_registerName("count")) : 0;
++			for (unsigned long i = 0; i < k; i++) {
++				id port = ((id (*)(id, SEL, unsigned long))objc_msgSend)(outputs, sel_registerName("objectAtIndex:"), i);
++				id type = SEND(id, port, "portType");
++				if (type && ((BOOL (*)(id, SEL, id))objc_msgSend)(type, sel_registerName("isEqualToString:"), (id)CFSTR("Speaker"))) {
++					in_call = 2;    /* a call on the speaker: both */
++				}
++			}
++		}
 +		if (in_call != sent) {
-+			int route = in_call ? 1 : 0;
++			int route = in_call == 1 ? 1 : 0;
 +			sysctlbyname("kern.begonia_audio_route", NULL, NULL, &route, sizeof(route));
-+			say("hakios: calls: %s: sound to %s\n", in_call ? "a call" : "no call", in_call ? "the earpiece alone" :
-+			    "the speaker and the earpiece");
++			say("hakios: calls: %s: sound to %s\n", in_call == 1 ? "a call" : in_call == 2 ? "a call on the speaker" :
++			    "no call", route == 1 ? "the earpiece alone" : "the speaker and the earpiece");
 +			sent = in_call;
 +		}
 +	});
@@ -58,7 +72,7 @@
   * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
   * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
   */
-@@ -2812,6 +2863,7 @@
+@@ -2812,6 +2876,7 @@
  	display_link_rates();
  	torch_for_control_centre();
  	brightness_to_the_lcd();
