@@ -1,0 +1,32 @@
+--- a/src/hakios-drm/hakios-native-sync.c
++++ b/src/hakios-drm/hakios-native-sync.c
+@@ -31,6 +31,8 @@
+ static struct exported_fence *exports;
+ static bool worker_started;
+ static int (*gpu_wait)(uint64_t, int64_t);
++/* begonia (x43): how many callers wait in wait_syncs() for a sync object to change (under sync_lock) */
++static unsigned sync_waiters;
+ 
+ static int64_t monotonic_ns(void)
+ {
+@@ -176,7 +178,7 @@
+             if (error != ETIME && error != ETIMEDOUT) { result = -error; goto done; }
+         }
+         if (deadline <= monotonic_ns()) { result = -ETIME; goto done; }
+-        condition_wait_slice(deadline);
++        ++sync_waiters; condition_wait_slice(deadline); --sync_waiters;
+     }
+ done:
+     for (unsigned i = 0; i < count; ++i) release(snapshots[i].object);
+@@ -216,7 +218,10 @@
+     if (!cookie) return;
+     pthread_mutex_lock(&sync_lock);
+     struct fence_object *object = cookie;
+-    if (!error) { object->available = true; object->sequence = sequence; pthread_cond_broadcast(&changed); }
++    /* begonia (x43): told only to who waits for it. Every submission ends here, 1500 a second, and each
++     * broadcast woke the fence worker, which waits on the same condition for sync files to be exported
++     * (those say so themselves), found nothing and slept again -- taking this lock against the drawing thread. */
++    if (!error) { object->available = true; object->sequence = sequence; if (sync_waiters) pthread_cond_broadcast(&changed); }
+     release(object); pthread_mutex_unlock(&sync_lock);
+ }
+ 
