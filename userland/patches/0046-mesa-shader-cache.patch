@@ -8,7 +8,7 @@
  #include <sys/sysctl.h>
  #include <unistd.h>
  
-@@ -5180,6 +5181,19 @@
+@@ -5180,6 +5181,23 @@
  		}
  		say("hakios-gl: a frame is waited for %s\n", wait_for_frames ? "here, before it is handed to the display" :
  		    "by the display's driver, not here");
@@ -17,13 +17,17 @@
 +		 * Today view's blur, App Library's materials) was compiled on the display's thread, a second or so the
 +		 * screen stood still (the user: the far-left/far-right panes stall the first time only); kept on disk, it
 +		 * is compiled once ever. (Mesa built with -Dshader-cache=enabled; glenv=MESA_SHADER_CACHE_DIR=... wins.)
++		 * y104/y105 with it on: frames under 18 ms 9% (y106, off: 56%), the GL calls 7-8 ms a frame -- so it is
++		 * off unless the boot-arg glcache=1 asks for it, until it is known what in it costs every frame.
 +		 */
-+		{
++		if (strstr(arguments, "glcache=1") != NULL) {
 +			static const char *const cache = "/var/mobile/Library/Caches/com.hakios.mesa-gl";
 +			mkdir("/var/mobile/Library/Caches", 0755);
 +			mkdir(cache, 0777);
 +			setenv("MESA_SHADER_CACHE_DIR", cache, 0);
 +			say("hakios-gl: shaders kept in %s\n", getenv("MESA_SHADER_CACHE_DIR"));
++		} else {
++			setenv("MESA_SHADER_CACHE_DISABLE", "true", 0);
 +		}
  		for (argument = arguments; (argument = strstr(argument, "glenv=")) != NULL; argument += 6) {
  			char setting[128];
