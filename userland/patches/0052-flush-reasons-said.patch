@@ -1,0 +1,22 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -665,6 +665,19 @@
+ 	}
+ 	say("hakios-gl:   textures that are IOSurfaces now: %u of %zu places\n", e->image_count,
+ 	    sizeof(e->images) / sizeof(e->images[0]));
++	/* begonia (y134): why Mesa sent its batches to the GPU since the last summary (mesa-patches 0008) */
++	{
++		static int (*reasons)(char *, unsigned);
++		static int looked;
++		char line[700];
++
++		if (!looked++) {
++			reasons = (int (*)(char *, unsigned))dlsym(RTLD_DEFAULT, "osmesa_flush_reasons");
++		}
++		if (reasons != NULL && reasons(line, sizeof(line)) > 0) {
++			say("hakios-gl:   batches sent, why:%s\n", line);
++		}
++	}
+ 	say("hakios-gl:   calls that set what was set already: glBindTexture %u, glUseProgram %u, glActiveTexture %u, "
+ 	    "glBindFramebuffer %u\n", same_texture, same_program, same_unit, same_framebuffer);
+ 	{

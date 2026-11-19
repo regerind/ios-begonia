@@ -1,0 +1,114 @@
+--- a/src/gallium/drivers/panfrost/pan_job.c
++++ b/src/gallium/drivers/panfrost/pan_job.c
+@@ -1,3 +1,4 @@
++#include <stdio.h>
+ /*
+  * Copyright (C) 2019-2020 Collabora, Ltd.
+  * Copyright (C) 2019 Alyssa Rosenzweig
+@@ -158,6 +159,42 @@
+ static void panfrost_batch_submit(struct panfrost_context *ctx,
+                                   struct panfrost_batch *batch);
+ 
++
++/*
++ * begonia (y134): why batches are submitted, counted (whatever PAN_MESA_DEBUG says): with YouTube the display's
++ * picture was split into ~12 batches a frame, each a full-screen fragment job, and reading the backdrops from the frame
++ * before (the bridge's glbackdrop=1) did not change that. osmesa_flush_reasons() says the counts and starts again.
++ */
++#define PAN_FLUSH_REASONS 24
++static struct { const char *why; unsigned count; } pan_flush_reasons[PAN_FLUSH_REASONS];
++
++static void
++pan_count_flush(const char *why)
++{
++   if (!why)
++      why = "(none)";
++   for (unsigned i = 0; i < PAN_FLUSH_REASONS; i++) {
++      if (pan_flush_reasons[i].why == why || !pan_flush_reasons[i].why) {
++         pan_flush_reasons[i].why = why;
++         pan_flush_reasons[i].count++;
++         return;
++      }
++   }
++}
++
++__attribute__((visibility("default"))) int osmesa_flush_reasons(char *out, unsigned size);
++__attribute__((visibility("default"))) int
++osmesa_flush_reasons(char *out, unsigned size)
++{
++   int o = 0;
++   for (unsigned i = 0; i < PAN_FLUSH_REASONS && pan_flush_reasons[i].why; i++) {
++      if (o < (int)size - 1)
++         o += snprintf(out + o, size - o, " %s: %u;", pan_flush_reasons[i].why, pan_flush_reasons[i].count);
++      pan_flush_reasons[i].count = 0;
++   }
++   return o;
++}
++
+ static struct panfrost_batch *
+ panfrost_get_batch(struct panfrost_context *ctx,
+                    const struct pipe_framebuffer_state *key)
+@@ -183,6 +220,7 @@
+    /* The selected slot is used, we need to flush the batch */
+    if (batch->seqnum) {
+       perf_debug(ctx, "Flushing batch due to seqnum overflow");
++      pan_count_flush("lru (all 32 batches in use)");
+       panfrost_batch_submit(ctx, batch);
+    }
+ 
+@@ -241,6 +279,7 @@
+ 
+    if (batch->draw_count + batch->compute_count > 0) {
+       perf_debug(ctx, "Flushing the current FBO due to: %s", reason);
++      pan_count_flush(reason);
+       panfrost_batch_submit(ctx, batch);
+       batch = panfrost_get_batch(ctx, &ctx->pipe_framebuffer);
+    }
+@@ -273,8 +312,10 @@
+    struct panfrost_batch *writer = entry ? entry->data : NULL;
+ 
+    /* Both reads and writes flush the existing writer */
+-   if (writer != NULL && writer != batch)
++   if (writer != NULL && writer != batch) {
++      pan_count_flush(writes ? "written where another batch writes" : "read where another batch writes");
+       panfrost_batch_submit(ctx, writer);
++   }
+ 
+    /* Writes (only) flush readers too */
+    if (writes) {
+@@ -287,8 +328,10 @@
+             continue;
+ 
+          /* Submit if it's a user */
+-         if (panfrost_batch_uses_resource(batch, rsrc))
++         if (panfrost_batch_uses_resource(batch, rsrc)) {
++            pan_count_flush("written where another batch reads");
+             panfrost_batch_submit(ctx, batch);
++         }
+       }
+    }
+ }
+@@ -723,6 +766,7 @@
+    if (!batch)
+       return;
+ 
++   pan_count_flush(reason ? reason : "flush (all)");
+    panfrost_batch_submit(ctx, batch);
+ 
+    for (unsigned i = 0; i < PAN_MAX_BATCHES; i++) {
+@@ -739,6 +783,7 @@
+ 
+    if (entry) {
+       perf_debug(ctx, "Flushing writer due to: %s", reason);
++      pan_count_flush(reason);
+       panfrost_batch_submit(ctx, entry->data);
+    }
+ }
+@@ -756,6 +801,7 @@
+          continue;
+ 
+       perf_debug(ctx, "Flushing user due to: %s", reason);
++      pan_count_flush(reason);
+       panfrost_batch_submit(ctx, batch);
+    }
+ }
