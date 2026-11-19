@@ -22,7 +22,10 @@ for name in ('hakios_metal_shown.h','hakios_metal_shown.c'):
 shown=out/'hakios_metal_shown.c';stext=shown.read_text()
 old_match='\t\tlisted = strcmp(line, "*") == 0 || (line[0] != \'\\0\' && strcmp(line, name) == 0);'
 assert stext.count(old_match)==1
-stext=stext.replace(old_match,old_match+'''
+stext=stext.replace(old_match,'''\t\tif (line[0] == '!' && strcmp(line + 1, name) == 0) {
+\t\t\tbreak;          /* begonia: "!Name" (before "@apps" or "*"): not this one */
+\t\t}
+'''+old_match+'''
 \t\tif (!listed && strcmp(line, "@apps") == 0) {
 \t\t\tchar executable[1024];
 \t\t\tuint32_t length = sizeof(executable);

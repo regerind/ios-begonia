@@ -25,7 +25,9 @@ if a.metal_client:
  runtime=max((f for f in (small,full) if f.exists()),key=lambda f:f.stat().st_mtime)  # the one built last
  for source,name in ((root/'out/panvk-ios/libvulkan_panfrost.dylib','libvulkan_panfrost.dylib'),(runtime,'libmetal2vulkan.dylib')):
   subprocess.run(['llvm-strip','-S','-x','-o',str(dest/'lib'/name),str(source)],check=True)
- clients=''.join(n+'\n' for n in dict.fromkeys(['metal_frontend_test','metal_test','spritekit_test','scenekit_test',*a.metal_client]))
+ # (exclusions, "!Name", first: the list is read top down and the first match decides)
+ names=list(dict.fromkeys(['metal_frontend_test','metal_test','spritekit_test','scenekit_test',*a.metal_client]))
+ clients=''.join(n+'\n' for n in sorted(names,key=lambda n:not n.startswith('!')))
  for bundle in (dest/'ext/HakiosMetal.bundle',):
   bundle.mkdir(parents=True,exist_ok=True)
   shutil.copy2(root/'out/metal-frontend-ios/HakiosMetal',bundle/'HakiosMetal')
