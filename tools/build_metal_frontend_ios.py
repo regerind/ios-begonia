@@ -5,6 +5,7 @@ import argparse,shutil,subprocess
 root=Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--sdk',type=Path,required=True)
 p.add_argument('--output-dir',type=Path,default=root/'out/metal-frontend-ios')
+p.add_argument('--cc',type=Path,help='a cross clang (xnu-clang) for a host without Xcode: used in place of xcrun, nothing is codesigned')
 p.add_argument('--quartzcore',action='store_true',help='enable the iOS 16 QuartzCore pipeline library adapter')
 p.add_argument('--experimental-mps-stubs',action='store_true',help='reproduce v59 diagnostics that silently skip unsupported compute; never for correctness qualification')
 a=p.parse_args()
@@ -457,7 +458,7 @@ static_assert(sizeof(BegoniaMTLTargetDeviceArch) == 24 &&
               "iOS 16 Metal target descriptor layout");
 ''' + implementation + adapter + '\n')
 mf.write_text(frontend)
-common=['-target','arm64-apple-ios16.5','-isysroot',str(a.sdk.resolve()),'-O1','-Wall','-Wextra',
+common=[*(['-arch','arm64','-mios-version-min=16.5'] if a.cc else ['-target','arm64-apple-ios16.5']),'-isysroot',str(a.sdk.resolve()),'-O1','-Wall','-Wextra',
  '-I'+str(root/'out/metal2vulkan-bridge').replace('/metal2vulkan-bridge',''),'-I'+str(source)]
 # The source includes bridge/NativeMetalObjects.h. Keep a staged header only;
 # implementation remains dynamically linked and replaceable.
@@ -468,14 +469,15 @@ objects=[]
 with (out/'build.log').open('w') as log:
  for f in (source/'HakiosMetalVK.mm',source/'NativeBridgeMetalFrontend.mm',out/'hakios_metal_shown.c'):
   obj=out/(f.stem+'.o');objects.append(obj)
-  cmd=['xcrun','clang++' if f.suffix=='.mm' else 'clang',*common]
+  cmd=[*([str(a.cc)+('++' if f.suffix=='.mm' else '')] if a.cc else ['xcrun','clang++' if f.suffix=='.mm' else 'clang']),*common]
   if f.suffix=='.mm':cmd+=['-std=c++17','-fobjc-arc']
   subprocess.run([*cmd,'-c',str(f),'-o',str(obj)],stdout=log,stderr=subprocess.STDOUT,check=True)
  binary=out/'HakiosMetal'
- subprocess.run(['xcrun','clang++',*common,'-bundle','-o',str(binary),*map(str,objects),
+ subprocess.run([*([str(a.cc)+'++'] if a.cc else ['xcrun','clang++']),*common,'-bundle','-o',str(binary),*map(str,objects),
   str(root/'out/metal2vulkan-target-ios/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib'),
   '-Wl,-rpath,/redwood/lib','-Wl,-rpath,@loader_path/..',
   '-framework','Foundation','-framework','Metal','-framework','IOSurface','-framework','IOKit','-framework','CoreFoundation','-lobjc'],stdout=log,stderr=subprocess.STDOUT,check=True)
-subprocess.run(['codesign','-s','-','-f',str(binary)],check=True)
-subprocess.run(['codesign','--verify','--strict',str(binary)],check=True)
+if not a.cc:
+ subprocess.run(['codesign','-s','-','-f',str(binary)],check=True)
+ subprocess.run(['codesign','--verify','--strict',str(binary)],check=True)
 print('Built signed Metal frontend; '+('experimental MPS stubs enabled' if a.experimental_mps_stubs else 'unsupported compute reports failure')+'; not installed')
