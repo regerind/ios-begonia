@@ -26,7 +26,7 @@
  __attribute__((constructor))
  static void
  hakios_springboard_init(void)
-@@ -2735,6 +2754,25 @@
+@@ -2735,6 +2754,28 @@
  	notify_register_dispatch("com.hakios.open.settings", &token, dispatch_get_main_queue(), ^(__unused int t) {
  		open_application("com.apple.Preferences");
  	});
@@ -45,6 +45,9 @@
 +	});
 +	notify_register_dispatch("com.hakios.open.url3", &token, dispatch_get_main_queue(), ^(__unused int t) {
 +		open_url("https://en.m.wikipedia.org/wiki/Cat");
++	});
++	notify_register_dispatch("com.hakios.open.video", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_url("https://download.samplelib.com/mp4/sample-30s.mp4");
 +	});
 +	notify_register_dispatch("com.hakios.open.url4", &token, dispatch_get_main_queue(), ^(__unused int t) {
 +		open_url("https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/640px-Cat03.jpg");
