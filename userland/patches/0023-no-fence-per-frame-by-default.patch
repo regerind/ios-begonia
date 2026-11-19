@@ -1,0 +1,26 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -396,7 +396,13 @@
+  * here in any case; glwait=0: nowhere, to see what the waiting costs (and frames half drawn).
+  */
+ static int wait_for_frames = 1;
+-static int sync_frames = 1;             /* boot-arg glsync=0 (a test): a frame's end does not push what Mesa holds back (frame_end()) */
++/*
++ * begonia (x47): off by default. panfrost holds nothing back after glFlush (the fence was for freedreno's submit
++ * merging), and the fence cost a sync file, a pipe and the shim's worker thread every frame: x44, with glsync=0 and
++ * Mesa 0005, 87% of the frames' intervals under 18 ms where x43 had 60%, 21 us a draw where it had 49.
++ * Boot-arg glsync=1: a fence at every frame's end, as before.
++ */
++static int sync_frames = 0;
+ /*
+  * EXT_shader_framebuffer_fetch -- a fragment shader reads the pixel it is about to write -- is
+  * what CoreAnimation draws a number of things with where the library offers it: the shadows
+@@ -4899,7 +4905,7 @@
+ 		if ((argument = strstr(arguments, "gl_cpu=")) != NULL) {
+ 			bind_cpu = atoi(argument + 7);
+ 		}
+-		sync_frames = strstr(arguments, "glsync=0") == NULL;
++		sync_frames = strstr(arguments, "glsync=1") != NULL;
+ 		hash_wrapped = strstr(arguments, "glwraphash=1") != NULL;
+ 		fill_fresh = strstr(arguments, "glfill=1") != NULL;
+ 		if (strstr(arguments, "glwait=0") != NULL || (strstr(arguments, "glwait=1") == NULL && display_waits())) {

@@ -41,6 +41,10 @@ change('\thakios_mali_unmap(b->address, b->size);','''\tif (!hakios_mali_ready()
         return;
     }
 \thakios_mali_unmap(b->address, b->size);''')
+# x47: mcs=1 by default (mcs=0: every surface a job names cleaned at every submit, as before). x35 measured 87-91% of
+# the submit request's time in cleaning whole 12.7 MB display surfaces the processor had not written; x36 on, with
+# mcs=1 (cleaned on first use and when the surface's seed has moved; wrapped memory always), nothing stale was seen.
+change('static uint32_t gMaliCacheSeed;','static uint32_t gMaliCacheSeed = 1;')
 # x35: the cache profile (boot-arg mcp=1) goes to the console, where the test sessions' log is read from
 # (loader_log_line's log is not), with what each request costs: count and time by selector.
 if text.count('loader_log_line(line);')!=3:raise SystemExit('Reference context changed: loader_log_line')
