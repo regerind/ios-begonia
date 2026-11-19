@@ -13,6 +13,14 @@ source "$H/xnu-env.sh"
 SDK=$THEOS/sdks/iPhoneOS16.5.sdk; CC=$H/xnu-deps/host/bin/xnu-clang
 export RUSTUP_HOME=$R/.tools/rust/rustup CARGO_HOME=$R/.tools/rust/cargo
 python3 "$R/tools/prepare_vulkan_userland.py" | tail -1
+# begonia's changes to the runtime itself (userland/metal/runtime-patches), on top of the pinned reference patch: each
+# applied once (already applied: left alone; neither: the build stops)
+for p in "$R"/userland/metal/runtime-patches/*.patch; do
+	[ -f "$p" ] || continue
+	if git -C "$R/upstream/metal2vulkan" apply --reverse --check "$p" 2>/dev/null; then continue; fi
+	git -C "$R/upstream/metal2vulkan" apply "$p" || { echo "runtime patch does not apply: $p" >&2; exit 1; }
+	echo "m2v: runtime $(basename "$p")"
+done
 bridge=$R/out/metal2vulkan-bridge; mkdir -p "$bridge"
 for f in "$R"/upstream/ios-s9plus-exynos/core/tools/metal/bridge/*; do [ -f "$f" ] && cp "$f" "$bridge/"; done
 sed -i 's#\.\./src/crates/metal2vulkan#../../upstream/metal2vulkan/crates/metal2vulkan#g' "$bridge/Cargo.toml"

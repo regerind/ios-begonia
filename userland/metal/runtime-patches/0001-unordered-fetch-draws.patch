@@ -1,0 +1,30 @@
+--- a/crates/metal2vulkan-runtime/src/render.rs
++++ b/crates/metal2vulkan-runtime/src/render.rs
+@@ -6767,7 +6767,7 @@
+             )),
+         };
+         let vk_draws = &vk_draws[..count];
+-        let serialized_fetch = crate::serialized_fetch::needed(graphics);
++        let mut serialized_fetch = crate::serialized_fetch::needed(graphics);
+         if serialized_fetch
+             && (self.layout.layers != 1
+                 || self.layout.samples != 1
+@@ -6775,7 +6775,17 @@
+                     !crate::serialized_fetch::admits_draw(topology, primitive_restart, *draw)
+                 }))
+         {
+-            return Err(crate::serialized_fetch::unavailable());
++            // begonia: a device made with `FramebufferFetchPolicy::AcceptUnordered` draws a fetching draw the
++            // serialization cannot split (a strip, instances, more than its triangles) as one draw, its reads
++            // unordered, as the policy accepts, instead of refusing it: on PanVK v7 (no raster-order attachment
++            // access) every such draw of QuartzCore's drawing shaders was refused and CoreGraphics' paths never drew.
++            if self.core.device().compile_device().policy().framebuffer_fetch
++                == metal2vulkan::device::FramebufferFetchPolicy::AcceptUnordered
++            {
++                serialized_fetch = false;
++            } else {
++                return Err(crate::serialized_fetch::unavailable());
++            }
+         }
+         // The draw's steps before the pass (its copies, its index bounds or rewrite pass) read
+         // what an earlier draw or tile dispatch of the encoder wrote behind a memory barrier: they
