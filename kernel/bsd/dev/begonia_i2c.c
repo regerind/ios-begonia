@@ -303,6 +303,90 @@ tfa(char *out, size_t len, size_t o)
 	return o;
 }
 
+/* a controller's configuration registers (y82: buses LK set up work; the others "acknowledged" everybody) */
+static const uint32_t config_regs[] = { CONTROL, DELAY_LEN, TIMING, EXT_CONF, 0x2c /* LTIMING */, 0x30 /* HS */,
+	                                IO_CONFIG, CLOCK_DIV, 0x4c /* HW_TIMEOUT */ };
+
+static size_t
+regs_of(int bus, char *out, size_t len, size_t o)
+{
+	if (!bus_ready(bus)) {
+		say("regs %d: not usable\n", bus);
+		return o;
+	}
+	say("regs %d:", bus);
+	for (unsigned i = 0; i < sizeof(config_regs) / sizeof(config_regs[0]); i++) {
+		say(" %02x=%04x", config_regs[i], rd(bus, config_regs[i]));
+	}
+	say("\n");
+	return o;
+}
+
+/* a bus LK did not use, set up as one it did: every configuration register copied */
+static size_t
+clone(int from, int to, char *out, size_t len, size_t o)
+{
+	if (!bus_ready(from) || !bus_ready(to)) {
+		say("clone %d %d: not usable\n", from, to);
+		return o;
+	}
+	lck_mtx_lock(&i2c_mtx);
+	wr(to, SOFTRESET, 1);
+	for (unsigned i = 0; i < sizeof(config_regs) / sizeof(config_regs[0]); i++) {
+		wr(to, config_regs[i], rd(from, config_regs[i]));
+	}
+	lck_mtx_unlock(&i2c_mtx);
+	dead[to] = false;
+	say("clone %d -> %d: done\n", from, to);
+	return regs_of(to, out, len, o);
+}
+
+/* the torch for Control Centre: MT6360 (I2C 5, 0x34) flash LED 1, current selector 0..31 (lowest 0), or off */
+int
+begonia_torch(int level)
+{
+	static uint8_t en_was = 0xff;
+	uint8_t id, en;
+	if (reg_read(5, 0x34, 0x00, &id) != 0 || (id & 0xf0) != 0x50 || reg_read(5, 0x34, 0x7e, &en) != 0) {
+		return -1;
+	}
+	if (en_was == 0xff) {
+		en_was = en & 0x0b;
+	}
+	if (level < 0) {
+		return reg_write(5, 0x34, 0x7e, (uint8_t)(en & ~0x0au));                  /* CS1 and torch off */
+	}
+	uint8_t tor;
+	if (reg_read(5, 0x34, 0x75, &tor) != 0) {
+		return -1;
+	}
+	int e = reg_write(5, 0x34, 0x75, (uint8_t)((tor & ~0x1fu) | (level > 31 ? 31 : level)));
+	e |= reg_write(5, 0x34, 0x7e, (uint8_t)((en & ~0x04u) | 0x0au));
+	return e;
+}
+
+static int torch_level = -1;
+
+static int
+sysctl_begonia_torch SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+	int value = torch_level, changed = 0;
+	int error = sysctl_io_number(req, value, sizeof(int), &value, &changed);
+	if (error == 0 && changed) {
+		if (value < -1 || value > 31) {
+			return EINVAL;
+		}
+		if (begonia_torch(value) != 0) {
+			return EIO;
+		}
+		torch_level = value;
+	}
+	return error;
+}
+SYSCTL_PROC(_kern, OID_AUTO, begonia_torch, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY,
+    0, 0, sysctl_begonia_torch, "I", "the torch: -1 off, 0..31 its current (MT6360 flash LED 1)");
+
 /* the usual chip-id registers of a device: 0x00 (Bosch, AKM), 0x0f (ST WHO_AM_I), 0x75 (InvenSense), 0x01 */
 static size_t
 who(int bus, uint8_t addr, char *out, size_t len, size_t o)
@@ -347,6 +431,10 @@ sysctl_begonia_i2c SYSCTL_HANDLER_ARGS
 			o = torch(out, len, o);
 		} else if (strncmp(cmd, "tfa", 3) == 0) {
 			o = tfa(out, len, o);
+		} else if (sscanf(cmd, "regs %u", &bus) == 1) {
+			o = regs_of((int)bus, out, len, o);
+		} else if (sscanf(cmd, "clone %u %u", &bus, &addr) == 2) {
+			o = clone((int)bus, (int)addr, out, len, o);
 		} else if (sscanf(cmd, "who %u %x", &bus, &addr) == 2) {
 			o = who((int)bus, (uint8_t)addr, out, len, o);
 		} else if (sscanf(cmd, "r %u %x %x %u", &bus, &addr, &reg, &val) == 4 && val <= 8) {

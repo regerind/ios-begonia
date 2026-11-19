@@ -1,0 +1,81 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2088,6 +2088,70 @@
+ }
+ 
+ /*
++ * begonia: Control Centre's torch. SpringBoard's flashlight (SBUIFlashlightController) drives AVFoundation's
++ * AVFlashlight, which goes to the camera stack -- not here. Its methods are answered here instead, through the
++ * kernel's kern.begonia_torch (the MT6360's flash LED on I2C 5: -1 off, 0..31 its current). The level iOS asks for
++ * (0..1) is mapped onto 0..12 of the 31 steps: a torch somebody leaves on for minutes.
++ */
++static float torch_level_now;
++
++static int
++torch_set(float level)
++{
++	int value = level <= 0.0f ? -1 : (int)(level * 12.0f + 0.5f);
++
++	torch_level_now = level <= 0.0f ? 0.0f : level;
++	return sysctlbyname("kern.begonia_torch", NULL, NULL, &value, sizeof(value));
++}
++
++static BOOL torch_yes(__unused id self, __unused SEL command) { return YES; }
++static BOOL torch_no(__unused id self, __unused SEL command) { return NO; }
++static float torch_get_level(__unused id self, __unused SEL command) { return torch_level_now; }
++
++static BOOL
++torch_set_level(__unused id self, __unused SEL command, float level, __unused id *error)
++{
++	int e = torch_set(level);
++	say("hakios: torch %.2f: %s\n", level, e == 0 ? "set" : "NOT set");
++	return e == 0;
++}
++
++static BOOL
++torch_power_on(__unused id self, __unused SEL command, __unused id *error)
++{
++	return YES;
++}
++
++static void
++torch_power_off(__unused id self, __unused SEL command)
++{
++	(void)torch_set(0.0f);
++}
++
++static void
++torch_for_control_centre(void)
++{
++	Class flashlight;
++	int probe = -1;
++	size_t size = sizeof(probe);
++
++	dlopen("/System/Library/Frameworks/AVFoundation.framework/AVFoundation", RTLD_NOW);
++	if ((flashlight = objc_getClass("AVFlashlight")) == NULL ||
++	    sysctlbyname("kern.begonia_torch", &probe, &size, NULL, 0) != 0) {
++		say("hakios: torch: %s\n", flashlight == NULL ? "no AVFlashlight" : "no kern.begonia_torch");
++		return;
++	}
++	class_replaceMethod(object_getClass(flashlight), sel_registerName("hasFlashlight"), (IMP)torch_yes, "B16@0:8");
++	class_replaceMethod(flashlight, sel_registerName("isAvailable"), (IMP)torch_yes, "B16@0:8");
++	class_replaceMethod(flashlight, sel_registerName("isOverheated"), (IMP)torch_no, "B16@0:8");
++	class_replaceMethod(flashlight, sel_registerName("flashlightLevel"), (IMP)torch_get_level, "f16@0:8");
++	class_replaceMethod(flashlight, sel_registerName("setFlashlightLevel:withError:"), (IMP)torch_set_level, "B28@0:8f16^@20");
++	class_replaceMethod(flashlight, sel_registerName("turnPowerOnWithError:"), (IMP)torch_power_on, "B24@0:8^@16");
++	class_replaceMethod(flashlight, sel_registerName("turnPowerOff"), (IMP)torch_power_off, "v16@0:8");
++	say("hakios: torch: Control Centre's flashlight is the MT6360's flash LED (kern.begonia_torch)\n");
++}
++
++/*
+  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
+  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
+  */
+@@ -2643,6 +2707,7 @@
+ 	caenv();
+ 	main_thread_cpu();
+ 	display_link_rates();
++	torch_for_control_centre();
+ 	accessibility_settings();
+ 	/*
+ 	 * The tweaks of the package manager's prefix, if one is installed: ElleKit's loader
