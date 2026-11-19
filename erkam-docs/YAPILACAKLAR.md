@@ -23,6 +23,8 @@
 
 ## Değişmeyen kurallar
 - IMEI bölümlerine (nvram, nvdata, protect1/2, persist, proinfo...) asla yazılmaz. Flaşlama yalnızca boot ve misc.
-- Voltaj, saat ve PMIC hattı değişikliği yalnızca kullanıcı onayıyla.
+- 2026-11-20 ~00:55, kullanıcı: GPU'yu ve video çözücüyü (VDEC) çözmek için IMEI dışında tam yetki ("sınır yok, çok
+  invazif gitmemeye çalış"). GPU ve VDEC için güç alanı, saat ve PMIC işleri artık ayrı onay istemiyor. Diğer işlerde
+  voltaj, saat ve PMIC değişikliği yine onayla.
 - Test oturumu 60 sn (`WATCH=60`).
 - Wallpaper gizlenmez, çözünürlük düşürülmez, Hareketi Azalt/Şeffaflığı Azalt kullanılmaz.
