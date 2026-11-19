@@ -39,7 +39,7 @@ driver_files = [
 for name in driver_files:
     shutil.copyfile(root/'kernel/bsd/dev'/name,tree/'bsd/dev'/name)
 
-for cpp in ['BegoniaWLAN.cpp', 'BegoniaBluetooth.cpp']:
+for cpp in ['BegoniaWLAN.cpp', 'BegoniaBluetooth.cpp', 'BegoniaBacklight.cpp']:
     shutil.copyfile(root/'kernel/bsd/dev'/cpp, tree/'iokit/Kernel'/cpp)
 
 # Ensure bsd/conf/files contains our new drivers
@@ -66,7 +66,8 @@ for entry in [
 
 # Ensure iokit/conf/files contains our IOKit drivers
 iokit_files = (tree/'iokit/conf/files').read_text()
-for entry in ['iokit/Kernel/BegoniaWLAN.cpp standard iokitcpp', 'iokit/Kernel/BegoniaBluetooth.cpp standard iokitcpp']:
+for entry in ['iokit/Kernel/BegoniaWLAN.cpp standard iokitcpp', 'iokit/Kernel/BegoniaBluetooth.cpp standard iokitcpp',
+              'iokit/Kernel/BegoniaBacklight.cpp standard iokitcpp']:
     if entry not in iokit_files:
         iokit_files += '\n' + entry + '\n'
 (tree/'iokit/conf/files').write_text(iokit_files)
@@ -88,6 +89,8 @@ hakios_input_init(void)
 \tbegonia_buttons_init();
 \textern void begonia_backlight_init(void);
 \tbegonia_backlight_init();
+\textern void BegoniaBacklightStart(void);
+\tBegoniaBacklightStart();
 \textern void begonia_battery_init(void);
 \tbegonia_battery_init();
 \textern void begonia_audio_init(void);
