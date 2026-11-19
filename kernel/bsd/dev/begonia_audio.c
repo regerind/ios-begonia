@@ -18,6 +18,10 @@
 #include <sys/systm.h>
 #include <sys/sysctl.h>
 #include <kern/locks.h>
+#include <kern/clock.h>
+#include <mach/mach_time.h>
+
+void begonia_perf_note(const char *format, ...) __printflike(1, 2);
 
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 void begonia_pwrap_take(void);
@@ -250,6 +254,7 @@ poll32(volatile uint8_t *b, uint32_t off, uint32_t mask, uint32_t want, unsigned
 #define DL1_ON                  (1u << 4)
 extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 static volatile int16_t *ring;
+static uint64_t dl1_t0;                 /* mach_absolute_time() when DL1 was switched on (it starts at BASE) */
 
 /*
  * Everything up to sound coming out of the earpiece: the clocks and the domain, the AFE, the DAC link, then either the
@@ -339,6 +344,7 @@ hw_up(char *out, size_t len, size_t o, bool sine, unsigned gain, bool *ok)
 		m32(afe, AFE_CONN3, 1u << 5, 1u << 5);
 		m32(afe, AFE_CONN4, 1u << 6, 1u << 6);
 		m32(afe, AFE_DAC_CON0, DL1_ON | 1u, DL1_ON | 1u);
+		dl1_t0 = mach_absolute_time();
 	}
 	say("tone: AFE on: TOP_CON0 %#x DAC_CON0 %#x UL_DL %#x DL_SRC2 %#x SINEGEN %#x/%#x\n", r32(afe, AUDIO_TOP_CON0),
 	    r32(afe, AFE_DAC_CON0), r32(afe, AFE_ADDA_UL_DL_CON0), r32(afe, AFE_ADDA_DL_SRC2_CON0), r32(afe, AFE_SINEGEN_CON0),
@@ -452,8 +458,40 @@ volume_follow(void)
 static uint32_t
 read_frame(void)
 {
+	/*
+	 * y95: with CUR taken at its word the sink saw the ring full after its first 341 ms (12.9 s of 14.7 lost, the
+	 * same 341 ms heard again and again): CUR did not read as an address in the ring. Where it does, it is used;
+	 * otherwise DL1's place is reckoned from the time since it was switched on, at 48000 frames a second.
+	 */
+	static unsigned bad;
 	uint32_t cur = r32(afe, AFE_DL1_CUR);
-	return cur >= RING_PA && cur < RING_PA + RING_BYTES ? (cur - RING_PA) / 4 : 0;
+	if (cur >= RING_PA && cur < RING_PA + RING_BYTES) {
+		return (cur - RING_PA) / 4;
+	}
+	if (bad++ < 4) {
+		begonia_perf_note("BEGONIA AUDIO: DL1_CUR read %#x, not in the ring: DL1's place from the time", cur);
+	}
+	uint64_t ns;
+	absolutetime_to_nanoseconds(mach_absolute_time() - dl1_t0, &ns);
+	return (uint32_t)((ns / 1000 * 48 / 1000) % RING_FRAMES);
+}
+
+/* DL1's registers twice, 5 ms apart: which of them moves (the place DL1 reads), kept in the notes */
+static void
+dl1_regs_noted(void)
+{
+	uint32_t a[12], b[12];
+	for (int i = 0; i < 12; i++) {
+		a[i] = r32(afe, 0x40 + 4 * i);
+	}
+	delay(5000);
+	for (int i = 0; i < 12; i++) {
+		b[i] = r32(afe, 0x40 + 4 * i);
+	}
+	begonia_perf_note("BEGONIA AUDIO: AFE 0x40.. %x %x %x %x %x %x %x %x %x %x %x %x", a[0], a[1], a[2], a[3], a[4], a[5],
+	    a[6], a[7], a[8], a[9], a[10], a[11]);
+	begonia_perf_note("BEGONIA AUDIO: +5 ms     %x %x %x %x %x %x %x %x %x %x %x %x", b[0], b[1], b[2], b[3], b[4], b[5],
+	    b[6], b[7], b[8], b[9], b[10], b[11]);
 }
 
 static void
@@ -489,8 +527,9 @@ come_up(__unused thread_call_param_t a, __unused thread_call_param_t b)
 		printf("BEGONIA AUDIO: the stream did not come up\n");
 		return;
 	}
+	dl1_regs_noted();
 	cleared = read_frame();
-	wp = (cleared + 960) % RING_FRAMES;             /* 20 ms ahead of DL1 */
+	wp = (cleared + 1920) % RING_FRAMES;            /* 40 ms ahead of DL1 */
 	clear_call = thread_call_allocate(clear_played, NULL);
 	clear_played(NULL, NULL);
 	stream_state = 2;
