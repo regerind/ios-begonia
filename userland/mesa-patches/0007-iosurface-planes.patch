@@ -1,0 +1,95 @@
+--- a/src/gallium/targets/osmesa/osmesa_target.c
++++ b/src/gallium/targets/osmesa/osmesa_target.c
+@@ -35,6 +35,7 @@
+ #include "util/driconf.h"
+ #include "util/xmlconfig.h"
+ #include <xf86drm.h>
++#include <dlfcn.h>
+ 
+ static int gpu_fd = -1;
+ #endif
+@@ -116,10 +117,84 @@
+  * (luminance and alpha) -- to sample from only; copied, they came out as filled boxes and
+  * their memory was added up on the processor every frame to see whether it had changed.
+  */
++#ifdef OSMESA_GPU
++/*
++ * begonia: one plane of a planar IOSurface -- a video frame, '420v'/'420f': Y and CbCr -- as a texture of its own
++ * memory: GL_R8 for Y, GL_RG8 for CbCr (what CoreAnimation asks for them). Copied, every 1080p frame was 3 MB on the
++ * processor and backboardd's busiest work while a video played (y109: 71 MB in 24 frames). The image is
++ * (surface | 1 << 31 | plane << 30) (libhakios.gl's hakios_gl_surface_plane_texture()); where the plane lies in the
++ * surface's memory is IOSurface's own answer, asked here (this library lives in the window server, which has it).
++ */
++__attribute__((visibility("default"))) uint32_t osmesa_plane_last[6];
++
++static struct pipe_resource *
++osmesa_plane_resource(struct pipe_screen *screen, uint32_t id, unsigned plane)
++{
++   static void *(*lookup)(uint32_t);
++   static size_t (*plane_count)(void *), (*plane_width)(void *, size_t), (*plane_height)(void *, size_t),
++      (*plane_row)(void *, size_t), (*plane_bytes_per_element)(void *, size_t);
++   static void *(*base_of)(void *), *(*plane_base)(void *, size_t);
++   static void (*release)(const void *);
++   static int looked, said;
++   struct hakios_drm_surface s = { .surface = id };
++   struct pipe_resource templ = {
++      .target = PIPE_TEXTURE_2D,
++      .depth0 = 1,
++      .array_size = 1,
++      .bind = PIPE_BIND_SAMPLER_VIEW,
++   };
++   struct winsys_handle handle = { .type = WINSYS_HANDLE_TYPE_FD };
++   struct pipe_resource *resource = NULL;
++
++   if (!looked) {
++      looked = 1;
++      lookup = (void *(*)(uint32_t))dlsym(RTLD_DEFAULT, "IOSurfaceLookup");
++      plane_count = (size_t (*)(void *))dlsym(RTLD_DEFAULT, "IOSurfaceGetPlaneCount");
++      plane_width = (size_t (*)(void *, size_t))dlsym(RTLD_DEFAULT, "IOSurfaceGetWidthOfPlane");
++      plane_height = (size_t (*)(void *, size_t))dlsym(RTLD_DEFAULT, "IOSurfaceGetHeightOfPlane");
++      plane_row = (size_t (*)(void *, size_t))dlsym(RTLD_DEFAULT, "IOSurfaceGetBytesPerRowOfPlane");
++      plane_bytes_per_element = (size_t (*)(void *, size_t))dlsym(RTLD_DEFAULT, "IOSurfaceGetBytesPerElementOfPlane");
++      base_of = (void *(*)(void *))dlsym(RTLD_DEFAULT, "IOSurfaceGetBaseAddress");
++      plane_base = (void *(*)(void *, size_t))dlsym(RTLD_DEFAULT, "IOSurfaceGetBaseAddressOfPlane");
++      release = (void (*)(const void *))dlsym(RTLD_DEFAULT, "CFRelease");
++   }
++   if (!lookup || !plane_count || !plane_width || !plane_height || !plane_row || !plane_bytes_per_element || !base_of ||
++       !plane_base || !release || gpu_fd < 0 || hakios_drm_surface(gpu_fd, &s) != 0 || s.planes == 0 || plane >= s.planes)
++      return NULL;
++   void *surface = lookup(id);
++   if (!surface)
++      return NULL;
++   size_t element = plane_bytes_per_element(surface, plane);
++   uintptr_t base = (uintptr_t)base_of(surface), at = (uintptr_t)plane_base(surface, plane);
++   templ.format = element == 1 ? PIPE_FORMAT_R8_UNORM : element == 2 ? PIPE_FORMAT_R8G8_UNORM : PIPE_FORMAT_NONE;
++   templ.width0 = plane_width(surface, plane);
++   templ.height0 = plane_height(surface, plane);
++   handle.handle = id;
++   handle.stride = plane_row(surface, plane);
++   handle.offset = s.offset + (uint32_t)(at - base);
++   handle.size = s.size;
++   if (templ.format != PIPE_FORMAT_NONE && at >= base && plane_count(surface) == s.planes &&
++       screen->is_format_supported(screen, templ.format, PIPE_TEXTURE_2D, 0, 0, templ.bind))
++      resource = screen->resource_from_handle(screen, &templ, &handle, 0);
++   /* (what was asked, for libhakios.gl to say: osmesa_plane_last) */
++   osmesa_plane_last[0] = templ.width0;
++   osmesa_plane_last[1] = templ.height0;
++   osmesa_plane_last[2] = handle.stride;
++   osmesa_plane_last[3] = handle.offset;
++   osmesa_plane_last[4] = (uint32_t)element;
++   osmesa_plane_last[5] = resource != NULL;
++   (void)said;
++   release(surface);
++   return resource;
++}
++#endif
++
+ struct pipe_resource *
+ osmesa_surface_resource(struct pipe_screen *screen, uint32_t surface)
+ {
+ #ifdef OSMESA_GPU
++   if (surface & 0x80000000u)
++      return osmesa_plane_resource(screen, surface & 0x3fffffffu, (surface >> 30) & 1);
+    struct hakios_drm_surface s = { .surface = surface };
+    struct pipe_resource templ = {
+       .target = PIPE_TEXTURE_2D,
