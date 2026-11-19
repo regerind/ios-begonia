@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
 +++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
-@@ -263,6 +263,43 @@
+@@ -263,6 +263,49 @@
  static TUNABLE(uint32_t, gBeam, "fb_beam", 1);
  extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
  static inline uint32_t refreshHz(void);
@@ -16,6 +16,7 @@
 +static TUNABLE(uint32_t, gShotStep, "fb_shot_step", 8);
 +static TUNABLE(uint32_t, gShotTop, "fb_shot_top", 0);
 +static TUNABLE(uint32_t, gShotBottom, "fb_shot_bottom", 100);
++static TUNABLE(uint32_t, gShotRgb, "fb_shot_rgb", 0);	/* 1: colour, twelve bits a pixel in two characters (SHOCn) */
 +
 +static void
 +panelShot(const uint8_t * base, uint32_t width, uint32_t height, uint32_t rowBytes, unsigned number)
@@ -30,14 +31,19 @@
 +	for (uint32_t y = top; y < bottom; y += step) {
 +		unsigned n = 0;
 +
-+		for (uint32_t x = 0; x < width && n < sizeof(line) - 1; x += step) {
++		for (uint32_t x = 0; x < width && n < sizeof(line) - 2; x += step) {
 +			uint32_t pixel = *(const volatile uint32_t *) (base + (size_t) y * rowBytes + (size_t) x * 4);
 +			uint32_t grey = (((pixel >> 16) & 255) * 2 + ((pixel >> 8) & 255) * 5 + (pixel & 255)) >> 3;
 +
-+			line[n++] = marks[grey >> 2];
++			if (gShotRgb) {
++				line[n++] = marks[((pixel >> 18) & 0x3c) | ((pixel >> 14) & 3)];
++				line[n++] = marks[((pixel >> 8) & 0x30) | ((pixel >> 4) & 15)];
++			} else {
++				line[n++] = marks[grey >> 2];
++			}
 +		}
 +		line[n] = 0;
-+		IOLog("SHOT%u %03u %s\n", number, (y - top) / step, line);
++		IOLog("SHO%c%u %03u %s\n", gShotRgb ? 'C' : 'T', number, (y - top) / step, line);
 +	}
 +	IOLog("SHOT%u ends\n", number);
 +}
