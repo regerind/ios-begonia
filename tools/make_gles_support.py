@@ -69,7 +69,11 @@ if a.ui:
  # a scripted touch workload of the base image (make_ui_support.py --touch-script) is kept
  touch=''.join(line for line in (dest/'etc/rc.jobs').read_text().splitlines(True) if '/bin/rwtouch ' in line)
  # (the Metal tests late: the log keeps only the last half minute of a session)
- jobs=touch+'/redwood/bin/gles_render_test\n'+('sleep 50\n'+metal_tests if metal_tests else 'sleep 60\n')+'/bin/ps -A\n'
+ # proc_cpu_test watches from the start (each process's share of the processor every 3 s), not late
+ cpu=''
+ if '/redwood/bin/proc_cpu_test\n' in metal_tests:
+  metal_tests=metal_tests.replace('/redwood/bin/proc_cpu_test\n','');cpu='/redwood/bin/proc_cpu_test 120\n'
+ jobs=touch+'/redwood/bin/gles_render_test\n'+cpu+('sleep 50\n'+metal_tests if metal_tests else 'sleep 60\n')+'/bin/ps -A\n'
 else:
  keep={'com.hakios.demo.plist','com.apple.notifyd.plist','com.apple.cfprefsd.xpc.daemon.plist'}
  for f in (dest/'LaunchDaemons').glob('*.plist'):
