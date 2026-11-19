@@ -1,0 +1,43 @@
+--- a/userland/src/inject.c
++++ b/userland/src/inject.c
+@@ -855,17 +855,23 @@
+ 		struct service *made = status_screen;
+ 		int tenths = 0;
+ 
+-		while (!made->judged && !made->taken && tenths++ < 600) {
++		/*
++		 * begonia (x33): x32 -- backboardd never judged the screen at all ("has not decided"), and the
++		 * 60 s this waited was the whole test session. Now 15 s, and a screen still undecided is made
++		 * again like one turned down.
++		 */
++		while (!made->judged && !made->taken && tenths++ < 150) {
+ 			usleep(100000);
+ 		}
+ 		for (tenths = 0; made->judged && !made->taken && tenths < 20; tenths++) {
+ 			usleep(100000);
+ 		}
+-		if (made->taken || !made->judged) {
+-			say("hakios: input: backboardd %s the touch screen\n", made->taken ? "took" : "has not decided about");
++		if (made->taken) {
++			say("hakios: input: backboardd took the touch screen\n");
+ 			return screen;
+ 		}
+-		say("hakios: input: backboardd turned the touch screen down (remake %d): making it again\n", attempt);
++		say("hakios: input: backboardd %s the touch screen (remake %d): making it again\n",
++		    made->judged ? "turned down" : "has not decided about", attempt);
+ 		remakes++;
+ 		IOHIDVirtualServiceClientRemove(screen);
+ 		CFRelease(screen);
+@@ -1116,9 +1122,9 @@
+ 		sleep(10);
+ 		say_service(screen_line, sizeof(screen_line), "screen", status_screen);
+ 		say_service(buttons_line, sizeof(buttons_line), "buttons", status_buttons);
+-		say("hakios: input status %ds: %s | %s | read %u touches %u sent %u woke %u swallowed %u buttons %u mode %#x\n",
+-		    i * 10, screen_line, buttons_line, status_read, status_touches, status_sent, status_woke, status_swallowed,
+-		    status_buttons_sent, touch_mode);
++		say("hakios: input status %ds: buttons %u read %u touches %u sent %u woke %u swallowed %u mode %#x | %s | %s\n",
++		    i * 10, status_buttons_sent, status_read, status_touches, status_sent, status_woke, status_swallowed,
++		    touch_mode, screen_line, buttons_line);
+ 	}
+ 	return NULL;
+ }

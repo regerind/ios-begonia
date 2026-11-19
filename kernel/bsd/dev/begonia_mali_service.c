@@ -45,6 +45,8 @@ static uint64_t queue_head,queue_tail;
 /* what the GPU's time goes into, said every five seconds it has had work */
 static uint64_t stat_jobs,stat_fragment,stat_busy,stat_longest,stat_waited,stat_since;
 static unsigned stat_deepest;
+/* x33: callers that slept in hakios_mali_wait() for a job (Mesa waiting on the GPU), and for how long in all */
+static uint64_t stat_sleeps,stat_slept;
 static uint32_t rd(unsigned o) {return *(volatile uint32_t *)(gpu+o);}
 static void wr(unsigned o,uint32_t v) {*(volatile uint32_t *)(gpu+o)=v;__asm__ volatile("dsb sy":::"memory");}
 static int wait(unsigned o,uint32_t mask,uint32_t value) {
@@ -201,6 +203,10 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
  uint64_t busy,longest,waited;
  absolutetime_to_nanoseconds(stat_busy,&busy);absolutetime_to_nanoseconds(stat_longest,&longest);
  absolutetime_to_nanoseconds(stat_waited,&waited);
+ uint64_t sleeps=__atomic_exchange_n(&stat_sleeps,0,__ATOMIC_RELAXED),slept;
+ absolutetime_to_nanoseconds(__atomic_exchange_n(&stat_slept,0,__ATOMIC_RELAXED),&slept);
+ printf("BEGONIA GPU WAITS: callers slept for a job %llu times, %llu ms in all (of %llu ms)\n",sleeps,slept/1000000,
+  ns/1000000);
  printf("BEGONIA GPU SERVICE: %llu jobs (%llu fragment) in %llu ms: %llu us each on the GPU, the longest %llu; "
   "GPU busy %llu%%; queued %llu us each before starting, queue up to %u deep; %s\n",stat_jobs,stat_fragment,
   ns/1000000,busy/1000/stat_jobs,longest/1000,busy*100/ns,waited/1000/stat_jobs,stat_deepest,
@@ -287,11 +293,14 @@ bool hakios_mali_wait(uint64_t seq,uint64_t timeout) {
   nanoseconds_to_absolutetime(timeout,&interval);
   deadline=mach_absolute_time()+interval;
   if(deadline<interval)deadline=~0ull;
+  uint64_t asleep=mach_absolute_time();
   lck_mtx_lock(queue_lock);
   while(seq>completed && hakios_mali_ready()) {
    if(lck_mtx_sleep_deadline(queue_lock,LCK_SLEEP_DEFAULT,(event_t)&completed,THREAD_UNINT,deadline)==THREAD_TIMED_OUT)break;
   }
   lck_mtx_unlock(queue_lock);
+  __atomic_fetch_add(&stat_sleeps,1,__ATOMIC_RELAXED);
+  __atomic_fetch_add(&stat_slept,mach_absolute_time()-asleep,__ATOMIC_RELAXED);
  }
  return seq<=__atomic_load_n(&completed,__ATOMIC_ACQUIRE) && seq!=__atomic_load_n(&failed,__ATOMIC_ACQUIRE);
 }
