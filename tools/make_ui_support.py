@@ -8,6 +8,7 @@ parser.add_argument('--output-dir',type=Path)
 parser.add_argument('--gpu-service-test',type=Path)
 parser.add_argument('--physical-touch',action='store_true')
 parser.add_argument('--quiet',action='store_true')
+parser.add_argument('--touch-script',help='rwtouch steps to run in the background from the start of rc.jobs (with --physical-touch: a scripted workload beside the real touch screen)')
 parser.add_argument('--with-metal',action='store_true',help='stage PanVK, metal2vulkan, HakiosMetal bundle and GPU test binaries')
 parser.add_argument('--metal-client',action='append',default=[],help='opt in an additional named process; default is diagnostics only')
 parser.add_argument('--ca-metallib',type=Path,help='use a locally assembled QuartzCore shader library')
@@ -50,6 +51,11 @@ shutil.copy2(root/'devices/begonia/userland/rc.jobs.ui-diagnostic',dest/'etc/rc.
 if args.physical_touch:
     jobs=dest/'etc/rc.jobs'
     jobs.write_text(''.join(line for line in jobs.read_text().splitlines(True) if '/bin/rwtouch ' not in line))
+if args.touch_script:
+    if not all(c.isascii() and (c.isalnum() or c in ' ._-') for c in args.touch_script):
+        parser.error('--touch-script takes rwtouch steps: words, numbers and spaces only')
+    jobs=dest/'etc/rc.jobs'
+    jobs.write_text('/redwood/bin/rwtouch '+args.touch_script+' &'+chr(10)+jobs.read_text())
 
 if args.gpu_service_test:
     shutil.copy2(args.gpu_service_test,dest/'bin/gpu_service_test')
