@@ -1,0 +1,69 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2026,6 +2026,7 @@
+ 	} settings[] = {
+ 		{ "ax_rt=", "_AXSSetEnhanceBackgroundContrastEnabled", "Reduce Transparency" },
+ 		{ "ax_rm=", "_AXSSetReduceMotionEnabled", "Reduce Motion" },
++		{ "ax_bold=", "_AXSSetEnhanceTextLegibilityEnabled", "Bold Text" },
+ 	};
+ 	void *library;
+ 
+@@ -2051,6 +2052,50 @@
+ }
+ 
+ /*
++ * begonia: CoreImage on the CPU in SpringBoard. SpringBoard has no Metal device, so CoreImage (CoreUI's text effects,
++ * with Bold Text on) took its OpenGL ES path, whose context has no driver behind it here, and jumped through an empty
++ * function table (CoreImage+0x19c58c: entry(rend, GL_DEPTH_TEST), pc 0: SpringBoard died at every start with Bold
++ * Text on; y74: taking EAGLContext away did not help, CoreImage makes its context below it). Every CIContext made
++ * here is made with kCIContextUseSoftwareRenderer, CoreImage's own option for its CPU renderer.
++ */
++static id (*original_ci_init_options)(id, SEL, id);
++
++static id
++ci_init_options(id self, SEL command, id options)
++{
++	static int said;
++	id *key = dlsym(RTLD_DEFAULT, "kCIContextUseSoftwareRenderer");
++	id changed = options != nil ? SEND(id, options, "mutableCopy") : SEND(id, objc_getClass("NSMutableDictionary"), "new");
++	id yes = ((id (*)(id, SEL, BOOL))objc_msgSend)((id)objc_getClass("NSNumber"), sel_registerName("numberWithBool:"), 1);
++
++	if (key != NULL && *key != nil && changed != nil) {
++		((void (*)(id, SEL, id, id))objc_msgSend)(changed, sel_registerName("setObject:forKey:"), yes, *key);
++		options = changed;
++	}
++	if (!said++) {
++		say("hakios: SpringBoard: a CIContext: %s\n", key != NULL && *key != nil ? "on the CPU (kCIContextUseSoftwareRenderer)" :
++		    "NO kCIContextUseSoftwareRenderer to ask for the CPU with");
++	}
++	return original_ci_init_options(self, command, options);
++}
++
++static void
++core_image_on_the_cpu(void)
++{
++	Class context;
++	Method init;
++
++	dlopen("/System/Library/Frameworks/CoreImage.framework/CoreImage", RTLD_NOW);
++	if ((context = objc_getClass("CIContext")) == NULL ||
++	    (init = class_getInstanceMethod(context, sel_registerName("initWithOptions:"))) == NULL) {
++		say("hakios: SpringBoard: no -[CIContext initWithOptions:] to put CoreImage on the CPU with\n");
++		return;
++	}
++	original_ci_init_options = (id (*)(id, SEL, id))method_setImplementation(init, (IMP)ci_init_options);
++	say("hakios: SpringBoard: CoreImage contexts on the CPU\n");
++}
++
++/*
+  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
+  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
+  */
+@@ -2606,6 +2651,7 @@
+ 	caenv();
+ 	main_thread_cpu();
+ 	display_link_rates();
++	core_image_on_the_cpu();
+ 	accessibility_settings();
+ 	/*
+ 	 * The tweaks of the package manager's prefix, if one is installed: ElleKit's loader
