@@ -52,10 +52,15 @@ if args.physical_touch:
     jobs=dest/'etc/rc.jobs'
     jobs.write_text(''.join(line for line in jobs.read_text().splitlines(True) if '/bin/rwtouch ' not in line))
 if args.touch_script:
-    if not all(c.isascii() and (c.isalnum() or c in ' ._-') for c in args.touch_script):
-        parser.error('--touch-script takes rwtouch steps: words, numbers and spaces only')
+    if not all(c.isascii() and (c.isalnum() or c in ' ._-;') for c in args.touch_script):
+        parser.error('--touch-script takes rwtouch steps: words, numbers and spaces only; ";" begins another rwtouch')
+    # init runs a line of at most 63 words (run_command() in init.c): one rwtouch a line, each in the background
+    # from the start of the job, so each begins with its own "wait SECONDS"
+    lines=[part.strip() for part in args.touch_script.split(';') if part.strip()]
+    if any(len(part.split())>60 for part in lines):
+        parser.error('--touch-script: more than 60 words in one rwtouch (init takes 63 a line)')
     jobs=dest/'etc/rc.jobs'
-    jobs.write_text('/redwood/bin/rwtouch '+args.touch_script+' &'+chr(10)+jobs.read_text())
+    jobs.write_text(''.join('/redwood/bin/rwtouch '+part+' &'+chr(10) for part in lines)+jobs.read_text())
 
 if args.gpu_service_test:
     shutil.copy2(args.gpu_service_test,dest/'bin/gpu_service_test')
