@@ -82,22 +82,35 @@ main(int argc, char **argv)
 	setvbuf(stdout, NULL, _IOLBF, 0);
 
 	int na = take(a);
-	static struct thr ta[MAXT], tb[MAXT];
-	static char thistory[3000];
-	int bb = -1, nta = 0;
-	for (int i = 0; i < na; i++) {
-		if (strcmp(a[i].name, "backboardd") == 0) {
-			bb = a[i].pid;
-		}
-	}
-	if (bb > 0) {
-		nta = threads_of(bb, ta);
-	}
+	/*
+	 * The threads of the processes the stalls point at (y99-y101): backboardd (the compositor), SpringBoard (the
+	 * far-left/far-right panes), chronod (the widgets), the WebKit GPU process (video). A window's threads over 3%.
+	 */
+	enum { NW = 4 };
+	static const char *const watch[NW] = { "backboardd", "SpringBoard", "chronod", "com.apple.WebKit.GPU" };
+	static const char *const tag[NW] = { "BB", "SB", "CHRONO", "WKGPU" };
+	static struct thr ta[NW][MAXT], tb[MAXT];
+	static int nta[NW], wpid[NW];
+	static char thistory[NW][2500];
 	for (int w = 1; w * 3 <= seconds; w++) {
 		sleep(3);
 		int nb = take(b);
-		if (bb > 0) {
-			int ntb = threads_of(bb, tb);
+		for (int k = 0; k < NW; k++) {
+			int pid = -1;
+			for (int j = 0; j < nb; j++) {
+				if (strcmp(b[j].name, watch[k]) == 0) {
+					pid = b[j].pid;
+				}
+			}
+			if (pid != wpid[k]) {           /* new (or new again): counted from now */
+				wpid[k] = pid;
+				nta[k] = pid > 0 ? threads_of(pid, ta[k]) : 0;
+				continue;
+			}
+			if (pid <= 0) {
+				continue;
+			}
+			int ntb = threads_of(pid, tb);
 			char tl[300];
 			int to = snprintf(tl, sizeof(tl), "t=%d:", w * 3);
 			for (int pick = 0; pick < 4; pick++) {
@@ -105,9 +118,9 @@ main(int argc, char **argv)
 				double bp = 3.0;
 				for (int j = 0; j < ntb; j++) {
 					uint64_t before = tb[j].ns;
-					for (int i = 0; i < nta; i++) {
-						if (ta[i].id == tb[j].id) {
-							before = ta[i].ns;
+					for (int i = 0; i < nta[k]; i++) {
+						if (ta[k][i].id == tb[j].id) {
+							before = ta[k][i].ns;
 						}
 					}
 					double p = 100.0 * (double)(tb[j].ns - before) / 3e9;
@@ -119,17 +132,15 @@ main(int argc, char **argv)
 				if (best < 0) {
 					break;
 				}
-				to += snprintf(tl + to, sizeof(tl) - (size_t)to, " %s %.0f%%;", tb[best].name, bp);
+				to += snprintf(tl + to, sizeof(tl) - (size_t)to, " %.28s %.0f%%;", tb[best].name, bp);
 				tb[best].name[0] = 0;            /* (picked) */
 			}
-			ntb = threads_of(bb, tb);        /* names again, and the times for the next window */
-			memcpy(ta, tb, sizeof(tb[0]) * (size_t)ntb);
-			nta = ntb;
-			if (strlen(thistory) + strlen(tl) + 4 < sizeof(thistory)) {
-				strcat(thistory, " | ");
-				strcat(thistory, tl);
+			nta[k] = threads_of(pid, ta[k]);  /* the times for the next window */
+			if (to > 12 && strlen(thistory[k]) + strlen(tl) + 4 < sizeof(thistory[k])) {
+				strcat(thistory[k], " | ");
+				strcat(thistory[k], tl);
 			}
-			printf("BBTHREADS%s\n", thistory);
+			printf("THR %s%s\n", tag[k], thistory[k]);
 		}
 		/* the top five of this window */
 		int top[5] = { -1, -1, -1, -1, -1 };
