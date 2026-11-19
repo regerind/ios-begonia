@@ -82,14 +82,14 @@
 +
 +/* before a draw: the display picture's texture, read while drawing elsewhere, swapped for the frame before's */
 +static unsigned
-+backdrop_swap_begin(struct eagl *e, GLuint was[4])
++backdrop_swap_begin(struct eagl *e, GLuint was[8])
 +{
 +	unsigned swapped = 0;
 +
 +	if (!backdrop_prev || !prev_valid) {
 +		return 0;
 +	}
-+	for (unsigned unit = 0; unit < 4; unit++) {
++	for (unsigned unit = 0; unit < 8; unit++) {
 +		struct image *image;
 +		GLuint texture = e->bound[unit];
 +
@@ -114,12 +114,12 @@
 +}
 +
 +static void
-+backdrop_swap_end(struct eagl *e, unsigned swapped, const GLuint was[4])
++backdrop_swap_end(struct eagl *e, unsigned swapped, const GLuint was[8])
 +{
 +	if (!swapped) {
 +		return;
 +	}
-+	for (unsigned unit = 0; unit < 4; unit++) {
++	for (unsigned unit = 0; unit < 8; unit++) {
 +		if (swapped & (1u << unit)) {
 +			glActiveTexture(GL_TEXTURE0 + unit);
 +			glBindTexture(GL_TEXTURE_2D, was[unit]);
@@ -135,7 +135,7 @@
  	if (trace_placing) {
  		trace_placed_draw(e, mode, 0, NULL, first, count);
  	}
-+	GLuint backdrop_was[4];
++	GLuint backdrop_was[8];
 +	unsigned backdrop_swapped = backdrop_swap_begin(e, backdrop_was);
 +
  	if (skipping != 0 && skip_draw(e)) {
@@ -153,7 +153,7 @@
  	if (trace_placing) {
  		trace_placed_draw(e, mode, type, indices, 0, count);
  	}
-+	GLuint backdrop_was[4];
++	GLuint backdrop_was[8];
 +	unsigned backdrop_swapped = backdrop_swap_begin(e, backdrop_was);
 +
  	if (skipping != 0 && skip_draw(e)) {
