@@ -1,0 +1,124 @@
+--- a/src/hakios-drm/hakios.drm.c
++++ b/src/hakios-drm/hakios.drm.c
+@@ -157,14 +157,61 @@
+ 	return true;
+ }
+ 
++/*
++ * begonia (x39): which job last named each buffer made here (DRM_PANFROST_CREATE_BO), and a job known
++ * to be done. The jobs end in the order they were given, so a buffer whose last job is not after that
++ * one is idle, and panfrost's look at it (WAIT_BO, 48 a frame from its buffer cache: x37, 6.9% of the
++ * drawing thread in them) need not go to the kernel. Buffers that are IOSurfaces are always asked
++ * about there: the kernel's answer also brings what the GPU wrote into the processor's view.
++ */
++#define BUFFERS_KNOWN 8192
++static uint64_t buffer_job[BUFFERS_KNOWN];      /* the last job that named it; 0: none yet */
++static uint8_t buffer_own[BUFFERS_KNOWN];       /* made here, not closed */
++static uint64_t job_done;                       /* a job known done, and so every one before it */
++static unsigned looks_here, looks_asked;
++
++static void
++job_is_done(uint64_t seq)
++{
++	uint64_t known = __atomic_load_n(&job_done, __ATOMIC_RELAXED);
++
++	while (seq > known && !__atomic_compare_exchange_n(&job_done, &known, seq, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
++	}
++}
++
++static void
++buffer_made(uint32_t handle)
++{
++	if (handle < BUFFERS_KNOWN) {
++		__atomic_store_n(&buffer_job[handle], 0, __ATOMIC_RELAXED);
++		__atomic_store_n(&buffer_own[handle], 1, __ATOMIC_RELAXED);
++	}
++}
++
++static void
++buffer_forget(uint32_t handle)
++{
++	if (handle < BUFFERS_KNOWN) {
++		__atomic_store_n(&buffer_own[handle], 0, __ATOMIC_RELAXED);
++		__atomic_store_n(&buffer_job[handle], 0, __ATOMIC_RELAXED);
++	}
++}
++
+ int
+ drmIoctl(int fd, unsigned long request, void *arg)
+ {
+- int handled=0;hakios_native_sync_set_wait(wait_job);
++ /* begonia (x39): once. It took the sync objects' lock at every request, against the fence
++  * worker (x37: 9% of the drawing thread's processor time in __psynch_mutexwait under here). */
++ static int wait_set;
++ int handled=0;if(!wait_set){hakios_native_sync_set_wait(wait_job);wait_set=1;}
+  int native=hakios_native_sync_ioctl(fd,request,arg,&handled);if(handled)return native;
+ 	unsigned number = (unsigned)(request & 0xff);
+ 	int error;
+ 
++	if (opened == PANFROST && number == 0x09 /* DRM_IOCTL_GEM_CLOSE */ && arg != NULL) {
++		buffer_forget(((struct drm_gem_close *)arg)->handle);
++	}
++
+ 	(void)fd;
+ 	if (opened == PANFROST && number == DRM_COMMAND_BASE + DRM_PANFROST_SUBMIT) {
+ 		error = submit(arg);
+@@ -175,6 +222,9 @@
+ 		error = 0;
+ 	} else {
+ 		error = call(number, arg, IOCPARM_LEN(request));
++		if (error == 0 && opened == PANFROST && number == DRM_COMMAND_BASE + DRM_PANFROST_CREATE_BO) {
++			buffer_made(((struct drm_panfrost_create_bo *)arg)->handle);
++		}
+ 	}
+ 	if (error != 0) {
+ 		errno = error;
+@@ -369,6 +419,7 @@
+ 		pthread_mutex_lock(&lock);
+ 		finished = seq > finished ? seq : finished;
+ 		pthread_mutex_unlock(&lock);
++		job_is_done(seq);
+ 	}
+ 	return error;
+ }
+@@ -392,6 +443,11 @@
+  wire.in_syncs=0;wire.in_sync_count=0;wire.out_sync=0;
+  error=call(DRM_COMMAND_BASE+DRM_PANFROST_SUBMIT,&wire,sizeof wire);
+  if(!error && !wire.jc)error=EIO;
++ if(!error && request->bo_handles){
++  const uint32_t *named=(const uint32_t *)(uintptr_t)request->bo_handles;
++  for(uint32_t i=0;i<request->bo_handle_count;i++)
++   if(named[i]<BUFFERS_KNOWN)__atomic_store_n(&buffer_job[named[i]],wire.jc,__ATOMIC_RELAXED);
++ }
+  hakios_native_sync_publish(cookie,error,error?0:wire.jc);return error;
+ }
+ 
+@@ -404,12 +460,28 @@
+ wait_buffer(struct drm_panfrost_wait_bo *request)
+ {
+ 	struct drm_panfrost_wait_bo asked = *request;
++	uint32_t handle = request->handle;
++	bool own = handle < BUFFERS_KNOWN && __atomic_load_n(&buffer_own[handle], __ATOMIC_RELAXED);
++	uint64_t last = own ? __atomic_load_n(&buffer_job[handle], __ATOMIC_RELAXED) : 0;
+ 	int error;
+ 
++	if (own && last <= __atomic_load_n(&job_done, __ATOMIC_RELAXED)) {
++		unsigned count = __atomic_add_fetch(&looks_here, 1, __ATOMIC_RELAXED);
++
++		if (count == 1 || (count & 0xffff) == 0) {
++			fprintf(stderr, "hakios-drm: buffer looks answered here %u, asked of the kernel %u\n", count,
++			    __atomic_load_n(&looks_asked, __ATOMIC_RELAXED));
++		}
++		return 0;
++	}
++	__atomic_add_fetch(&looks_asked, 1, __ATOMIC_RELAXED);
+ 	do {
+ 		asked.timeout_ns = left_ns(request->timeout_ns);
+ 		error = call(DRM_COMMAND_BASE + DRM_PANFROST_WAIT_BO, &asked, sizeof(asked));
+ 	} while (error == ETIMEDOUT && left_ns(request->timeout_ns) > 0);
++	if (error == 0 && own) {
++		job_is_done(last);              /* (the kernel waited for the buffer's last job, which is this or a later one) */
++	}
+ 	return error;
+ }
+ 
