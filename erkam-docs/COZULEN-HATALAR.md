@@ -23,4 +23,7 @@ Doğrulama türü: **kullanıcı** (sen elle denedin, çalıştı), **log** (log
 | Mor arka plan (tek el modu vb.) | y10 | Wallpaper anlık görüntüsü (.atx) mor açılıyordu; ekrandan alınan resimle değiştirildi (0030) | kullanıcı | Gerçek çözüm değil, geçici yama: .atx hâlâ çözülemiyor (açık hata 6) |
 | Fener | y8x | MT6360 flaş LED'i (I2C5), Denetim Merkezi'ne bağlı | kullanıcı | — |
 | Durum çubuğunda yanlış pil | 0040 | Pil yüzdesi yenileniyor | kullanıcı | — |
+| Video karelerinin her karede CPU'da kopyalanması (1080p: kare başına 3 MB) | y110 | Video düzlemleri GPU'ya ayrı dokular olarak veriliyor (Y → R8, CbCr → RG8; Mesa 0007, userland 0047) | ikisi: log (0 red, backboardd %85–93 → %20–50) ve ekran görüntüsü (y128: Resim içinde Resim videosu doğal renklerle) | Kullanıcı YouTube'da henüz bakmadı |
+| Programlara "AES/SHA donanımı yok" deniyordu (corecrypto, boringssl yazılımda) | y111 | Çekirdek CPU'nun ID_AA64ISAR0 yazmacını okuyor (0020) | log (y116: FEAT_AES 1, SHA256 1, PMULL 1) | Hız kazancı ayrıca ölçülmedi |
+| Köprü her karede kopyalanan yüzeylerin belleğini tarıyordu (~1 ms, 4–6 MB) | y111 | Seed değişmediyse 30 karede bir (0048) | log (kare başına GL 4,2 → 3,3 ms) | Seed'in kaçırdığı nadir bir değişiklik en fazla yarım saniye geç görünür |
 | Takılmalar (GPU bekleme) | y79 | GPU işini beklerken önce 10 kısa kontrol, sonra 50 µs uykular | kullanıcı ("really smooth") | Kalan takılmalar başka kaynaklı |
