@@ -1,0 +1,38 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2558,6 +2558,25 @@
+ 	    shared == NULL ? "lock state unknown" : SEND(BOOL, shared, "isUILocked") ? "locked" : "unlocked");
+ }
+ 
++/*
++ * begonia: com.hakios.open.url opens https://example.com (Safari, by LSApplicationWorkspace) for sessions nobody is at:
++ * a real page over the Wi-Fi the phone joined, to see whether WebKit draws it.
++ */
++static void
++open_url(const char *text)
++{
++	id workspace = SEND(id, objc_getClass("LSApplicationWorkspace"), "defaultWorkspace");
++	id string = SEND1(id, objc_getClass("NSString"), "stringWithUTF8String:", const char *, text);
++	id url = SEND1(id, objc_getClass("NSURL"), "URLWithString:", id, string);
++	SEL open = sel_registerName("openURL:");
++
++	if (workspace == NULL || url == NULL || !class_respondsToSelector(object_getClass(workspace), open)) {
++		say("hakios: open: %s: no LSApplicationWorkspace openURL: here\n", text);
++		return;
++	}
++	say("hakios: open: %s: %d\n", text, ((BOOL (*)(id, SEL, id))objc_msgSend)(workspace, open, url));
++}
++
+ __attribute__((constructor))
+ static void
+ hakios_springboard_init(void)
+@@ -2735,6 +2754,9 @@
+ 	notify_register_dispatch("com.hakios.open.settings", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		open_application("com.apple.Preferences");
+ 	});
++	notify_register_dispatch("com.hakios.open.url", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_url("https://example.com/");
++	});
+ 	/* begonia: a shot of the panel into the log now (kernel patch 0015), when a session's script says so */
+ 	notify_register_dispatch("com.hakios.shot", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		uint32_t one = 1;
