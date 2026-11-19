@@ -11,11 +11,25 @@ struct NmbBinding {
     uint64_t buffer_alignment, buffer_data_size;
     uint32_t buffer_data_type, texture_type, texture_data_type, array_length;
     uint64_t threadgroup_alignment, threadgroup_size;
+    uint32_t struct_first, struct_count; /* the buffer's struct: a run of NmbStructMember (UINT32_MAX: none) */
+};
+/* A struct is a run of members; a member that is a struct, or an array of structs, names its run (child_*). */
+struct NmbStructMember {
+    char name[64];
+    uint64_t offset;
+    uint32_t data_type, argument_index;
+    uint32_t child_first, child_count;
+    uint32_t flags; /* 1 a struct, 2 an array */
+    uint32_t array_length;
+    uint64_t array_stride;
+    uint32_t array_element_type, array_argument_index_stride;
 };
 /* Stages in order: vertex, fragment, tile, object, mesh (counts[5]); the compute one has one stage (counts[1]).
- * Answers the number of bindings in all (only capacity are written) or -1 (nmb_last_error). */
-int64_t nmb_render_pipeline_reflection(const struct NmbRenderPipelineDescriptor *, struct NmbBinding *, uint64_t capacity, uint64_t *counts);
-int64_t nmb_compute_pipeline_reflection(const struct NmbComputePipelineDescriptor *, struct NmbBinding *, uint64_t capacity, uint64_t *counts);
+ * Answers the number of bindings in all (only capacity are written; member_count says how many members) or -1. */
+int64_t nmb_render_pipeline_reflection2(const struct NmbRenderPipelineDescriptor *, struct NmbBinding *, uint64_t capacity,
+                                        uint64_t *counts, struct NmbStructMember *, uint64_t member_capacity, uint64_t *member_count);
+int64_t nmb_compute_pipeline_reflection2(const struct NmbComputePipelineDescriptor *, struct NmbBinding *, uint64_t capacity,
+                                         uint64_t *counts, struct NmbStructMember *, uint64_t member_capacity, uint64_t *member_count);
 #ifdef __cplusplus
 }
 #endif

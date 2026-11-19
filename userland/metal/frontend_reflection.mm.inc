@@ -9,8 +9,85 @@
 // (nmb_render_pipeline_reflection, userland/metal/bridge/begonia_reflection.rs), read off the functions' AIR.
 // Boot-arg metal_reflection=0: nil again, as before.
 
+// A buffer's struct layout (MTLStructType, MTLStructMember, MTLArrayType): an engine that fills its uniforms member by
+// member reads it -- SceneKit bound nothing for its per-node transforms while bufferStructType was nil (y39).
+@interface NBStructType : MTLStructType {
+ @public
+ NSArray *_bgMembers;
+}
+@end
+@implementation NBStructType
+- (NSArray *)members {return _bgMembers ?: @[];}
+- (MTLStructMember *)memberByName:(NSString *)name {
+ for (MTLStructMember *m in _bgMembers) if ([m.name isEqualToString:name]) return m;
+ return nil;
+}
+- (MTLDataType)dataType {return MTLDataTypeStruct;}
+@end
+@interface NBArrayType : MTLArrayType {
+ @public
+ NSUInteger _bgElementType, _bgLength, _bgStride, _bgIndexStride;
+ NBStructType *_bgElementStruct;
+}
+@end
+@implementation NBArrayType
+- (MTLDataType)elementType {return (MTLDataType)_bgElementType;}
+- (NSUInteger)arrayLength {return _bgLength;}
+- (NSUInteger)stride {return _bgStride;}
+- (NSUInteger)argumentIndexStride {return _bgIndexStride;}
+- (MTLStructType *)elementStructType {return _bgElementStruct;}
+- (MTLArrayType *)elementArrayType {return nil;}
+- (MTLTextureReferenceType *)elementTextureReferenceType {return nil;}
+- (MTLPointerType *)elementPointerType {return nil;}
+- (MTLDataType)dataType {return MTLDataTypeArray;}
+@end
+@interface NBStructMember : MTLStructMember {
+ @public
+ NSString *_bgName;
+ NSUInteger _bgOffset, _bgDataType, _bgArgumentIndex;
+ NBStructType *_bgStruct;
+ NBArrayType *_bgArray;
+}
+@end
+@implementation NBStructMember
+- (NSString *)name {return _bgName;}
+- (NSUInteger)offset {return _bgOffset;}
+- (MTLDataType)dataType {return (MTLDataType)_bgDataType;}
+- (NSUInteger)argumentIndex {return _bgArgumentIndex;}
+- (MTLStructType *)structType {return _bgStruct;}
+- (MTLArrayType *)arrayType {return _bgArray;}
+- (MTLTextureReferenceType *)textureReferenceType {return nil;}
+- (MTLPointerType *)pointerType {return nil;}
+@end
+
+static NBStructType *nbStruct(const NmbStructMember *members, uint64_t total, uint32_t first, uint32_t count, int depth) {
+ if (first == UINT32_MAX || (uint64_t)first + count > total || depth > 8) return nil;
+ NBStructType *st = [[NBStructType alloc] init];
+ NSMutableArray *list = [NSMutableArray arrayWithCapacity:count];
+ for (uint32_t i = 0; i < count; i++) {
+  const NmbStructMember *m = members + first + i;
+  NBStructMember *o = [[NBStructMember alloc] init];
+  char name[65]; memcpy(name, m->name, 64); name[64] = 0;
+  o->_bgName = [NSString stringWithUTF8String:name] ?: @"";
+  o->_bgOffset = (NSUInteger)m->offset; o->_bgDataType = m->data_type; o->_bgArgumentIndex = m->argument_index;
+  NBStructType *child = m->child_count ? nbStruct(members, total, m->child_first, m->child_count, depth + 1) : nil;
+  if (m->flags & 2) {
+   NBArrayType *a = [[NBArrayType alloc] init];
+   a->_bgElementType = m->array_element_type; a->_bgLength = m->array_length; a->_bgStride = (NSUInteger)m->array_stride;
+   a->_bgIndexStride = m->array_argument_index_stride; a->_bgElementStruct = child;
+   o->_bgArray = a;
+  } else if (m->flags & 1) {
+   o->_bgStruct = child;
+  }
+  [list addObject:o];
+ }
+ st->_bgMembers = list;
+ return st;
+}
+
 @interface NBArgument : MTLArgument <MTLBinding> {
  @public
+ NBStructType *_bgStructType;
  NSString *_bgName;
  NSUInteger _bgType, _bgAccess, _bgIndex, _bgFlags, _bgBufferAlignment, _bgBufferSize, _bgBufferDataType;
  NSUInteger _bgTextureType, _bgTextureDataType, _bgArrayLength, _bgThreadgroupAlignment, _bgThreadgroupSize;
@@ -30,7 +107,7 @@
 - (NSUInteger)bufferAlignment {return _bgBufferAlignment;}
 - (NSUInteger)bufferDataSize {return _bgBufferSize;}
 - (MTLDataType)bufferDataType {return (MTLDataType)_bgBufferDataType;}
-- (MTLStructType *)bufferStructType {return nil;}
+- (MTLStructType *)bufferStructType {return _bgStructType;}
 - (MTLPointerType *)bufferPointerType {return nil;}
 - (NSUInteger)threadgroupMemoryAlignment {return _bgThreadgroupAlignment;}
 - (NSUInteger)threadgroupMemoryDataSize {return _bgThreadgroupSize;}
@@ -40,8 +117,11 @@
 - (BOOL)depthTexture {return (_bgFlags & 32) != 0;}
 - (NSUInteger)arrayLength {return _bgArrayLength;}
 - (NSString *)description {
- return [NSString stringWithFormat:@"%@ type %lu index %lu%s size %lu data type %lu", _bgName, (unsigned long)_bgType,
-         (unsigned long)_bgIndex, (_bgFlags & 1) ? "" : " (unused)", (unsigned long)_bgBufferSize, (unsigned long)_bgBufferDataType];
+ return [NSString stringWithFormat:@"%@ type %lu index %lu%s size %lu data type %lu%@", _bgName, (unsigned long)_bgType,
+         (unsigned long)_bgIndex, (_bgFlags & 1) ? "" : " (unused)", (unsigned long)_bgBufferSize, (unsigned long)_bgBufferDataType,
+         _bgStructType ? [NSString stringWithFormat:@" {%lu members: %@}", (unsigned long)_bgStructType.members.count,
+                          [[[_bgStructType.members valueForKey:@"name"] subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)4,
+                           _bgStructType.members.count))] componentsJoinedByString:@" "]] : @""];
 }
 @end
 @interface NBBufferArgument : NBArgument <MTLBufferBinding>
@@ -101,7 +181,7 @@ static bool nbReflectionWanted() {
  return wanted != 0;
 }
 
-static NSArray *nbArguments(const NmbBinding *b, uint64_t n) {
+static NSArray *nbArguments(const NmbBinding *b, uint64_t n, const std::vector<NmbStructMember> &members) {
  NSMutableArray *out = [NSMutableArray arrayWithCapacity:(NSUInteger)n];
  for (uint64_t i = 0; i < n; i++) {
   Class cls = (b[i].flags & 4) ? [NBBufferArgument class] : (b[i].flags & 8) ? [NBTextureArgument class] :
@@ -114,20 +194,25 @@ static NSArray *nbArguments(const NmbBinding *b, uint64_t n) {
   a->_bgBufferDataType = b[i].buffer_data_type; a->_bgTextureType = b[i].texture_type;
   a->_bgTextureDataType = b[i].texture_data_type; a->_bgArrayLength = b[i].array_length;
   a->_bgThreadgroupAlignment = (NSUInteger)b[i].threadgroup_alignment; a->_bgThreadgroupSize = (NSUInteger)b[i].threadgroup_size;
+  a->_bgStructType = nbStruct(members.data(), members.size(), b[i].struct_first, b[i].struct_count, 0);
   [out addObject:a];
  }
  return out;
 }
 
 // The bindings of every stage, one after the other, and how many each stage has; false: the runtime gave none.
-static bool nbReflect(bool render, const void *descriptor, uint64_t *counts, std::vector<NmbBinding> &all) {
- all.resize(64);
+static bool nbReflect(bool render, const void *descriptor, uint64_t *counts, std::vector<NmbBinding> &all,
+                      std::vector<NmbStructMember> &members) {
+ all.resize(64); members.resize(256);
  for (int attempt = 0; attempt < 3; attempt++) {
-  int64_t n = render ? nmb_render_pipeline_reflection((const NmbRenderPipelineDescriptor *)descriptor, all.data(), all.size(), counts)
-                     : nmb_compute_pipeline_reflection((const NmbComputePipelineDescriptor *)descriptor, all.data(), all.size(), counts);
+  uint64_t memberCount = 0;
+  int64_t n = render ? nmb_render_pipeline_reflection2((const NmbRenderPipelineDescriptor *)descriptor, all.data(), all.size(), counts,
+                                                       members.data(), members.size(), &memberCount)
+                     : nmb_compute_pipeline_reflection2((const NmbComputePipelineDescriptor *)descriptor, all.data(), all.size(), counts,
+                                                        members.data(), members.size(), &memberCount);
   if (n < 0) return false;
-  bool fits = (uint64_t)n <= all.size();
-  all.resize((size_t)n);
+  bool fits = (uint64_t)n <= all.size() && memberCount <= members.size();
+  all.resize((size_t)n); members.resize((size_t)memberCount);
   if (fits) return true;
  }
  return false;
@@ -145,13 +230,13 @@ static void nbSayReflection(NSString *label, const char *stage, NSArray *argumen
 static MTLRenderPipelineReflection *renderReflection(const NmbRenderPipelineDescriptor *p, NSString *label) {
  if (!nbReflectionWanted()) return nil;
  NBRenderReflection *r = [[NBRenderReflection alloc] init];
- std::vector<NmbBinding> all; uint64_t counts[5] = {0, 0, 0, 0, 0};
- if (!nbReflect(true, p, counts, all)) {
+ std::vector<NmbBinding> all; std::vector<NmbStructMember> members; uint64_t counts[5] = {0, 0, 0, 0, 0};
+ if (!nbReflect(true, p, counts, all, members)) {
   nbConsole([NSString stringWithFormat:@"reflection of '%@' not known: %s; an empty one given", label ?: @"-", nmb_last_error()]);
   return r;
  }
  uint64_t at = 0; NSArray *stages[5];
- for (int s = 0; s < 5; s++) {stages[s] = nbArguments(all.data() + at, counts[s]); at += counts[s];}
+ for (int s = 0; s < 5; s++) {stages[s] = nbArguments(all.data() + at, counts[s], members); at += counts[s];}
  r->_bgVertex = stages[0]; r->_bgFragment = stages[1]; r->_bgTile = stages[2]; r->_bgObject = stages[3]; r->_bgMesh = stages[4];
  nbSayReflection(label, "vertex", stages[0]);
  nbSayReflection(label, "fragment", stages[1]);
@@ -296,12 +381,12 @@ __attribute__((constructor)) static void nbTraceCalls() {
 static MTLComputePipelineReflection *computeReflection(const NmbComputePipelineDescriptor *p, NSString *label) {
  if (!nbReflectionWanted()) return nil;
  NBComputeReflection *r = [[NBComputeReflection alloc] init];
- std::vector<NmbBinding> all; uint64_t counts[1] = {0};
- if (!nbReflect(false, p, counts, all)) {
+ std::vector<NmbBinding> all; std::vector<NmbStructMember> members; uint64_t counts[1] = {0};
+ if (!nbReflect(false, p, counts, all, members)) {
   nbConsole([NSString stringWithFormat:@"reflection of kernel '%@' not known: %s; an empty one given", label ?: @"-", nmb_last_error()]);
   return r;
  }
- r->_bgBindings = nbArguments(all.data(), counts[0]);
+ r->_bgBindings = nbArguments(all.data(), counts[0], members);
  nbSayReflection(label, "kernel", r->_bgBindings);
  return r;
 }
