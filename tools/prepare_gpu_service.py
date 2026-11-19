@@ -41,6 +41,52 @@ change('\thakios_mali_unmap(b->address, b->size);','''\tif (!hakios_mali_ready()
         return;
     }
 \thakios_mali_unmap(b->address, b->size);''')
+# x35: the cache profile (boot-arg mcp=1) goes to the console, where the test sessions' log is read from
+# (loader_log_line's log is not), with what each request costs: count and time by selector.
+if text.count('loader_log_line(line);')!=3:raise SystemExit('Reference context changed: loader_log_line')
+text=text.replace('loader_log_line(line);','IOLog("%s", line);')
+change('extern "C" void\nHakiosMaliCacheSecond(void)\n{\n\tif (!gMaliCacheProfile) return;',r'''/* x35 (begonia): what each request costs -- count and time by selector, said with the cache profile */
+static uint64_t gMaliCallCount[128], gMaliCallTime[128], gMaliCallCountWas[128], gMaliCallTimeWas[128];
+struct MaliCallTimer {
+    uint32_t selector;
+    uint64_t began;
+    MaliCallTimer(uint32_t s) : selector(s & 127), began(mach_absolute_time()) {}
+    ~MaliCallTimer() {
+        __atomic_fetch_add(&gMaliCallTime[selector], mach_absolute_time() - began, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&gMaliCallCount[selector], 1, __ATOMIC_RELAXED);
+    }
+};
+static void
+maliCallsSaid(void)
+{
+    static const struct { uint32_t selector; const char * name; } calls[] = {
+        { 0x40, "submit" }, { 0x41, "wait-bo" }, { 0x42, "create" }, { 0x43, "mmap" }, { 0x45, "offset" },
+        { 0x09, "close" }, { 0x7e, "surface" }, { 0x7c, "surface-seq" }, { 0x7d, "wait-seq" },
+    };
+    char line[400];
+    size_t used = 0;
+
+    line[0] = 0;
+    for (unsigned i = 0; i < sizeof(calls) / sizeof(calls[0]) && used < sizeof(line) - 1; i++) {
+        uint32_t s = calls[i].selector;
+        uint64_t count = __atomic_load_n(&gMaliCallCount[s], __ATOMIC_RELAXED);
+        uint64_t time = __atomic_load_n(&gMaliCallTime[s], __ATOMIC_RELAXED), ns;
+
+        absolutetime_to_nanoseconds(time - gMaliCallTimeWas[s], &ns);
+        used += snprintf(line + used, sizeof(line) - used, " %s %llu/%llu", calls[i].name, count - gMaliCallCountWas[s],
+            ns / 1000);
+        gMaliCallCountWas[s] = count;
+        gMaliCallTimeWas[s] = time;
+    }
+    IOLog("mali-calls (count/us in all):%s\n", line);
+}
+extern "C" void
+HakiosMaliCacheSecond(void)
+{
+	if (!gMaliCacheProfile) return;
+	maliCallsSaid();''')
+change('\tIOReturn ret = kIOReturnSuccess;\n\n\tif (args->structureInput == NULL || size > sizeof(r) || fBuffers == NULL) {',
+       '\tIOReturn ret = kIOReturnSuccess;\n\tMaliCallTimer timed(selector);\n\n\tif (args->structureInput == NULL || size > sizeof(r) || fBuffers == NULL) {')
 (tree/'iokit/Kernel/begonia.mali.cpp').write_text(text)
 for name in ['hakios.mali_va.h','hakios.mali_cpu_cache.h']:
     shutil.copyfile(source/name,tree/'bsd/dev'/name)
