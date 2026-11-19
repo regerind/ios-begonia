@@ -18,7 +18,7 @@ for patch in sorted((root/'patches').glob('*.patch')):
     else:
         raise SystemExit(f'Patch does not apply: {patch.name}\n{res.stderr.decode(errors="replace")}')
 # Keep the imported driver's canonical copy in sync; upstream build may recopy it.
-for name in ['0008-framebuffer-release-text-console.patch','0011-begonia-low-secondary-trampoline.patch','0013-framebuffer-scan-line-counter.patch','0014-surface-rows-for-the-gpu.patch','0015-framebuffer-shot.patch','0016-usertrap-kept-with-the-notes.patch','0017-vsync-on-the-panels-scan.patch','0018-metal-plug-in-by-path.patch']:
+for name in ['0008-framebuffer-release-text-console.patch','0011-begonia-low-secondary-trampoline.patch','0013-framebuffer-scan-line-counter.patch','0014-surface-rows-for-the-gpu.patch','0015-framebuffer-shot.patch','0016-usertrap-kept-with-the-notes.patch','0017-vsync-on-the-panels-scan.patch','0018-metal-plug-in-by-path.patch','0019-framebuffer-power-and-brightness.patch']:
     patch=root/'patches'/name
     cmd=['git','-C',str(repo),'apply','--directory=xnu/files']
     if subprocess.run([*cmd,'--reverse','--check',str(patch)],capture_output=True).returncode!=0:
@@ -34,7 +34,7 @@ driver_files = [
     'begonia_wpa.h','begonia_wpa.c',
     'begonia_wifi_fw.h','begonia_wifi_fw.c',
     'begonia_bt.h','begonia_bt.c',
-    'begonia_buttons.c'
+    'begonia_buttons.c', 'begonia_backlight.c'
 ]
 for name in driver_files:
     shutil.copyfile(root/'kernel/bsd/dev'/name,tree/'bsd/dev'/name)
@@ -53,7 +53,8 @@ for entry in [
     'bsd/dev/begonia_wpa.c standard',
     'bsd/dev/begonia_wifi_fw.c standard',
     'bsd/dev/begonia_bt.c standard',
-    'bsd/dev/begonia_buttons.c standard'
+    'bsd/dev/begonia_buttons.c standard',
+    'bsd/dev/begonia_backlight.c standard'
 ]:
     if entry not in bsd_files:
         bsd_files += '\n' + entry + '\n'
@@ -81,6 +82,8 @@ hakios_input_init(void)
 \tbegonia_touch_init();
 \textern void begonia_buttons_init(void);
 \tbegonia_buttons_init();
+\textern void begonia_backlight_init(void);
+\tbegonia_backlight_init();
 \textern void begonia_wlan_init(void);
 \textern void BegoniaWLANStart(void);
 \tbegonia_wlan_init();

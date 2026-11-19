@@ -1,0 +1,86 @@
+--- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
++++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+@@ -432,6 +432,11 @@
+ 
+ struct RowJob;
+ 
++/* begonia: the LCD backlight, the display PWM (bsd/dev/begonia_backlight.c) */
++extern "C" void begonia_backlight_set(uint32_t level);
++extern "C" void begonia_backlight_power(bool on);
++extern "C" uint32_t begonia_backlight_get(void);
++
+ class IOMobileFramebuffer : public IOService
+ {
+ 	OSDeclareDefaultStructors(IOMobileFramebuffer);
+@@ -517,6 +522,7 @@
+ 	uint32_t        fRecCosted;             /* ... of how many frames: a line every 120 */
+ 
+ 	virtual bool start(IOService * provider) APPLE_KEXT_OVERRIDE;
++	virtual IOReturn setProperties(OSObject * properties) APPLE_KEXT_OVERRIDE;
+ 	void publishModes(void);
+ 	void publishRefresh(void);
+ 	MiniIOSurface * defaultSurface(void);
+@@ -2056,10 +2062,24 @@
+ 			    args->scalarInputCount > 1 ? in[1] : 0, args->scalarInputCount > 2 ? in[2] : 0, micros(mach_absolute_time()));
+ 		}
+ 		return kIOReturnSuccess;
++	case kFBMethodRequestPowerChange: {        /* begonia: in[0] the power state asked for (the phone locked: off) */
++		static unsigned said;
++		uint32_t follow = 0;
++
++		if (said++ < 24) {
++			IOLog("MiniIOMobileFramebuffer: power change asked by pid %d: %u scalars [%#llx %#llx %#llx]\n", proc_selfpid(),
++			    args->scalarInputCount, args->scalarInputCount > 0 ? in[0] : 0, args->scalarInputCount > 1 ? in[1] : 0,
++			    args->scalarInputCount > 2 ? in[2] : 0);
++		}
++		/* boot-arg bl_power=1: the backlight follows it (off for 0) */
++		if (args->scalarInputCount > 0 && PE_parse_boot_argn("bl_power", &follow, sizeof(follow)) && follow) {
++			begonia_backlight_power(in[0] != 0);
++		}
++		return kIOReturnSuccess;
++	}
+ 	case kFBMethodSwapSignal:
+ 	case kFBMethodSwapCancel:
+ 	case kFBMethodSwapCancelAll:
+-	case kFBMethodRequestPowerChange:
+ 	case kFBMethodChangeFrameInfo:
+ 		return kIOReturnSuccess;
+ 
+@@ -2175,6 +2195,37 @@
+  * accelerator without the properties that name its Metal and OpenGL ES drivers is passed
+  * over by both, which leaves CoreAnimation with its software renderer, as before.
+  */
++/*
++ * begonia: what iOS sets on the framebuffer -- on an OLED iPhone the brightness goes there (DisplayBrightnessFactor,
++ * IOMFBBrightnessLevel, ...). Said (the first 80), so the backlight can be made to follow the right one.
++ */
++IOReturn
++IOMobileFramebuffer::setProperties(OSObject * properties)
++{
++	OSDictionary * dictionary = OSDynamicCast(OSDictionary, properties);
++	OSCollectionIterator * keys;
++	OSSymbol * key;
++	static unsigned said;
++
++	if (dictionary == NULL || (keys = OSCollectionIterator::withCollection(dictionary)) == NULL) {
++		return kIOReturnBadArgument;
++	}
++	while ((key = OSDynamicCast(OSSymbol, keys->getNextObject())) != NULL) {
++		OSObject * value = dictionary->getObject(key);
++		OSNumber * number = OSDynamicCast(OSNumber, value);
++		OSBoolean * truth = OSDynamicCast(OSBoolean, value);
++
++		if (said++ < 80) {
++			IOLog("MiniIOMobileFramebuffer: property %s set by pid %d: %s %llu\n", key->getCStringNoCopy(), proc_selfpid(),
++			    number ? "number" : truth ? "boolean" : OSDynamicCast(OSData, value) ? "data of length" : "other",
++			    number ? number->unsigned64BitValue() : truth ? truth->isTrue() :
++			    OSDynamicCast(OSData, value) ? ((OSData *) value)->getLength() : 0);
++		}
++	}
++	keys->release();
++	return kIOReturnSuccess;
++}
++
+ class IOAcceleratorES : public IOService
+ {
+ 	OSDeclareDefaultStructors(IOAcceleratorES);
