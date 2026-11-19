@@ -26,7 +26,7 @@
  __attribute__((constructor))
  static void
  hakios_springboard_init(void)
-@@ -2735,6 +2754,12 @@
+@@ -2735,6 +2754,25 @@
  	notify_register_dispatch("com.hakios.open.settings", &token, dispatch_get_main_queue(), ^(__unused int t) {
  		open_application("com.apple.Preferences");
  	});
@@ -35,6 +35,19 @@
 +	});
 +	notify_register_dispatch("com.hakios.open.google", &token, dispatch_get_main_queue(), ^(__unused int t) {
 +		open_url("https://www.google.com/");
++	});
++	/* one kind of image each: a PNG alone, an SVG alone, a page of JPEGs + SVG icons, a JPEG alone */
++	notify_register_dispatch("com.hakios.open.url1", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_url("https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png");
++	});
++	notify_register_dispatch("com.hakios.open.url2", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_url("https://upload.wikimedia.org/wikipedia/commons/2/2f/Google_2015_logo.svg");
++	});
++	notify_register_dispatch("com.hakios.open.url3", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_url("https://en.m.wikipedia.org/wiki/Cat");
++	});
++	notify_register_dispatch("com.hakios.open.url4", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_url("https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/640px-Cat03.jpg");
 +	});
  	/* begonia: a shot of the panel into the log now (kernel patch 0015), when a session's script says so */
  	notify_register_dispatch("com.hakios.shot", &token, dispatch_get_main_queue(), ^(__unused int t) {
