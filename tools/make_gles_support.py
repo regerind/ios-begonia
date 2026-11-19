@@ -21,7 +21,8 @@ if a.metal_client:
  # (stripped, and the runtime built for size if there is such a build: the boot partition's 64 MB hold this image, the
  # kernel and the fallback's ramdisk, and y21 did not fit)
  small=root/'out/metal2vulkan-target-ios-small/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib'
- runtime=small if small.exists() else root/'out/metal2vulkan-target-ios/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib'
+ full=root/'out/metal2vulkan-target-ios/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib'
+ runtime=max((f for f in (small,full) if f.exists()),key=lambda f:f.stat().st_mtime)  # the one built last
  for source,name in ((root/'out/panvk-ios/libvulkan_panfrost.dylib','libvulkan_panfrost.dylib'),(runtime,'libmetal2vulkan.dylib')):
   subprocess.run(['llvm-strip','-S','-x','-o',str(dest/'lib'/name),str(source)],check=True)
  clients=''.join(n+'\n' for n in dict.fromkeys(['metal_frontend_test','metal_test',*a.metal_client]))

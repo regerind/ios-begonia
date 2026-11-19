@@ -519,7 +519,10 @@ with (out/'build.log').open('w') as log:
   subprocess.run([*cmd,'-c',str(f),'-o',str(obj)],stdout=log,stderr=subprocess.STDOUT,check=True)
  binary=out/'HakiosMetal'
  subprocess.run([*([str(a.cc)+'++'] if a.cc else ['xcrun','clang++']),*common,'-bundle','-o',str(binary),*map(str,objects),
-  str(root/'out/metal2vulkan-target-ios/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib'),
+  # (the runtime built last: the full build or the size one, tools/build_metal2vulkan_linux.sh)
+  str(max((f for f in (root/'out/metal2vulkan-target-ios/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib',
+                       root/'out/metal2vulkan-target-ios-small/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib') if f.exists()),
+          key=lambda f:f.stat().st_mtime)),
   '-Wl,-rpath,/redwood/lib','-Wl,-rpath,@loader_path/..',
   '-framework','Foundation','-framework','Metal','-framework','IOSurface','-framework','IOKit','-framework','CoreFoundation','-lobjc'],stdout=log,stderr=subprocess.STDOUT,check=True)
 if not a.cc:
