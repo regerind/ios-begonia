@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+kern_return_t task_read_for_pid(mach_port_name_t target_tport, int pid, mach_port_name_t *t);
 kern_return_t mach_vm_read_overwrite(vm_map_t, mach_vm_address_t, mach_vm_size_t, mach_vm_address_t, mach_vm_size_t *);
 
 /*
@@ -172,7 +173,7 @@ sampler(void *unused)
 					tasks[p] = 0;
 					pids[p] = found;
 					dbg_pid[p] = found;
-					dbg_tfp[p] = found ? task_for_pid(mach_task_self(), found, &tasks[p]) : 98;
+					dbg_tfp[p] = found ? task_read_for_pid(mach_task_self(), found, &tasks[p]) : 98;   /* y105: task_for_pid gave a port task_threads refused (0x10000003: a platform binary's control port); a read port does */
 					if (found && dbg_tfp[p] != KERN_SUCCESS) {
 						static int said;
 						if (said++ < 4) {
