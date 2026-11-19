@@ -33,7 +33,7 @@ static void check(const uint8_t *px, int x, int y, int r, int g, int b, const ch
 int main(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     setenv("PAN_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 1);
-    alarm(90);
+    alarm(170);
     puts("BEGONIA SPRITEKIT: begin");
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -117,6 +117,35 @@ int main(void) {
         check(px, 208, 208, 255, 0, 255, "circle shape");
         check(px, 128, 128, 128, 128, 255, "half-transparent sprite");
         printf("BEGONIA SPRITEKIT: %s %u/%u\n", passed == checks ? "PASS" : "FAIL", passed, checks);
+
+        /* the speed of a game-like frame: 400 textured sprites, moving, 60 frames, each waited for */
+        SKScene *busy = [SKScene sceneWithSize:CGSizeMake(W, H)];
+        for (int i = 0; i < 400; i++) {
+            SKSpriteNode *s = [SKSpriteNode spriteNodeWithTexture:texture size:CGSizeMake(16, 16)];
+            s.position = CGPointMake((i * 37) % W, (i * 53) % H);
+            s.zRotation = i * 0.1;
+            [s runAction:[SKAction repeatActionForever:[SKAction rotateByAngle:M_PI duration:1]]];
+            [busy addChild:s];
+        }
+        renderer.scene = busy;
+        uint64_t began = clock_gettime_nsec_np(CLOCK_UPTIME_RAW), slowest = 0;
+        for (int frame = 0; frame < 60; frame++) {
+            uint64_t t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+            [renderer updateAtTime:1 + frame / 60.0];
+            MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+            pass.colorAttachments[0].texture = target;
+            pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            id<MTLCommandBuffer> commands = [queue commandBuffer];
+            [renderer renderWithViewport:CGRectMake(0, 0, W, H) commandBuffer:commands renderPassDescriptor:pass];
+            [commands commit];
+            [commands waitUntilCompleted];
+            uint64_t t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0;
+            if (t > slowest) slowest = t;
+        }
+        uint64_t all = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - began;
+        printf("BEGONIA SPRITEKIT: speed: 400 sprites, 60 frames in %llu ms: %.1f ms a frame, the slowest %.1f ms\n",
+               all / 1000000ull, all / 60.0 / 1e6, slowest / 1e6);
     }
     return passed == checks ? 0 : 2;
 }

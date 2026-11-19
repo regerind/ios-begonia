@@ -32,7 +32,7 @@ static bool lit_red(int r, int g, int b) {return r > 60 && r > 2 * g && r > 2 * 
 int main(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     setenv("PAN_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 1);
-    alarm(90);
+    alarm(170);
     puts("BEGONIA SCENEKIT: begin");
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -114,6 +114,31 @@ int main(void) {
         passed += red > 4000 && red < 40000;
         printf("BEGONIA SCENEKIT: the box covers %u pixels (want 4000 to 40000) %s\n", red, red > 4000 && red < 40000 ? "ok" : "WRONG");
         printf("BEGONIA SCENEKIT: %s %u/%u\n", passed == checks ? "PASS" : "FAIL", passed, checks);
+
+        /* the speed of a 3D frame: the box turning, 60 frames, each waited for */
+        [boxNode runAction:[SCNAction repeatActionForever:[SCNAction rotateByX:0 y:M_PI z:0 duration:1]]];
+        uint64_t began = clock_gettime_nsec_np(CLOCK_UPTIME_RAW), slowest = 0;
+        for (int frame = 0; frame < 60; frame++) {
+            uint64_t t0 = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+            MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+            pass.colorAttachments[0].texture = colour;
+            pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+            pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 1, 1);
+            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            pass.depthAttachment.texture = depth;
+            pass.depthAttachment.loadAction = MTLLoadActionClear;
+            pass.depthAttachment.clearDepth = renderer.usesReverseZ ? 0 : 1;
+            pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+            id<MTLCommandBuffer> commands = [queue commandBuffer];
+            [renderer renderAtTime:1 + frame / 60.0 viewport:CGRectMake(0, 0, W, H) commandBuffer:commands passDescriptor:pass];
+            [commands commit];
+            [commands waitUntilCompleted];
+            uint64_t t = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0;
+            if (t > slowest) slowest = t;
+        }
+        uint64_t all = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - began;
+        printf("BEGONIA SCENEKIT: speed: a lit box, 60 frames in %llu ms: %.1f ms a frame, the slowest %.1f ms\n",
+               all / 1000000ull, all / 60.0 / 1e6, slowest / 1e6);
     }
     return passed == checks ? 0 : 2;
 }
