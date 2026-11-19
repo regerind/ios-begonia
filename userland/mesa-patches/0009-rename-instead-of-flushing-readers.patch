@@ -1,0 +1,87 @@
+--- a/src/gallium/drivers/panfrost/pan_resource.c
++++ b/src/gallium/drivers/panfrost/pan_resource.c
+@@ -613,6 +613,35 @@
+    return 0;
+ }
+ 
++/*
++ * begonia (y135): a texture about to be rendered into while batches that are not sent yet read it gets new memory
++ * instead of those batches being sent first (pan_job.c, PAN_RENAME=1). CoreAnimation renders every backdrop's blur
++ * in the same few scratch textures; the display's picture reads the last blur and then the next blur writes the
++ * texture again, and the picture's batch was sent and later loaded again in full -- ~6.6 times a frame with YouTube
++ * (y134). The readers keep the old memory (their batches hold it); the new memory's content is undefined but for AFBC's
++ * headers, as when a texture is made: right where the writer clears what it uses first, as CoreAnimation does.
++ */
++int
++panfrost_resource_rename_bo(struct panfrost_context *ctx, struct panfrost_resource *rsrc)
++{
++   struct panfrost_device *dev = pan_device(ctx->base.screen);
++   struct panfrost_bo *bo = rsrc->bo;
++   struct panfrost_bo *newbo;
++
++   if (!bo || (bo->flags & PAN_BO_SHARED))
++      return -1;
++   newbo = panfrost_bo_create(dev, panfrost_bo_size(bo), bo->flags, bo->label);
++   if (!newbo)
++      return -1;
++   panfrost_bo_unreference(rsrc->bo);
++   rsrc->bo = newbo;
++   rsrc->image.data.base = newbo->ptr.gpu;
++   if (drm_is_afbc(rsrc->image.layout.modifier) && panfrost_resource_init_afbc_headers(rsrc))
++      return -1;
++   panfrost_dirty_state_all(ctx);
++   return 0;
++}
++
+ void
+ panfrost_resource_set_damage_region(struct pipe_screen *screen,
+                                     struct pipe_resource *res,
+--- a/src/gallium/drivers/panfrost/pan_job.c
++++ b/src/gallium/drivers/panfrost/pan_job.c
+@@ -1,3 +1,4 @@
++#include <stdlib.h>
+ #include <stdio.h>
+ /*
+  * Copyright (C) 2019-2020 Collabora, Ltd.
+@@ -430,6 +431,8 @@
+    panfrost_batch_update_access(batch, rsrc, false);
+ }
+ 
++int panfrost_resource_rename_bo(struct panfrost_context *ctx, struct panfrost_resource *rsrc);
++
+ void
+ panfrost_batch_write_rsrc(struct panfrost_batch *batch,
+                           struct panfrost_resource *rsrc,
+@@ -437,6 +440,32 @@
+ {
+    uint32_t access = PAN_BO_ACCESS_WRITE | panfrost_access_for_stage(stage);
+ 
++   /* begonia (y135): new memory rather than sending the batches that read it (pan_resource.c) */
++   {
++      static int rename_on = -1;
++      struct panfrost_context *ctx = batch->ctx;
++
++      if (rename_on < 0) {
++         const char *v = getenv("PAN_RENAME");
++         rename_on = v && v[0] == '1';
++      }
++      if (rename_on && rsrc->base.target == PIPE_TEXTURE_2D && rsrc->base.last_level == 0 &&
++          rsrc->base.array_size == 1 && rsrc->base.nr_samples <= 1 && !rsrc->separate_stencil &&
++          !rsrc->shadow_image && rsrc->bo && !(rsrc->bo->flags & PAN_BO_SHARED) &&
++          !panfrost_batch_uses_resource(batch, rsrc)) {
++         unsigned idx = panfrost_batch_idx(batch), i;
++         bool read_elsewhere = false;
++         struct hash_entry *w = _mesa_hash_table_search(ctx->writers, rsrc);
++
++         foreach_batch(ctx, i) {
++            if (i != idx && panfrost_batch_uses_resource(&ctx->batches.slots[i], rsrc))
++               read_elsewhere = true;
++         }
++         if (read_elsewhere && (!w || w->data == batch) && panfrost_resource_rename_bo(ctx, rsrc) == 0)
++            pan_count_flush("renamed instead (no flush)");
++      }
++   }
++
+    panfrost_batch_add_bo_old(batch, rsrc->bo, access);
+ 
+    if (rsrc->separate_stencil)
