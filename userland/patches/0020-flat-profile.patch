@@ -1,0 +1,102 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -1378,6 +1378,99 @@
+ 			}
+ 			say("%s\n", line);
+ 		}
++		/*
++		 * begonia (x36): the same samples flat. The thirty stacks above are a third of the time; the rest is many
++		 * stacks of a few samples each. Here every sample counts by where its program counter was, in 64-byte
++		 * pieces of each image ("hakios-flat:", parts in a thousand; tools: symbolize against the unstripped
++		 * libraries), and by image ("hakios-images:").
++		 */
++		{
++			static struct { uint64_t at; unsigned count; } flat[2048], swap;
++			struct { const void *base; const char *name; unsigned count; } images[12];
++			unsigned used = 0, image_count = 0;
++
++			memset(flat, 0, sizeof(flat));
++			memset(images, 0, sizeof(images));
++			for (unsigned i = 0; i < PROF_SLOTS && prof_table[i].count != 0; i++) {
++				uint64_t at = prof_table[i].stack[0] & ~63ull;
++				unsigned k = 0;
++
++				while (k < used && flat[k].at != at) {
++					k++;
++				}
++				if (k == used) {
++					if (used == sizeof(flat) / sizeof(flat[0])) {
++						continue;
++					}
++					flat[used++].at = at;
++				}
++				flat[k].count += prof_table[i].count;
++			}
++			/* (a selection sort of the first sixty: the table is small and this runs once in 4000 samples) */
++			for (unsigned i = 0; i < used; i++) {
++				Dl_info where = { 0 };
++				unsigned k = 0;
++
++				if (dladdr((void *)(uintptr_t)flat[i].at, &where) == 0 || where.dli_fname == NULL) {
++					where.dli_fbase = NULL;
++					where.dli_fname = "?";
++				}
++				while (k < image_count && images[k].base != where.dli_fbase) {
++					k++;
++				}
++				if (k == image_count) {
++					if (image_count == sizeof(images) / sizeof(images[0])) {
++						k = image_count - 1;            /* (the last one takes the rest) */
++					} else {
++						const char *slash = strrchr(where.dli_fname, '/');
++
++						images[image_count].base = where.dli_fbase;
++						images[image_count++].name = slash != NULL ? slash + 1 : where.dli_fname;
++					}
++				}
++				images[k].count += flat[i].count;
++			}
++			{
++				char line[600];
++				int at = snprintf(line, sizeof(line), "hakios-images:");
++
++				for (unsigned k = 0; k < image_count && at < (int)sizeof(line) - 60; k++) {
++					at += snprintf(line + at, sizeof(line) - (size_t)at, " %.24s %u", images[k].name,
++					    images[k].count * 1000 / taken);
++					if (k % 4 == 3 || k + 1 == image_count) {
++						say("%s\n", line);
++						at = snprintf(line, sizeof(line), "hakios-images:");
++					}
++				}
++			}
++			for (unsigned rank = 0; rank < 72 && rank < used; rank += 4) {
++				char line[600];
++				int at = snprintf(line, sizeof(line), "hakios-flat:");
++
++				for (unsigned i = rank; i < rank + 4 && i < used; i++) {
++					Dl_info where = { 0 };
++					const char *image = "?", *slash;
++					unsigned best = i;
++					uint64_t offset;
++
++					for (unsigned k = i + 1; k < used; k++) {
++						if (flat[k].count > flat[best].count) {
++							best = k;
++						}
++					}
++					swap = flat[i], flat[i] = flat[best], flat[best] = swap;
++					offset = flat[i].at;
++					if (dladdr((void *)(uintptr_t)offset, &where) != 0 && where.dli_fname != NULL) {
++						image = (slash = strrchr(where.dli_fname, '/')) != NULL ? slash + 1 : where.dli_fname;
++						offset -= (uint64_t)(uintptr_t)where.dli_fbase;
++					}
++					at += snprintf(line + at, sizeof(line) - (size_t)at, " %.14s+0x%llx(%.20s)=%u", image,
++					    (unsigned long long)offset, where.dli_sname != NULL ? where.dli_sname : "?",
++					    flat[i].count * 1000 / taken);
++				}
++				say("%s\n", line);
++			}
++		}
+ 		memset(prof_table, 0, sizeof(prof_table));
+ 		taken = looks = 0;
+ 	}
