@@ -1,0 +1,148 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2129,6 +2129,135 @@
+ 	}
+ }
+ 
++/*
++ * begonia: the notification com.hakios.pbui says what PaperBoardUI is made of here and what it shows right now --
++ * the methods of the classes that give the frosted materials their picture of the wallpaper, and every view on
++ * the screen that is one of them (or names reachability, a wallpaper or a replica), with its picture and colour.
++ * The upper part of the screen in one-handed mode comes out one flat purple: this is to find who hands that over.
++ */
++static void
++pbui_class(const char *name)
++{
++	Class cls = objc_getClass(name);
++	unsigned count = 0;
++
++	if (cls == NULL) {
++		say("hakios: pbui: no class %s\n", name);
++		return;
++	}
++	say("hakios: pbui: class %s : %s\n", name, class_getSuperclass(cls) ? class_getName(class_getSuperclass(cls)) : "-");
++	for (int meta = 0; meta < 2; meta++) {
++		Method *list = class_copyMethodList(meta ? object_getClass((id)cls) : cls, &count);
++
++		for (unsigned i = 0; list != NULL && i < count; i++) {
++			const char *types = method_getTypeEncoding(list[i]);
++
++			say("hakios: pbui:   %c%s %s\n", meta ? '+' : '-', sel_getName(method_getName(list[i])), types ? types : "");
++		}
++		free(list);
++	}
++	{
++		Ivar *list = class_copyIvarList(cls, &count);
++
++		for (unsigned i = 0; list != NULL && i < count; i++) {
++			const char *type = ivar_getTypeEncoding(list[i]);
++
++			say("hakios: pbui:   ivar %s %s\n", ivar_getName(list[i]), type ? type : "");
++		}
++		free(list);
++	}
++}
++
++static void
++pbui_protocol(const char *name)
++{
++	Protocol *protocol = objc_getProtocol(name);
++
++	if (protocol == NULL) {
++		say("hakios: pbui: no protocol %s\n", name);
++		return;
++	}
++	for (int required = 0; required < 2; required++) {
++		unsigned count = 0;
++		struct objc_method_description *list = protocol_copyMethodDescriptionList(protocol, required, 1, &count);
++
++		for (unsigned i = 0; list != NULL && i < count; i++) {
++			say("hakios: pbui: protocol %s %s -%s %s\n", name, required ? "required" : "optional", sel_getName(list[i].name),
++			    list[i].types ? list[i].types : "");
++		}
++		free(list);
++	}
++}
++
++static void
++pbui_views(id view, int depth)
++{
++	const char *name = object_getClassName(view);
++	id subviews;
++	long count;
++
++	if (depth > 60) {
++		return;
++	}
++	if (strncmp(name, "PBUI", 4) == 0 || strstr(name, "Reachab") != NULL || strstr(name, "Wallpaper") != NULL ||
++	    strstr(name, "Replica") != NULL || strstr(name, "FakeBlur") != NULL) {
++		Class cls = object_getClass(view);
++
++		say("hakios: pbui: view %d %s\n", depth, text_of(view));
++		if (class_respondsToSelector(cls, sel_registerName("backgroundColor")) && SEND(id, view, "backgroundColor") != NULL) {
++			say("hakios: pbui: view %d   colour %s\n", depth, text_of(SEND(id, view, "backgroundColor")));
++		}
++		if (class_respondsToSelector(cls, sel_registerName("image")) && SEND(id, view, "image") != NULL) {
++			say("hakios: pbui: view %d   image %s\n", depth, text_of(SEND(id, view, "image")));
++		}
++		if (class_respondsToSelector(cls, sel_registerName("source")) && SEND(id, view, "source") != NULL) {
++			say("hakios: pbui: view %d   source %s\n", depth, text_of(SEND(id, view, "source")));
++		}
++		if (class_respondsToSelector(cls, sel_registerName("imageProvider")) && SEND(id, view, "imageProvider") != NULL) {
++			say("hakios: pbui: view %d   imageProvider %s\n", depth, text_of(SEND(id, view, "imageProvider")));
++		}
++	}
++	subviews = class_respondsToSelector(object_getClass(view), sel_registerName("subviews")) ? SEND(id, view, "subviews") : NULL;
++	count = subviews ? SEND(long, subviews, "count") : 0;
++	for (long i = 0; i < count; i++) {
++		pbui_views(SEND1(id, subviews, "objectAtIndex:", long, i), depth + 1);
++	}
++}
++
++static void
++pbui(void)
++{
++	static const char *const classes[] = { "PBUISnapshotReplicaView", "PBUIURLBackedSnapshotSource",
++		                               "PBUIBakedEffectSnapshotSource", "PBUIFakeBlurView", "PBUIFakeBlurAsset",
++		                               "PBUIReplicaDebugView", "PBUIPosterActiveVariantImageProvider",
++		                               "PBUIFixedReplicaSourceProvider", "PBUIPosterVariantViewController",
++		                               "SBReachabilityBackgroundView", "SBReachabilityBackgroundViewController" };
++	static const char *const protocols[] = { "PBUIReplicaSnapshotSource", "PBUIFakeBlurImageProviding",
++		                                 "PBUIPosterReplicaSnapshotProviding", "PBUIReplicaSource" };
++	static unsigned times;
++	Class window = objc_getClass("UIWindow");
++	SEL all = sel_registerName("allWindowsIncludingInternalWindows:onlyVisibleWindows:");
++	id windows = window && class_getClassMethod(window, all) ? ((id (*)(Class, SEL, BOOL, BOOL))objc_msgSend)(window, all, 1, 1) : NULL;
++	long count = windows ? SEND(long, windows, "count") : 0;
++
++	if (times++ == 0) {
++		for (size_t i = 0; i < sizeof(classes) / sizeof(classes[0]); i++) {
++			pbui_class(classes[i]);
++		}
++		for (size_t i = 0; i < sizeof(protocols) / sizeof(protocols[0]); i++) {
++			pbui_protocol(protocols[i]);
++		}
++	}
++	say("hakios: pbui: %ld windows\n", count);
++	for (long i = 0; i < count; i++) {
++		id w = SEND1(id, windows, "objectAtIndex:", long, i);
++
++		say("hakios: pbui: window %ld %s\n", i, object_getClassName(w));
++		pbui_views(w, 0);
++	}
++	say("hakios: pbui: end\n");
++}
++
+ __attribute__((constructor))
+ static void
+ hakios_springboard_init(void)
+@@ -2293,6 +2422,9 @@
+ 	notify_register_dispatch("com.hakios.unlock", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		unlock();
+ 	});
++	notify_register_dispatch("com.hakios.pbui", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		pbui();
++	});
+ 	notify_register_dispatch("com.hakios.layers", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		layers();
+ 	});
