@@ -5,6 +5,7 @@ import argparse,shutil,subprocess,sys
 root=Path(__file__).resolve().parents[1];p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--base-root',type=Path,required=True);p.add_argument('--output-dir',type=Path,required=True);p.add_argument('--ui',action='store_true')
 p.add_argument('--metal-client',action='append',default=[],help='a program that is shown the Metal device (PanVK, metal2vulkan and the HakiosMetal bundle are staged; boot with metal=1)')
+p.add_argument('--metal-test',action='append',default=[],help='the Metal tests run late in the session (default: all of them, in order)')
 a=p.parse_args()
 base=a.base_root.resolve();out=a.output_dir.resolve();dest=out/'root'
 if base==dest or base in dest.parents or dest in base.parents or dest.exists():p.error('use a fresh separate output directory')
@@ -53,7 +54,7 @@ if a.metal_client:
   if (sysimage/'metallibs'/path).exists():
    (dest/'ext/metallib'/path).parent.mkdir(parents=True,exist_ok=True)
    shutil.copy2(sysimage/'metallibs'/path,dest/'ext/metallib'/path);print('metal: /'+path)
- for t in ('metal_frontend_test','vulkan_device_test','spritekit_test','scenekit_test','metal_game_test'):
+ for t in a.metal_test or ('metal_frontend_test','vulkan_device_test','spritekit_test','scenekit_test','metal_game_test'):
   if (root/'out/native-gpu-tests'/t).exists():
    shutil.copy2(root/'out/native-gpu-tests'/t,dest/'bin'/t);metal_tests+='/redwood/bin/'+t+'\n'
 shutil.copy2(stage/'libOSMesa.8.dylib',dest/'lib/libOSMesa.8.dylib')
