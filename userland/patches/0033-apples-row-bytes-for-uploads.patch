@@ -1,0 +1,133 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -4110,6 +4110,100 @@
+ 	EAGL_LEAVE(e, 0x348);
+ }
+ 
++/*
++ * begonia: how the rows of an uploaded picture lie in memory. CoreAnimation says it with glPixelStorei, and on Darwin
++ * one of the ways is GL_UNPACK_ROW_BYTES_APPLE (0x8a16, APPLE_row_bytes): the bytes from one row to the next, whatever
++ * the width. The library here has no such name -- it refuses the call and reads the rows as tightly packed, and a
++ * picture whose rows have padding comes out sheared into stripes (Control Centre's aeroplane, antenna, calculator and
++ * camera in y12, while its other glyphs were right). So the name is kept here and every upload is given a row length
++ * that says the same. Every kind of upload is written down once, with how its rows were said to lie.
++ * Boot-arg glrowbytes=0: the name is passed on and refused, as before.
++ */
++static int rows_fix = 1;
++static GLint store_row_bytes, store_row_length, store_alignment = 4;
++static struct { GLenum name; GLint value; } store_seen[48];
++static unsigned store_kinds;
++static struct { GLsizei width, height; GLenum format, type; GLint row_bytes, row_length, alignment; } upload_seen[160];
++static unsigned upload_kinds, upload_rows_said, upload_rows_odd;
++
++static void
++my_glPixelStorei(void *context, GLenum name, GLint value)
++{
++	struct eagl *e = context;
++	unsigned i;
++
++	EAGL_ENTER(e, 0x620);
++	for (i = 0; i < store_kinds && (store_seen[i].name != name || store_seen[i].value != value); i++) {
++	}
++	if (i == store_kinds && store_kinds < sizeof(store_seen) / sizeof(store_seen[0])) {
++		store_seen[store_kinds].name = name;
++		store_seen[store_kinds++].value = value;
++		say("hakios-gl: glPixelStorei(%#x, %d), the %uth kind of it%s\n", name, value, store_kinds,
++		    name == 0x8a16 ? rows_fix ? " -- Apple's row bytes: kept here, said as a row length at every upload" :
++		    " -- Apple's row bytes: passed on (glrowbytes=0)" : "");
++	}
++	if (name == GL_UNPACK_ROW_LENGTH) {
++		store_row_length = value;
++	} else if (name == GL_UNPACK_ALIGNMENT) {
++		store_alignment = value;
++	}
++	if (name == 0x8a16 && rows_fix) {
++		store_row_bytes = value;
++	} else {
++		glPixelStorei(name, value);
++	}
++	EAGL_LEAVE(e, 0x620);
++}
++
++/* Before an upload: its kind written down, and Apple's row bytes said as a row length. True: to be undone after. */
++static bool
++upload_rows_begin(const char *what, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels)
++{
++	unsigned pixel = bytes_a_pixel(format, type), i;
++
++	if (pixels == NULL) {
++		return false;
++	}
++	for (i = 0; i < upload_kinds && (upload_seen[i].width != width || upload_seen[i].height != height ||
++	    upload_seen[i].format != format || upload_seen[i].type != type || upload_seen[i].row_bytes != store_row_bytes ||
++	    upload_seen[i].row_length != store_row_length || upload_seen[i].alignment != store_alignment); i++) {
++	}
++	if (i == upload_kinds && upload_kinds < sizeof(upload_seen) / sizeof(upload_seen[0])) {
++		upload_seen[i].width = width;
++		upload_seen[i].height = height;
++		upload_seen[i].format = format;
++		upload_seen[i].type = type;
++		upload_seen[i].row_bytes = store_row_bytes;
++		upload_seen[i].row_length = store_row_length;
++		upload_seen[i].alignment = store_alignment;
++		upload_kinds++;
++		say("hakios-gl: upload kind %u (%s): %d x %d, format %#x, type %#x, %u bytes a pixel, %u a row packed; said: row bytes %d, "
++		    "row length %d, alignment %d; %u uploads had row bytes said as a row length, %u could not\n", upload_kinds, what,
++		    width, height, format, type, pixel, (unsigned)width * pixel, store_row_bytes, store_row_length, store_alignment,
++		    upload_rows_said, upload_rows_odd);
++	}
++	if (store_row_bytes <= 0 || store_row_length != 0) {
++		return false;
++	}
++	if ((unsigned)store_row_bytes % pixel != 0) {
++		upload_rows_odd++;
++		return false;
++	}
++	glPixelStorei(GL_UNPACK_ROW_LENGTH, store_row_bytes / (GLint)pixel);
++	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
++	upload_rows_said++;
++	return true;
++}
++
++static void
++upload_rows_end(bool said)
++{
++	if (said) {
++		glPixelStorei(GL_UNPACK_ROW_LENGTH, store_row_length);
++		glPixelStorei(GL_UNPACK_ALIGNMENT, store_alignment);
++	}
++}
++
+ static void
+ my_glTexImage2D(void *context, GLenum target, GLint level, GLint internal, GLsizei width, GLsizei height, GLint border,
+     GLenum format, GLenum type, const void *pixels)
+@@ -4141,7 +4235,10 @@
+ 		if (pixels != NULL) {
+ 			(void)legacy_format(target, &to, &format, type, level == 0);
+ 		}
++		bool rows = upload_rows_begin("whole", width, height, format, type, pixels);
++
+ 		glTexImage2D(target, level, (GLint)to, width, height, border, format, type, pixels);
++		upload_rows_end(rows);
+ 	}
+ 	if (began != 0 && now_us() - began >= slow_calls_us) {
+ 		/* (with glslow=US: which pictures take long to hand over) */
+@@ -4173,7 +4270,10 @@
+ 
+ 		/* (into a texture that was made one of red: the pixels are called what the texture is) */
+ 		(void)legacy_format(target, &unused, &format, type, false);
++		bool rows = upload_rows_begin("part", width, height, format, type, pixels);
++
+ 		glTexSubImage2D(target, level, x, y, width, height, format, type, pixels);
++		upload_rows_end(rows);
+ 	}
+ 	EAGL_LEAVE(e, 0x9a0);
+ }
+@@ -5014,6 +5114,7 @@
+ 		blit_targets = strstr(arguments, "glblit=0") == NULL;
+ 		alpha_as_red = strstr(arguments, "glalpha=0") == NULL;
+ 		share_masks = strstr(arguments, "glmask=0") == NULL;
++		rows_fix = strstr(arguments, "glrowbytes=0") == NULL;
+ 		if ((argument = strstr(arguments, "gl_cpu=")) != NULL) {
+ 			bind_cpu = atoi(argument + 7);
+ 		}
