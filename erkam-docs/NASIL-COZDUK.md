@@ -60,6 +60,24 @@ Her konu: belirti, kök neden, çözüm, ilgili dosyalar. Commit'ler ayrıntıy�
   - Panel donmaları ve videodaki yük başka kaynaklı (açık hatalar 1, 4, 5).
   - GPU kuyruğu: iki yol (backboardd'nin GL'i ve Metal istemcilerinin Vulkan'ı) aynı kuyruğa iş gönderiyor. GPU ~%35 meşgul; darboğaz CPU tarafında görünüyor.
 
+## GPU: CPU'daki çizim maliyetini kaldırma (2026-11-20 gecesi, devam ediyor)
+- **Ölçüm aracı:** `tests/proc_cpu_test.c` örnekleyici profiler. Her 10 ms'de SpringBoard, backboardd, WebKit ve
+  chronod'un çalışan iş parçacıklarının konumunu okuyor. `cs_relax_platform_task_ports=1` gerekiyor; bu, geliştirme
+  çekirdeğinin kendi anahtarı ve yalnızca test imajına giriyor. Adları bilgisayarda
+  `C:\begonia-private\sh\samples_sym.py` çözüyor.
+- **Shader disk önbelleği (y104–y106):** Denendi, geri alındı. Önbellek açıkken karelerin %9'u 18 ms altındaydı,
+  kapalıyken %56. Varsayılan kapalı (`glcache=1`).
+- **Video kareleri (y110):** 1080p '420v' kareler her karede CPU'da kopyalanıyordu (24 karede 71 MB).
+  - Artık düzlem düzlem GPU'ya veriliyor: Y → GL_R8, CbCr → GL_RG8 (Mesa 0007, userland 0047).
+  - backboardd video sırasında %85–93'ten %20–50'ye indi.
+  - **Doğrulama sürüyor:** y111'de video alanı simsiyahtı. Paylaşımdan mı, yoksa videonun henüz yüklenmemesinden mi olduğu y112'de (`glplanes=0`) karşılaştırılıyor.
+- **Değişiklik kontrolü (y111):** Köprü, kopyalanan yüzeylerin belleğini her karede tarıyordu (~1 ms, 4–6 MB).
+  IOSurface'ın seed sayacı 17.000 kontrolde yalnızca 1 değişikliği kaçırmıştı. Artık seed değişmediyse 30 karede bir
+  bakılıyor (0048). Kare başına GL maliyeti 4,2 ms'den 3,3 ms'ye indi.
+- **Kriptografi (y111):** Çekirdek, BCM2837 (Raspberry Pi 3) kart ayarıyla derlendiği için programlara "AES/SHA
+  donanımı yok" diyordu. corecrypto ve boringssl yazılımda çalışıyordu: WebKit ağ sürecinin üçte biri TLS'teydi.
+  Artık CPU'nun kendi ID_AA64ISAR0 yazmacından okunuyor (çekirdek yaması 0020). Etkisi henüz ayrıca ölçülmedi.
+
 ## I2C ve fener
 - **I2C:** 10 bus için yoklamalı FIFO sürücüsü (`begonia_i2c.c`).
   - LK'nin hiç kurmadığı bus'lar "herkese cevap veriyordu". Çözüm: bus 5'in yapılandırması kopyalanıyor (`clone`).
