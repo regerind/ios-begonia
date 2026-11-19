@@ -499,6 +499,23 @@ clear_played(__unused thread_call_param_t a, __unused thread_call_param_t b)
 {
 	volume_follow();
 	uint32_t rd = read_frame();
+	/*
+	 * y97: DL1 read from the ring for a second or so and the sink then found it full (34 of 39 s refused): DL1, or what
+	 * feeds it, stopped. What it looked like at 0.5, 1, 2, 4 and 8 s, and when DL1's place first stood still for 100 ms.
+	 */
+	{
+		static unsigned ticks, still, said_still;
+		static uint32_t last_rd;
+		ticks++;
+		still = rd == last_rd ? still + 1 : 0;
+		last_rd = rd;
+		if (ticks == 25 || ticks == 50 || ticks == 100 || ticks == 200 || ticks == 400 || (still == 5 && said_still++ < 2)) {
+			begonia_perf_note("BEGONIA AUDIO: t%u%s rd %u wp %u in %llu lost %llu DAC %x TOP %x DL1CON %x dom %d cfg6 %x "
+			    "infraCG %x", ticks, still >= 5 ? " STILL" : "", rd, wp, frames_in, frames_dropped, r32(afe, AFE_DAC_CON0),
+			    r32(afe, AUDIO_TOP_CON0), r32(afe, AFE_DL1_CON0), audio_domain_on(), r32(topck, CLK_CFG_6),
+			    r32(infra, INFRA1_CG_STA));
+		}
+	}
 	while (cleared != rd) {
 		if (cleared != wp) {                    /* (what is written but not played yet stays) */
 			ring[cleared * 2] = 0;
