@@ -67,9 +67,11 @@ ya da onay gerekiyor). En üstteki en önemlisi.
 - **Durum:** beklemede.
 
 ## 10. Video yazılımla çözülüyor
-- Donanım çözücü (MediaTek VDEC) için güç alanı + saat (onay gerekir), M4U, VPU/VCU üretici yazılımı ve iOS
-  VideoToolbox bağlantısı gerekiyor. Büyük, ayrı bir proje.
-- **Durum:** beklemede; kullanıcı yapılmasını istiyor, araştırma adımı önerildi.
+- Araştırma bitti: [VDEC-ARASTIRMA.md](VDEC-ARASTIRMA.md). Kod çözme mantığı Android'in kapalı `vpud` sürecinde
+  (ana CPU'da, yardımcı işlemci ya da üretici yazılımı yok); H.264 yazmaç dizisi hiçbir açık kaynakta yok, MIUI vendor
+  imajından tersine mühendislikle çıkarılmalı (haftalar). Güç (SCP_SYS_VDE), saatler (vdec_sel), larb2/IOMMU ve kesme
+  bilgileri çıkarıldı. Çıkış biçimi MediaTek'in döşemeli MT21'i; iOS '420v' için dönüştürme gerekir.
+- **Durum:** beklemede (yetki var; önce video gösterimindeki kopyalar kaldırılıyor: y110).
 
 ## 10b. Sistem uygulamaları internete bağlanmıyor (App Store vb.)
 - **Belirti:** Safari internete çıkıyor; App Store gibi Apple servisleri bağlanmıyor.
