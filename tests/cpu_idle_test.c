@@ -4,13 +4,17 @@
  * the busiest, in % of one core over that time, on one line each and in one summary line at the end.
  *   cpu_idle_test [SECONDS]      (30)
  */
-#include <libproc.h>
 #include <mach/mach_time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
 #include <unistd.h>
+
+/* libSystem's (libproc.h is not in the iOS SDK) */
+int proc_listallpids(void *buffer, int buffersize);
+int proc_name(int pid, void *buffer, uint32_t buffersize);
+int proc_pid_rusage(int pid, int flavor, rusage_info_t *buffer);
 
 #define MAX 2048
 
