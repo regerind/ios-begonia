@@ -1,0 +1,32 @@
+--- a/userland/src/init.c
++++ b/userland/src/init.c
+@@ -925,6 +925,29 @@
+ 		}
+ 		ok = 1;
+ 		check(ok, "mount the data volume on /private/var");
++		/*
++		 * prefs_aside=NAME[,NAME...]: the preference files of the mobile user named, moved aside to NAME.plist.aside
++		 * before launchd (and cfprefsd) start: for a setting that crashes SpringBoard as soon as it is on, so that it
++		 * cannot be turned off again from Settings (Bold Text, com.apple.Accessibility). Nothing is deleted.
++		 */
++		{
++			const char *aside = boot_arg("prefs_aside");
++			static char list[128];
++
++			if (aside != NULL && strlen(aside) < sizeof(list)) {
++				strcpy(list, aside);
++				for (char *name = strtok(list, ","); name != NULL; name = strtok(NULL, ",")) {
++					char from[256], to[256];
++
++					if (strchr(name, '/') != NULL || strlen(name) > 150) {
++						continue;
++					}
++					snprintf(from, sizeof(from), "/private/var/mobile/Library/Preferences/%s.plist", name);
++					snprintf(to, sizeof(to), "%s.aside", from);
++					printf("  prefs_aside: %s %s\n", from, rename(from, to) == 0 ? "moved aside" : strerror(errno));
++				}
++			}
++		}
+ 	} else {
+ 		ok = mount("ramfs", "/private/var", 0, NULL) == 0;
+ 		if (!ok) {
