@@ -99,9 +99,16 @@ sample_task(int p, task_t task)
 		dbg[p][3]++;
 		kr = thread_get_state(threads[t], ARM_THREAD_STATE64, (thread_state_t)&st, &sn);
 		if (kr != KERN_SUCCESS) {
-			dbg_kr[p][2] = kr;
-			mach_port_deallocate(mach_task_self(), threads[t]);
-			continue;
+			/* y106: ARM_THREAD_STATE64 refused (4) on a read port; the unified flavor, the kernel choosing 64-bit */
+			arm_unified_thread_state_t us;
+			mach_msg_type_number_t un = ARM_UNIFIED_THREAD_STATE_COUNT;
+			kern_return_t kr2 = thread_get_state(threads[t], ARM_THREAD_STATE, (thread_state_t)&us, &un);
+			if (kr2 != KERN_SUCCESS || us.ash.flavor != ARM_THREAD_STATE64) {
+				dbg_kr[p][2] = kr2 != KERN_SUCCESS ? kr2 : 0x64;
+				mach_port_deallocate(mach_task_self(), threads[t]);
+				continue;
+			}
+			st = us.ts_64;
 		}
 		dbg[p][4]++;
 		uint64_t pcs[13];
