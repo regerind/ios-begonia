@@ -14,6 +14,7 @@
 #include "begonia_clock_policy.h"
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 static vm_offset_t perf_pll, perf_div;  /* (kept for kern.begonia_clocks) */
+static vm_offset_t perf_spm;            /* (kept for begonia_dram_said()) */
 
 static uint32_t
 rd(vm_offset_t base, unsigned offset)
@@ -316,6 +317,7 @@ begonia_perf_init(void)
     }
     perf_pll = pll;
     perf_div = div;
+    perf_spm = spm;
     /* Report raw mux/divider state: PLL output alone is not CPU clock rate. */
     printf("BEGONIA PERF: MPIDR=%llx MIDR=%llx CNTFRQ=%llu\n",
         __builtin_arm_rsr64("MPIDR_EL1"), __builtin_arm_rsr64("MIDR_EL1"),
@@ -431,3 +433,52 @@ sysctl_begonia_clocks SYSCTL_HANDLER_ARGS
 }
 SYSCTL_PROC(_kern, OID_AUTO, begonia_clocks, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED | CTLFLAG_ANYBODY,
     0, 0, sysctl_begonia_clocks, "A", "the caller's processor and the clocks now");
+
+/*
+ * x49, boot-arg begonia_dram_probe=1: the memory's data rate as it is now, and whether anybody runs its frequency
+ * (DVFSRC, the SPM's firmware), said with the GPU's 5 s report. READS ONLY. The GPU's fragment jobs look bound by
+ * memory bandwidth (x47), and nothing here drives DVFSRC, so the memory stays where the boot loader left it.
+ * As the pinned Xiaomi kernel reads it (drivers/misc/mediatek/dramc/mt6785/mtk_dramc.c, get_dram_data_rate();
+ * mt6785.dts: DRAMC AO channel A 0x10230000, DDRPHY AO channel A 0x10238000, DVFSRC 0x10012000, SPM 0x10006000):
+ * the shuffle level is DRAMC AO 0xe4 bits 2:1; with S = 0x500 * level, the PLL in use is PHY 0x510 bit 31, its PCW
+ * 0xd9c+S (or 0xd94+S) bits 31:16, pre-divider 0xda8+S (0xda0+S) bits 19:18 and post-divider bits 2:0, CKDIV4
+ * 0xd18+S bit 27, and 0xd90+S bit 13 doubles: rate = (((52 >> pre) * (PCW >> 8)) >> post) >> ckdiv4, doubled.
+ * Known values there: 4264 (4266), 3718 (3733), 3094, 2392 (2400), 1638 (819), 1534, 1196 (1200).
+ */
+void begonia_dram_said(void);
+void
+begonia_dram_said(void)
+{
+    static int asked = -1;
+    static vm_offset_t ao, phy, dvfsrc;
+
+    if (asked < 0) {
+        uint32_t on = 0;
+        asked = PE_parse_boot_argn("begonia_dram_probe", &on, sizeof(on)) && on == 1;
+        if (asked) {
+            ao = ml_io_map(0x10230000, 0x1000);
+            phy = ml_io_map(0x10238000, 0x2000);
+            dvfsrc = ml_io_map(0x10012000, 0x1000);
+        }
+    }
+    if (!asked) {
+        return;
+    }
+    if (!ao || !phy || !dvfsrc) {
+        printf("BEGONIA DRAM: the registers could not be mapped\n");
+        return;
+    }
+    uint32_t level = (rd(ao, 0xe4) & 6) >> 1, s = 0x500 * level;
+    uint32_t pll = rd(phy, 0x510) >> 31;
+    uint32_t pcw = rd(phy, (pll ? 0xd94 : 0xd9c) + s) >> 16;
+    uint32_t dividers = rd(phy, (pll ? 0xda0 : 0xda8) + s);
+    uint32_t pre = (dividers & 0x000c0000) >> 18, post = dividers & 7;
+    uint32_t ckdiv4 = (rd(phy, 0xd18 + s) & 0x08000000) >> 27;
+    uint32_t doubled = (rd(phy, 0xd90 + s) & 0x2000) != 0;
+    uint32_t rate = ((((52u >> pre) * (pcw >> 8)) >> post) >> ckdiv4) << doubled;
+
+    printf("BEGONIA DRAM: data rate %u Mbps as computed (shuffle level %u, PLL %u, PCW %#x, pre %u, post %u, ckdiv4 %u, "
+        "doubled %u); DVFSRC control %08x (enabled: bits 0 and 8), level now %08x, target %08x; SPM firmware counter %08x, "
+        "DVFS level %08x\n", rate, level, pll, pcw, pre, post, ckdiv4, doubled, rd(dvfsrc, 0), rd(dvfsrc, 0xd44),
+        rd(dvfsrc, 0xd48), perf_spm ? rd(perf_spm, 0x1a4) : 0, perf_spm ? rd(perf_spm, 0x708) : 0);
+}
