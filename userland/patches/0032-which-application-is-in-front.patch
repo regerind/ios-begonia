@@ -1,0 +1,40 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2537,6 +2537,27 @@
+ 	snapshot_look(0);
+ }
+ 
++/*
++ * begonia: the notification com.hakios.front says which application is in front and whether the phone is locked --
++ * for a session's script to learn whether its swipe up from the bottom edge brought the home screen (on some boots
++ * it does not, at the phone).
++ */
++static void
++front(void)
++{
++	id app = SEND(id, objc_getClass("UIApplication"), "sharedApplication");
++	Class manager = objc_getClass("SBLockScreenManager");
++	id shared = manager != NULL ? SEND(id, manager, "sharedInstance") : NULL;
++	id top = app != NULL && class_respondsToSelector(object_getClass(app), sel_registerName("_accessibilityFrontMostApplication")) ?
++	    SEND(id, app, "_accessibilityFrontMostApplication") : NULL;
++	static unsigned times;
++
++	say("hakios: front %u: %s; %s\n", ++times, top == NULL ? "the home screen (no application)" :
++	    class_respondsToSelector(object_getClass(top), sel_registerName("bundleIdentifier")) ?
++	    text_of(SEND(id, top, "bundleIdentifier")) : object_getClassName(top),
++	    shared == NULL ? "lock state unknown" : SEND(BOOL, shared, "isUILocked") ? "locked" : "unlocked");
++}
++
+ __attribute__((constructor))
+ static void
+ hakios_springboard_init(void)
+@@ -2720,6 +2741,9 @@
+ 
+ 		say("hakios: shot: asked: %d\n", sysctlbyname("kern.hakios.fb_shot_now", NULL, NULL, &one, sizeof(one)));
+ 	});
++	notify_register_dispatch("com.hakios.front", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		front();
++	});
+ 	notify_register_dispatch("com.hakios.pbui", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		pbui();
+ 	});
