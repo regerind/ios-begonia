@@ -1,0 +1,136 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -550,6 +550,9 @@
+ static uint64_t hash_us, hash_bytes;
+ static unsigned seed_looks[2], seed_missed[2];
+ static unsigned mask_checked, mask_incomplete, mask_swizzle, mask_said, mask_ok_said;
++/* begonia (x49): see any_state() and column_like() */
++static unsigned any_checked, any_incomplete, any_said;
++static unsigned column_seen, column_shared, column_wrapped, column_empty, column_again, column_said;
+ /*
+  * begonia (x31): wrapped memory -- pictures CoreAnimation made a surface around (methodWrapClientImage) -- is not
+  * looked at for changes the seed did not show: x30 looked 6801 times and found none (and 831 on surfaces of their
+@@ -608,6 +611,9 @@
+ 	say("hakios-gl:   glDrawElements: %llu us a frame in the library's own call; by way, a frame: %u in a group, %u plain, "
+ 	    "%u as they come; the frame's %llu us: %llu with the thread on a processor\n", draw_lib_us / frames,
+ 	    draw_group / frames, draw_plain / frames, draw_other / frames, e->frame_us / frames, frame_cpu_us / frames);
++	say("hakios-gl:   all textures drawn with (every 30th frame): %u looked at, %u incomplete; tall narrow surfaces shown: "
++	    "%u (%u shared, %u wrapped), %u of them all zeroes when copied, %u copied again later\n", any_checked,
++	    any_incomplete, column_seen, column_shared, column_wrapped, column_empty, column_again);
+ 	say("hakios-gl:   calls that set what was set already: glBindTexture %u, glUseProgram %u, glActiveTexture %u, "
+ 	    "glBindFramebuffer %u\n", same_texture, same_program, same_unit, same_framebuffer);
+ 	{
+@@ -1046,6 +1052,13 @@
+  * upload (10 MB at 1080 x 2340) was most of a frame's time. The texture, which is bound, gets its storage
+  * first; the copy is turned over as target_to_surface() turns it back.
+  */
++/* begonia (x49): surfaces shown that are narrow and tall (under 420 wide, over 300 high): the emoji keyboard's columns */
++static bool
++column_like(const struct image *image)
++{
++	return !image->target && image->width < 420 && image->height > 300;
++}
++
+ static unsigned mirror_fills;
+ /*
+  * begonia (x45): a surface nobody has written to yet (its seed is the one it was made with: the kernel counts every
+@@ -1835,6 +1848,56 @@
+  * legacy_format()) on the texture units: a mipmap filter on a texture of one level makes it incomplete, which
+  * samples as opaque black; a swizzle that no longer takes alpha from red (green) makes it opaque. Either is a box.
+  */
++/*
++ * begonia (x49): the black columns of the emoji keyboard (x48's picture: whole columns opaque black after a fast
++ * scroll) are not text masks. Every texture bound to a unit, every 30th frame at each draw: one that samples as
++ * incomplete -- a mipmap filter and a level missing, or no storage at its base level -- comes out opaque black.
++ */
++static void
++any_state(struct eagl *e)
++{
++	GLint active = -1;
++
++	if (e->frames % 30 != 0) {
++		return;
++	}
++	for (unsigned u = 0; u < 8; u++) {
++		struct image *image;
++		GLint min = -1, base = -1, max = -1, w0 = -1, h0 = -1, w1 = -1, internal = -1, level;
++		bool mip, incomplete;
++
++		if (e->bound[u] == 0) {
++			continue;
++		}
++		if (active < 0) {
++			glGetIntegerv(0x84e0 /* GL_ACTIVE_TEXTURE */, &active);
++		}
++		glActiveTexture(0x84c0 + u);
++		glGetTexParameteriv(GL_TEXTURE_2D, 0x2801 /* GL_TEXTURE_MIN_FILTER */, &min);
++		glGetTexParameteriv(GL_TEXTURE_2D, 0x813c /* GL_TEXTURE_BASE_LEVEL */, &base);
++		glGetTexParameteriv(GL_TEXTURE_2D, 0x813d /* GL_TEXTURE_MAX_LEVEL */, &max);
++		level = base > 0 ? base : 0;
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, level, 0x1000 /* GL_TEXTURE_WIDTH */, &w0);
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, level, 0x1001 /* GL_TEXTURE_HEIGHT */, &h0);
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, level, 0x1003 /* GL_TEXTURE_INTERNAL_FORMAT */, &internal);
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, level + 1, 0x1000, &w1);
++		mip = min >= 0x2700 && min <= 0x2703;
++		incomplete = w0 <= 0 || (mip && max > base && (w0 > 1 || h0 > 1) && w1 <= 0);
++		any_checked++;
++		any_incomplete += incomplete;
++		if (incomplete && any_said++ < 12) {
++			image = image_of(e, e->bound[u]);
++			say("hakios-gl: texture state, frame %u, unit %u: texture %u%s, %d x %d, internal %#x, min filter %#x, levels "
++			    "%d..%d, level 1 width %d: INCOMPLETE\n", e->frames, u, e->bound[u], image == NULL ? " (CoreAnimation's own)" :
++			    image->shared ? " (an IOSurface, shared)" : image->wrapped ? " (an IOSurface, wrapped, copied)" :
++			    " (an IOSurface, copied)", w0, h0, internal, min, base, max, w1);
++		}
++	}
++	if (active >= 0) {
++		glActiveTexture((GLenum)active);
++	}
++}
++
+ static void
+ mask_state(struct eagl *e)
+ {
+@@ -1906,7 +1969,7 @@
+ 		e->bound[e->unit] = texture;
+ 	}
+ 	if (texture != 0 && e->image_count != 0 && (image = image_of(e, texture)) != NULL && !image->shared &&
+-	    shown_changed(e, image)) {
++	    shown_changed(e, image) && (column_again += column_like(image), true)) {
+ 		surface_to_texture(e, image);
+ 	}
+ 	EAGL_LEAVE(e, 0x30);
+@@ -3851,6 +3914,7 @@
+ 	EAGL_ENTER(e, 0x220);
+ 	drawing(e);
+ 	mask_state(e);
++	any_state(e);
+ 	count_spans(e, mode, count);
+ 	e->draws++;
+ 	e->triangles += triangles_of(mode, count);
+@@ -4670,6 +4734,25 @@
+ 		}
+ 		surface_to_texture(e, image);
+ 	}
++	if (column_like(image)) {
++		size_t row = IOSurfaceGetBytesPerRow(surface), size = row * (size_t)image->height, set = 0;
++		const uint8_t *bytes = IOSurfaceGetBaseAddress(surface);
++
++		for (size_t at = 0; bytes != NULL && at < size; at += 16) {     /* (every 16th byte: enough to tell empty) */
++			set += bytes[at] != 0;
++		}
++		column_seen++;
++		column_shared += image->shared;
++		column_wrapped += image->wrapped;
++		column_empty += set == 0;
++		if (column_said++ < 16 || (set == 0 && column_said < 200 && column_said % 8 == 0)) {
++			say("hakios-gl: column? surface %u '%.4s' %d x %d, %zu bytes a row, asked as %#x/%#x/%#x, %s%s, seed %u: "
++			    "%zu of %zu bytes looked at are not zero\n", IOSurfaceGetID(surface),
++			    (const char *)&(uint32_t){ __builtin_bswap32(IOSurfaceGetPixelFormat(surface)) }, image->width,
++			    image->height, row, image->internal, image->format, image->type, image->shared ? "shared" : "copied",
++			    image->wrapped ? ", wrapped" : "", IOSurfaceGetSeed(surface), set, size / 16);
++		}
++	}
+ 	e->attaching += now_us() - began;
+ 	eagl_leave(e, 0x970);
+ 	return YES;
