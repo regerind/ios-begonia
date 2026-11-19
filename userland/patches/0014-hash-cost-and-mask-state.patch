@@ -1,0 +1,181 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -503,6 +503,15 @@
+ 	}
+ }
+ 
++/*
++ * begonia (x30): what looking for changes in copied surfaces costs (surface_changed()), and how often a look
++ * found a change that the surface's seed did not show -- [0] surfaces made by their owner, [1] wrapped memory.
++ * And the state of the text masks' textures when they are drawn with (mask_state()): the filled boxes.
++ */
++static uint64_t hash_us, hash_bytes;
++static unsigned seed_looks[2], seed_missed[2];
++static unsigned mask_checked, mask_incomplete, mask_swizzle, mask_said, mask_ok_said;
++
+ static void
+ summary(struct eagl *e)
+ {
+@@ -515,6 +524,11 @@
+ 	    e->frames, e->all_calls / frames, e->all_draws / frames, e->all_triangles / frames, e->most_calls,
+ 	    e->most_triangles, e->frame_us / frames, e->flush_us / frames, e->wait_us / frames, e->readback_us / frames,
+ 	    e->attach_us / frames, e->shared, e->refused, e->shaders, e->programs, widest_texture, tallest_texture, e->errors);
++	say("hakios-gl:   looking for changes: %llu us and %llu KB a frame; changes the seed did not show: %u of %u looks "
++	    "at surfaces of their own, %u of %u at wrapped memory\n", hash_us / frames, (hash_bytes / frames) >> 10,
++	    seed_missed[0], seed_looks[0], seed_missed[1], seed_looks[1]);
++	say("hakios-gl:   text masks drawn with (every 30th frame): %u looked at, %u incomplete (a mipmap filter, one level), "
++	    "%u with alpha not from the channel it was put in\n", mask_checked, mask_incomplete, mask_swizzle);
+ 	for (unsigned i = 0; i < 7; i++) {
+ 		if (refuse_count[i]) {
+ 			say("hakios-gl:   copied because %s: %u surfaces, %llu MB\n", refuse_name[i], refuse_count[i], refuse_bytes[i] >> 20);
+@@ -813,10 +827,33 @@
+ 		return false;
+ 	}
+ 	image->looked = e->frames + 1;
+-	for (size_t at = 0; at + 8 <= size; at += 8) {
+-		memcpy(&word, base + at, 8);
+-		sum = (sum ^ word) * 0x9e3779b97f4a7c15ull;
+-		sum ^= sum >> 29;
++	/*
++	 * begonia (x30): four sums side by side. One chain of multiplies, each waiting for the last, ran at a
++	 * fraction of what the core can do (x22 glprof: 8% of the drawing thread in here). Every byte still counts.
++	 */
++	{
++		uint64_t began = now_us(), lane[4] = { sum, sum ^ 0x5851f42d4c957f2dull, sum ^ 0x14057b7ef767814full,
++		    sum ^ 0x2545f4914f6cdd1dull };
++		size_t at = 0;
++
++		for (; at + 32 <= size; at += 32) {
++			uint64_t w[4];
++
++			memcpy(w, base + at, 32);
++			for (int k = 0; k < 4; k++) {
++				lane[k] = (lane[k] ^ w[k]) * 0x9e3779b97f4a7c15ull;
++				lane[k] ^= lane[k] >> 29;
++			}
++		}
++		for (; at + 8 <= size; at += 8) {
++			memcpy(&word, base + at, 8);
++			lane[0] = (lane[0] ^ word) * 0x9e3779b97f4a7c15ull;
++			lane[0] ^= lane[0] >> 29;
++		}
++		sum = lane[0] ^ ((lane[1] << 16) | (lane[1] >> 48)) ^ ((lane[2] << 32) | (lane[2] >> 32)) ^
++		    ((lane[3] << 48) | (lane[3] >> 16));
++		hash_us += now_us() - began;
++		hash_bytes += size;
+ 	}
+ 	if (sum == image->sum) {
+ 		image->unchanged += image->unchanged < STILL_LOOKS;
+@@ -1522,6 +1559,86 @@
+ 	}
+ }
+ 
++/*
++ * begonia (x30): has a shown surface changed since its texture was filled? As before -- the seed first, then a
++ * look at the memory -- with the looks counted: a change found while the seed stood still is one the seed missed.
++ */
++static bool
++shown_changed(struct eagl *e, struct image *image)
++{
++	unsigned looked = image->looked;
++	bool changed;
++
++	if (image->target) {
++		return image->wrapped && !image->painted && surface_changed(e, image);
++	}
++	if (IOSurfaceGetSeed(image->surface) != image->seed) {
++		return true;
++	}
++	changed = surface_changed(e, image);
++	if (image->looked != looked) {
++		seed_looks[image->wrapped]++;
++		seed_missed[image->wrapped] += changed;
++	}
++	return changed;
++}
++
++/*
++ * begonia (x30): every 30th frame, at each draw, the text masks (copied 'A008'/'LA08': R8/RG8 with a swizzle,
++ * legacy_format()) on the texture units: a mipmap filter on a texture of one level makes it incomplete, which
++ * samples as opaque black; a swizzle that no longer takes alpha from red (green) makes it opaque. Either is a box.
++ */
++static void
++mask_state(struct eagl *e)
++{
++	GLint active = -1;
++
++	if (e->frames % 30 != 0) {
++		return;
++	}
++	for (unsigned u = 0; u < 8; u++) {
++		struct image *image;
++		GLint min = -1, base = -1, max = -1, alpha = -1, w0 = -1, h0 = -1, w1 = -1, internal = -1, bound = -1;
++		GLint want, level;
++		bool mip, incomplete, lost;
++
++		if (e->bound[u] == 0 || (image = image_of(e, e->bound[u])) == NULL || image->shared || image->target ||
++		    (image->format != 0x1906 && image->format != 0x190a) || image->type != GL_UNSIGNED_BYTE) {
++			continue;
++		}
++		if (active < 0) {
++			glGetIntegerv(0x84e0 /* GL_ACTIVE_TEXTURE */, &active);
++		}
++		glActiveTexture(0x84c0 + u);
++		glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
++		glGetTexParameteriv(GL_TEXTURE_2D, 0x2801 /* GL_TEXTURE_MIN_FILTER */, &min);
++		glGetTexParameteriv(GL_TEXTURE_2D, 0x813c /* GL_TEXTURE_BASE_LEVEL */, &base);
++		glGetTexParameteriv(GL_TEXTURE_2D, 0x813d /* GL_TEXTURE_MAX_LEVEL */, &max);
++		glGetTexParameteriv(GL_TEXTURE_2D, 0x8e45 /* GL_TEXTURE_SWIZZLE_A */, &alpha);
++		level = base > 0 ? base : 0;
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, level, 0x1000 /* GL_TEXTURE_WIDTH */, &w0);
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, level, 0x1001 /* GL_TEXTURE_HEIGHT */, &h0);
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, level, 0x1003 /* GL_TEXTURE_INTERNAL_FORMAT */, &internal);
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, level + 1, 0x1000, &w1);
++		mip = min >= 0x2700 && min <= 0x2703;
++		incomplete = w0 == 0 || (mip && max > base && (w0 > 1 || h0 > 1) && w1 <= 0);
++		want = image->format == 0x1906 ? 0x1903 /* GL_RED */ : 0x1904 /* GL_GREEN */;
++		lost = alpha_as_red && alpha != want;
++		mask_checked++;
++		mask_incomplete += incomplete;
++		mask_swizzle += lost;
++		if ((incomplete || lost) ? mask_said++ < 8 : mask_ok_said++ < 3) {
++			say("hakios-gl: mask state, frame %u, unit %u: texture %u (bound %d) of surface %u%s, %d x %d, internal %#x: "
++			    "min filter %#x, levels %d..%d, level 1 width %d, alpha from %#x (wanted %#x)%s%s\n", e->frames, u,
++			    image->texture, bound, IOSurfaceGetID(image->surface), image->wrapped ? " (wrapped)" : "", w0, h0,
++			    internal, min, base, max, w1, alpha, want, incomplete ? "; INCOMPLETE" : "", lost ? "; SWIZZLE LOST" : "");
++		}
++	}
++	if (active >= 0) {
++		glActiveTexture((GLenum)active);
++	}
++}
++
+ /* ---- the entries written by hand ---------------------------------------------------------------- */
+ 
+ static void
+@@ -1539,8 +1656,7 @@
+ 		e->bound[e->unit] = texture;
+ 	}
+ 	if (texture != 0 && e->image_count != 0 && (image = image_of(e, texture)) != NULL && !image->shared &&
+-	    (!image->target ? IOSurfaceGetSeed(image->surface) != image->seed || surface_changed(e, image) :
+-	    image->wrapped && !image->painted && surface_changed(e, image))) {
++	    shown_changed(e, image)) {
+ 		surface_to_texture(e, image);
+ 	}
+ 	EAGL_LEAVE(e, 0x30);
+@@ -3441,6 +3557,7 @@
+ 
+ 	EAGL_ENTER(e, 0x210);
+ 	drawing(e);
++	mask_state(e);
+ 	count_spans(e, mode, count);
+ 	e->draws++;
+ 	e->triangles += triangles_of(mode, count);
+@@ -3481,6 +3598,7 @@
+ 
+ 	EAGL_ENTER(e, 0x220);
+ 	drawing(e);
++	mask_state(e);
+ 	count_spans(e, mode, count);
+ 	e->draws++;
+ 	e->triangles += triangles_of(mode, count);
