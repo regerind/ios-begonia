@@ -1,0 +1,13 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -3045,6 +3045,10 @@
+ 	notify_register_dispatch("com.hakios.open.video", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		open_url("https://download.samplelib.com/mp4/sample-30s.mp4");
+ 	});
++	/* begonia (y117): YouTube's mobile site, for the controls that flicker (the user, 2026-11-20) */
++	notify_register_dispatch("com.hakios.open.youtube", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		open_url("https://m.youtube.com/watch?v=aqz-KE-bpKQ");
++	});
+ 	notify_register_dispatch("com.hakios.open.url4", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		open_url("https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/640px-Cat03.jpg");
+ 	});
