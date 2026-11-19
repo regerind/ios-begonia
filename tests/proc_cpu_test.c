@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <sys/sysctl.h>
 #include <pthread.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -413,6 +414,17 @@ main(int argc, char **argv)
 	mach_timebase_info_data_t tbase;
 	mach_timebase_info(&tbase);
 	setvbuf(stdout, NULL, _IOLBF, 0);
+	/* (y111: the kernel now tells programs about the crypto extensions; what they see, at the head of the history) */
+	{
+		int aes = -1, sha = -1, pmull = -1;
+		size_t z = sizeof(int);
+		sysctlbyname("hw.optional.arm.FEAT_AES", &aes, &z, NULL, 0);
+		z = sizeof(int);
+		sysctlbyname("hw.optional.arm.FEAT_SHA256", &sha, &z, NULL, 0);
+		z = sizeof(int);
+		sysctlbyname("hw.optional.arm.FEAT_PMULL", &pmull, &z, NULL, 0);
+		snprintf(history, sizeof(history), " [FEAT_AES %d SHA256 %d PMULL %d]", aes, sha, pmull);
+	}
 
 	int na = take(a);
 	static char shist[NS][4000];
