@@ -44,3 +44,22 @@ bool nmb_compute_dispatch_indirect(NmbEncoder *, NmbBuffer *indirect, uint64_t o
 #ifdef __cplusplus
 }
 #endif
+/* begonia: argument buffers (userland/metal/bridge/begonia_arguments.rs) */
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct NmbArgumentEncoder NmbArgumentEncoder;
+NmbArgumentEncoder *nmb_argument_encoder_new(NmbFunction *, uint32_t buffer_index);
+NmbArgumentEncoder *nmb_argument_encoder_nested(NmbArgumentEncoder *, uint32_t index);
+void nmb_argument_encoder_release(NmbArgumentEncoder *);
+uint64_t nmb_argument_encoder_encoded_length(const NmbArgumentEncoder *);
+uint64_t nmb_argument_encoder_alignment(const NmbArgumentEncoder *);
+/* element UINT64_MAX: setArgumentBuffer:offset:, else setArgumentBuffer:startOffset:arrayElement: */
+bool nmb_argument_encoder_set_target(NmbArgumentEncoder *, NmbBuffer *, uint64_t offset, uint64_t element);
+bool nmb_argument_encoder_set_buffer(NmbArgumentEncoder *, NmbBuffer *, uint64_t offset, uint32_t index);
+bool nmb_argument_encoder_set_texture(NmbArgumentEncoder *, NmbTexture *, uint32_t index);
+bool nmb_argument_encoder_set_sampler(NmbArgumentEncoder *, NmbSampler *, uint32_t index);
+void *nmb_argument_encoder_constant_data(NmbArgumentEncoder *, uint32_t index);
+#ifdef __cplusplus
+}
+#endif

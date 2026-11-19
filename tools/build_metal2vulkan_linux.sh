@@ -26,6 +26,7 @@ done
 cp "$R"/userland/metal/bridge/begonia_*.rs "$bridge/"
 echo 'include!("begonia_reflection.rs");' >> "$bridge/NativeMetalObjects.rs"
 echo 'include!("begonia_indirect.rs");' >> "$bridge/NativeMetalObjects.rs"
+echo 'include!("begonia_arguments.rs");' >> "$bridge/NativeMetalObjects.rs"
 cat "$R/userland/metal/bridge/begonia_reflection.h" >> "$bridge/NativeMetalObjects.h"
 linker=$R/out/metal2vulkan-ios-linker.sh
 printf '#!/bin/bash\nexec "%s" -arch arm64 -isysroot "%s" "$@"\n' "$CC" "$SDK" > "$linker"; chmod +x "$linker"

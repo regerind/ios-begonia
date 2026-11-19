@@ -56,6 +56,58 @@ static NSData *nbLibraryBytes(id library) {
 }
 @end
 
+// begonia: argument buffers (MTLArgumentEncoder), over the runtime's (userland/metal/bridge/begonia_arguments.rs).
+@interface NBArgumentEncoder : NBObject <MTLArgumentEncoder>
+@property(nonatomic) NmbArgumentEncoder *handle;
+@end
+@implementation NBArgumentEncoder
+- (void)dealloc {if(_handle)nmb_argument_encoder_release(_handle);}
+- (NSUInteger)encodedLength {return (NSUInteger)nmb_argument_encoder_encoded_length(_handle);}
+- (NSUInteger)alignment {return (NSUInteger)nmb_argument_encoder_alignment(_handle);}
+- (void)report:(bool)ok what:(const char *)what {if(!ok)NBLOG(@"native-metal: argument encoder %s refused: %@",what,lastError());}
+- (void)setArgumentBuffer:(id<MTLBuffer>)b offset:(NSUInteger)o {
+ [self report:nmb_argument_encoder_set_target(_handle,[(id)b isKindOfClass:[NBBuffer class]]?[(NBBuffer *)b handle]:nullptr,o,UINT64_MAX) what:"setArgumentBuffer"];
+}
+- (void)setArgumentBuffer:(id<MTLBuffer>)b startOffset:(NSUInteger)o arrayElement:(NSUInteger)element {
+ [self report:nmb_argument_encoder_set_target(_handle,[(id)b isKindOfClass:[NBBuffer class]]?[(NBBuffer *)b handle]:nullptr,o,element) what:"setArgumentBuffer:startOffset:arrayElement:"];
+}
+- (void)setBuffer:(id<MTLBuffer>)b offset:(NSUInteger)o atIndex:(NSUInteger)i {
+ [self report:nmb_argument_encoder_set_buffer(_handle,[(id)b isKindOfClass:[NBBuffer class]]?[(NBBuffer *)b handle]:nullptr,o,(uint32_t)i) what:"setBuffer"];
+}
+- (void)setBuffers:(const id<MTLBuffer> __unsafe_unretained [])b offsets:(const NSUInteger [])o withRange:(NSRange)r {
+ for(NSUInteger k=0;k<r.length;k++)[self setBuffer:b[k] offset:o[k] atIndex:r.location+k];
+}
+- (void)setTexture:(id<MTLTexture>)t atIndex:(NSUInteger)i {
+ [self report:nmb_argument_encoder_set_texture(_handle,[(id)t isKindOfClass:[NBTexture class]]?[(NBTexture *)t handle]:nullptr,(uint32_t)i) what:"setTexture"];
+}
+- (void)setTextures:(const id<MTLTexture> __unsafe_unretained [])t withRange:(NSRange)r {
+ for(NSUInteger k=0;k<r.length;k++)[self setTexture:t[k] atIndex:r.location+k];
+}
+- (void)setSamplerState:(id<MTLSamplerState>)s atIndex:(NSUInteger)i {
+ [self report:nmb_argument_encoder_set_sampler(_handle,[(id)s isKindOfClass:[NBSampler class]]?[(NBSampler *)s handle]:nullptr,(uint32_t)i) what:"setSamplerState"];
+}
+- (void)setSamplerStates:(const id<MTLSamplerState> __unsafe_unretained [])s withRange:(NSRange)r {
+ for(NSUInteger k=0;k<r.length;k++)[self setSamplerState:s[k] atIndex:r.location+k];
+}
+- (void *)constantDataAtIndex:(NSUInteger)i {return nmb_argument_encoder_constant_data(_handle,(uint32_t)i);}
+- (id<MTLArgumentEncoder>)newArgumentEncoderForBufferAtIndex:(NSUInteger)i {
+ NmbArgumentEncoder *nested=nmb_argument_encoder_nested(_handle,(uint32_t)i);
+ if(!nested){NBLOG(@"native-metal: nested argument encoder refused: %@",lastError());return nil;}
+ NBArgumentEncoder *encoder=[NBArgumentEncoder new];encoder.handle=nested;return encoder;
+}
+@end
+@implementation NBFunction (BegoniaArguments)
+- (id<MTLArgumentEncoder>)newArgumentEncoderWithBufferIndex:(NSUInteger)i {
+ NmbArgumentEncoder *handle=self.handle?nmb_argument_encoder_new(self.handle,(uint32_t)i):nullptr;
+ if(!handle){NBLOG(@"native-metal: argument encoder refused: %@",lastError());return nil;}
+ NBArgumentEncoder *encoder=[NBArgumentEncoder new];encoder.handle=handle;return encoder;
+}
+- (id<MTLArgumentEncoder>)newArgumentEncoderWithBufferIndex:(NSUInteger)i reflection:(MTLAutoreleasedArgument *)reflection {
+ if(reflection)*reflection=nil;
+ return [self newArgumentEncoderWithBufferIndex:i];
+}
+@end
+
 @implementation NBDeviceMethods (BegoniaSource)
 - (id<MTLLibrary>)newLibraryWithSource:(NSString *)source options:(MTLCompileOptions *)options error:(NSError **)error {
  static std::atomic<unsigned> said{0};
