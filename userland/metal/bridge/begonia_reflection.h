@@ -1,5 +1,9 @@
 
-/* begonia: a pipeline's reflection (userland/metal/bridge/begonia_reflection.rs). Raw values are Metal's own. */
+/* begonia: a pipeline's reflection (userland/metal/bridge/begonia_reflection.rs). Raw values are Metal's own.
+ * (Appended after the header's own declarations, so with its own C linkage for the Objective-C++ front end.) */
+#ifdef __cplusplus
+extern "C" {
+#endif
 struct NmbBinding {
     char name[96];
     uint32_t binding_type, access, index;
@@ -12,3 +16,6 @@ struct NmbBinding {
  * Answers the number of bindings in all (only capacity are written) or -1 (nmb_last_error). */
 int64_t nmb_render_pipeline_reflection(const struct NmbRenderPipelineDescriptor *, struct NmbBinding *, uint64_t capacity, uint64_t *counts);
 int64_t nmb_compute_pipeline_reflection(const struct NmbComputePipelineDescriptor *, struct NmbBinding *, uint64_t capacity, uint64_t *counts);
+#ifdef __cplusplus
+}
+#endif
