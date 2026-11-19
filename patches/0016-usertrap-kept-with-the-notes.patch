@@ -1,15 +1,34 @@
 --- a/osfmk/arm64/user_exception_trace.c
 +++ b/osfmk/arm64/user_exception_trace.c
-@@ -69,6 +69,38 @@
- 	    count > 0 ? (unsigned long long)code[0] : 0, count > 1 ? (unsigned long long)code[1] : 0,
- 	    (unsigned long long)get_saved_state_pc(state), (unsigned long long)get_saved_state_lr(state),
- 	    (unsigned long long)get_saved_state_sp(state), slide);
+@@ -27,6 +27,7 @@
+ void user_exception_trace(exception_type_t exception, mach_exception_data_t code, mach_msg_type_number_t count, thread_t thread);
+ 
+ static TUNABLE(uint32_t, user_exception_trace_enabled, "systrace", 0);
++static TUNABLE(uint32_t, user_exception_note, "usertrap_note", 1);
+ 
+ static bool
+ plausible_user_address(uint64_t address)
+@@ -45,7 +46,8 @@
+ 	task_t task;
+ 	struct proc *proc;
+ 
+-	if (!user_exception_trace_enabled || thread != current_thread()) {
++	/* (begonia: the note below is kept without systrace too; boot-arg usertrap_note=0: not) */
++	if ((!user_exception_trace_enabled && !user_exception_note) || thread != current_thread()) {
+ 		return;
+ 	}
+ 	if (exception != EXC_BAD_ACCESS && exception != EXC_BAD_INSTRUCTION && exception != EXC_ARITHMETIC &&
+@@ -64,6 +66,43 @@
+ 	}
+ 	proc = get_bsdtask_info(task);
+ 
 +	/*
 +	 * begonia: the window server's and SpringBoard's are kept with the start-up notes (begonia_perf.c), which are
-+	 * said again and again: the log is a ring of 256 KB and their coming up again fills it (x46 and x52 had the
-+	 * window server start anew in the middle of a session, and nothing left of why). With up to eight callers.
++	 * said again every half minute: the log is a ring of 256 KB and their coming up again fills it (x46 and x52 had
++	 * the window server start anew in the middle of a session, and nothing left of why). With up to eight callers.
++	 * systrace=1 itself also traces every failing system call, which fills the ring in seconds (x59).
 +	 */
-+	{
++	if (user_exception_note) {
 +		extern void begonia_perf_note(const char *format, ...);
 +		static unsigned kept;
 +		const char *name = proc ? proc_name_address(proc) : "?";
@@ -36,6 +55,10 @@
 +			    (unsigned long long)get_saved_state_lr(state), slide, callers);
 +		}
 +	}
- 
- 	for (unsigned i = 0; i < sizeof(message_registers) / sizeof(message_registers[0]); i++) {
- 		uint64_t value = (uint64_t)get_saved_state_reg(state, message_registers[i]);
++	if (!user_exception_trace_enabled) {
++		return;
++	}
++
+ 	printf("usertrap: %s[%d] exception %d code 0x%llx 0x%llx: pc 0x%llx lr 0x%llx sp 0x%llx, shared cache slide 0x%x\n",
+ 	    proc ? proc_name_address(proc) : "?", proc ? proc_pid(proc) : -1, exception,
+ 	    count > 0 ? (unsigned long long)code[0] : 0, count > 1 ? (unsigned long long)code[1] : 0,
