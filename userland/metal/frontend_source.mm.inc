@@ -26,6 +26,36 @@ static NSData *nbLibraryBytes(id library) {
  return nil;
 }
 
+// begonia: draws and dispatches whose counts come from a buffer (games draw so: GPU culling, particles). The runtime has
+// them (userland/metal/bridge/begonia_indirect.rs); the front end had not, and a program died on the unknown selector (y48).
+@implementation NBRenderEncoder (BegoniaIndirect)
+- (void)drawPrimitives:(MTLPrimitiveType)t indirectBuffer:(id<MTLBuffer>)b indirectBufferOffset:(NSUInteger)o {
+ if(self.stub)return;
+ if(![(id)b isKindOfClass:[NBBuffer class]]){[self.commandBuffer refuse:@"foreign indirect buffer"];return;}
+ [self.commandBuffer.resourceOwners addObject:b];
+ gDraws++;self.commandBuffer->encodedWork.draws++;
+ [self check:nmb_render_draw_indirect(self.handle,t,[(NBBuffer *)b handle],o) what:"drawPrimitives:indirectBuffer:"];
+}
+- (void)drawIndexedPrimitives:(MTLPrimitiveType)t indexType:(MTLIndexType)k indexBuffer:(id<MTLBuffer>)ib indexBufferOffset:(NSUInteger)io
+               indirectBuffer:(id<MTLBuffer>)b indirectBufferOffset:(NSUInteger)o {
+ if(self.stub)return;
+ if(![(id)b isKindOfClass:[NBBuffer class]] || ![(id)ib isKindOfClass:[NBBuffer class]]){[self.commandBuffer refuse:@"foreign indirect or index buffer"];return;}
+ [self.commandBuffer.resourceOwners addObject:b];[self.commandBuffer.resourceOwners addObject:ib];
+ gDraws++;self.commandBuffer->encodedWork.draws++;
+ [self check:nmb_render_draw_indexed_indirect(self.handle,t,k,[(NBBuffer *)ib handle],io,[(NBBuffer *)b handle],o) what:"drawIndexedPrimitives:indirectBuffer:"];
+}
+@end
+@implementation NBComputeEncoder (BegoniaIndirect)
+- (void)dispatchThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)b indirectBufferOffset:(NSUInteger)o threadsPerThreadgroup:(MTLSize)g {
+ if(self.stub)return;
+ if(![(id)b isKindOfClass:[NBBuffer class]]){[self.commandBuffer refuse:@"foreign indirect buffer"];return;}
+ [self.commandBuffer.resourceOwners addObject:b];
+ gDispatches++;self.commandBuffer->encodedWork.dispatches++;
+ const uint64_t group[3]={g.width,g.height,g.depth};
+ [self check:nmb_compute_dispatch_indirect(self.handle,[(NBBuffer *)b handle],o,group) what:"dispatchThreadgroupsWithIndirectBuffer"];
+}
+@end
+
 @implementation NBDeviceMethods (BegoniaSource)
 - (id<MTLLibrary>)newLibraryWithSource:(NSString *)source options:(MTLCompileOptions *)options error:(NSError **)error {
  static std::atomic<unsigned> said{0};

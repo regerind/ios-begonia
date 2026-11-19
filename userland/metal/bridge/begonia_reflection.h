@@ -33,3 +33,14 @@ int64_t nmb_compute_pipeline_reflection2(const struct NmbComputePipelineDescript
 #ifdef __cplusplus
 }
 #endif
+/* begonia: draws and dispatches whose counts come from a buffer (userland/metal/bridge/begonia_indirect.rs) */
+#ifdef __cplusplus
+extern "C" {
+#endif
+bool nmb_render_draw_indirect(NmbEncoder *, uint64_t primitive, NmbBuffer *indirect, uint64_t offset);
+bool nmb_render_draw_indexed_indirect(NmbEncoder *, uint64_t primitive, uint64_t index_type, NmbBuffer *indices, uint64_t index_offset,
+                                      NmbBuffer *indirect, uint64_t offset);
+bool nmb_compute_dispatch_indirect(NmbEncoder *, NmbBuffer *indirect, uint64_t offset, const uint64_t per_group[3]);
+#ifdef __cplusplus
+}
+#endif
