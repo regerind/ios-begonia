@@ -1,0 +1,10 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2026,6 +2026,7 @@
+ 	} settings[] = {
+ 		{ "ax_rt=", "_AXSSetEnhanceBackgroundContrastEnabled", "Reduce Transparency" },
+ 		{ "ax_rm=", "_AXSSetReduceMotionEnabled", "Reduce Motion" },
++		{ "ax_bold=", "_AXSSetEnhanceTextLegibilityEnabled", "Bold Text" },
+ 	};
+ 	void *library;
+ 
