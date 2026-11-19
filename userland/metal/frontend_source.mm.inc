@@ -6,6 +6,8 @@
 // commonprofile_frag): its front half, source to AIR, needs no GPU of Apple's. So the source goes to it, and the library
 // it makes -- a metallib of AIR, libraryDataContents or serializeToURL:error: -- is opened by the runtime as any other
 // (newLibraryWithData:). Put after the device's class is made, by tools/build_metal_frontend_ios.py.
+#include <objc/message.h>
+
 static NSData *nbLibraryBytes(id library) {
  if ([library respondsToSelector:@selector(libraryDataContents)]) {
   id contents = ((id (*)(id, SEL))objc_msgSend)(library, @selector(libraryDataContents));
