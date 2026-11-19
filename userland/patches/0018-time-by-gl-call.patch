@@ -1,0 +1,50 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -344,6 +344,7 @@
+ static __thread struct eagl *current;
+ static struct eagl *contexts[8];
+ static uint32_t slot_calls[SLOTS];
++static uint64_t slot_us[SLOTS];         /* begonia (x32): time inside each entry during frames (eagl_leave()) */
+ /* begonia: why surfaces were copied rather than shared, for the whole run (summary()) */
+ static unsigned refuse_count[7];
+ static unsigned long long refuse_bytes[7];
+@@ -423,7 +424,10 @@
+ 	GLenum error;
+ 
+ 	if (inside_began != 0) {
+-		inside_us += now_us() - inside_began;
++		uint64_t spent = now_us() - inside_began;
++
++		inside_us += spent;
++		slot_us[offset / 8] += spent;
+ 		inside_began = 0;
+ 	}
+ 	if (check_errors && offset != 0x338 && (error = glGetError()) != 0) {
+@@ -555,6 +559,27 @@
+ 	say("hakios-gl:   of %llu us a frame, %llu inside GL calls (this bridge and Mesa), %llu between them "
+ 	    "(CoreAnimation's own work)\n", e->frame_us / frames, inside_us / frames,
+ 	    e->frame_us > inside_us ? (e->frame_us - inside_us) / frames : 0);
++	/* begonia (x32): where the time inside GL calls goes, the twelve entries that take the most */
++	{
++		bool listed[SLOTS] = { false };
++
++		for (unsigned rank = 0; rank < 12; rank++) {
++			unsigned best = 0;
++
++			for (unsigned i = 1; i < SLOTS; i++) {
++				if (!listed[i] && slot_us[i] > slot_us[best]) {
++					best = i;
++				}
++			}
++			if (best == 0 || slot_us[best] == 0) {
++				break;
++			}
++			listed[best] = true;
++			say("hakios-gl:   inside, #%u: %s %llu us a frame (%u calls a frame, %llu us each)\n", rank + 1,
++			    eagl_slot_name(best * 8), slot_us[best] / frames, slot_calls[best] / frames,
++			    slot_calls[best] ? slot_us[best] / slot_calls[best] : 0);
++		}
++	}
+ 	say("hakios-gl:   calls that set what was set already: glBindTexture %u, glUseProgram %u, glActiveTexture %u, "
+ 	    "glBindFramebuffer %u\n", same_texture, same_program, same_unit, same_framebuffer);
+ 	{
