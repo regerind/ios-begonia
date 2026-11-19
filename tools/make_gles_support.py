@@ -14,6 +14,10 @@ shutil.copy2(stage/'libOSMesa.8.dylib',dest/'lib/libOSMesa.8.dylib')
 shutil.copy2(stage/'gles_render_test',dest/'bin/gles_render_test')
 if a.ui:
  shutil.copy2(stage/'libhakios.gl.dylib',dest/'lib/libhakios.gl.dylib')
+ # Freeform gets SpringBoard's library too (src/inject_sb.c: its brushes without Metal, userland patch 0035)
+ conf=dest/'etc/inject.conf'
+ if conf.exists():
+  conf.write_text(''.join(line.rstrip('\n')+(' Freeform' if line.startswith('/redwood/lib/libhakios.sb.dylib ') and ' Freeform' not in line else '')+'\n' for line in conf.read_text().splitlines()))
  # a scripted touch workload of the base image (make_ui_support.py --touch-script) is kept
  touch=''.join(line for line in (dest/'etc/rc.jobs').read_text().splitlines(True) if '/bin/rwtouch ' in line)
  jobs=touch+'/redwood/bin/gles_render_test\nsleep 60\n/bin/ps -A\n'
