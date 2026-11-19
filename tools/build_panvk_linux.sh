@@ -23,11 +23,9 @@ for p in "$R"/userland/vulkan/patches/*.patch; do
 done
 
 # ---- a Meson new enough for this Mesa (>= 1.4; the distribution's may be older) ---------
-MESON=$R/.tools/meson/bin/meson
-if [ ! -x "$MESON" ]; then
-	python3 -m venv --system-site-packages "$R/.tools/meson"
-	"$R/.tools/meson/bin/pip" -q install "meson>=1.4,<1.9"
-fi
+[ -f "$R/.tools/meson-src/meson.py" ] ||
+	git clone -q --depth 1 -b 1.7.2 https://github.com/mesonbuild/meson "$R/.tools/meson-src"
+MESON="python3 $R/.tools/meson-src/meson.py"
 
 # ---- the native transport as libdrm -----------------------------------------------------
 python3 "$R/tools/prepare_native_vulkan_drm.py" | tail -1
@@ -53,7 +51,7 @@ echo "panvk: native transport built"
 # ---- host tools ---------------------------------------------------------------------------
 if [ ! -x "$B/host/src/panfrost/clc/panfrost_compile" ]; then
 	echo "panvk: building host tools (log: $B/host-build.log)"
-	[ -f "$B/host/build.ninja" ] || "$MESON" setup "$B/host" "$M" --buildtype=release -Dgallium-drivers= \
+	[ -f "$B/host/build.ninja" ] || $MESON setup "$B/host" "$M" --buildtype=release -Dgallium-drivers= \
 		-Dvulkan-drivers=panfrost -Dplatforms= -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false \
 		-Dgles1=disabled -Dgles2=disabled -Dllvm=enabled -Dmesa-clc=enabled -Dprecomp-compiler=enabled \
 		-Dzstd=disabled -Dexpat=disabled -Dshader-cache=disabled -Dxmlconfig=disabled -Dbuild-tests=false \
@@ -86,7 +84,7 @@ endian = 'little'
 INI
 if [ ! -f "$B/ios/build.ninja" ]; then
 	echo "panvk: configuring iOS build (log: $B/ios-setup.log)"
-	"$MESON" setup "$B/ios" "$M" --cross-file "$B/cross.ini" --wrap-mode=nofallback --buildtype=release -Db_ndebug=true \
+	$MESON setup "$B/ios" "$M" --cross-file "$B/cross.ini" --wrap-mode=nofallback --buildtype=release -Db_ndebug=true \
 		-Dgallium-drivers= -Dvulkan-drivers=panfrost -Dllvm=disabled -Dplatforms= -Dopengl=false -Dgles1=disabled \
 		-Dgles2=disabled -Degl=disabled -Dglx=disabled -Dgbm=disabled -Dmesa-clc=system -Dprecomp-compiler=system \
 		-Dshader-cache=disabled -Dzstd=disabled -Dexpat=disabled -Dxmlconfig=disabled -Dbuild-tests=false \
