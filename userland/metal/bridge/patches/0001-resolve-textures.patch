@@ -1,0 +1,72 @@
+diff -ru a/NativeMetalObjects.h b/NativeMetalObjects.h
+--- a/NativeMetalObjects.h	2026-11-18 20:32:40.828354891 +0300
++++ b/NativeMetalObjects.h	2026-11-19 15:19:21.972758704 +0300
+@@ -233,6 +233,8 @@
+     NmbTexture *texture;
+     uint64_t level, slice, depth_plane, load, store;
+     double clear[4]; /* color, or clear[0] depth / stencil */
++    NmbTexture *resolve_texture; /* begonia: the resolve target (MSAA resolve), or null */
++    uint64_t resolve_level, resolve_slice, resolve_depth_plane;
+ };
+ struct NmbRenderPassDescriptor {
+     struct NmbPassAttachment colors[8], depth, stencil;
+diff -ru a/NativeMetalObjects.rs b/NativeMetalObjects.rs
+--- a/NativeMetalObjects.rs	2026-11-18 20:32:40.828354891 +0300
++++ b/NativeMetalObjects.rs	2026-11-19 15:19:21.972093789 +0300
+@@ -1803,6 +1803,12 @@
+     pub load: u64,
+     pub store: u64,
+     pub clear: [f64; 4],
++    // begonia: the attachment's resolve target (MTLStoreActionMultisampleResolve); null: none. Without it a pass that
++    // renders with MSAA and resolves -- how games anti-alias into their drawable -- was refused ("resolve without texture").
++    pub resolve_texture: *mut NmbTexture,
++    pub resolve_level: u64,
++    pub resolve_slice: u64,
++    pub resolve_depth_plane: u64,
+ }
+ 
+ #[repr(C)]
+@@ -1821,6 +1827,10 @@
+     if a.texture.is_null() { Ok(None) } else { Ok(Some(get(a.texture)?.0.clone())) }
+ }
+ 
++fn resolve_of(a: &NmbPassAttachment) -> Result<Option<Texture>, String> {
++    if a.resolve_texture.is_null() { Ok(None) } else { Ok(Some(get(a.resolve_texture)?.0.clone())) }
++}
++
+ #[unsafe(no_mangle)]
+ pub extern "C" fn nmb_render_encoder_new(command_buffer: *mut NmbCommandBuffer, descriptor: *const NmbRenderPassDescriptor)
+                                          -> *mut NmbEncoder {
+@@ -1832,6 +1842,10 @@
+             slot.level = a.level;
+             slot.slice = a.slice;
+             slot.depth_plane = a.depth_plane;
++        slot.resolve_texture = resolve_of(a)?;
++        slot.resolve_level = a.resolve_level;
++        slot.resolve_slice = a.resolve_slice;
++        slot.resolve_depth_plane = a.resolve_depth_plane;
+             slot.load_action = LoadAction::from_raw(a.load).map_err(e("load action"))?;
+             slot.store_action = StoreAction::from_raw(a.store).map_err(e("store action"))?;
+             slot.clear_color = ClearColor::new(a.clear[0], a.clear[1], a.clear[2], a.clear[3]);
+@@ -1841,6 +1855,10 @@
+         depth.level = d.depth.level;
+         depth.slice = d.depth.slice;
+         depth.depth_plane = d.depth.depth_plane;
++        depth.resolve_texture = resolve_of(&d.depth)?;
++        depth.resolve_level = d.depth.resolve_level;
++        depth.resolve_slice = d.depth.resolve_slice;
++        depth.resolve_depth_plane = d.depth.resolve_depth_plane;
+         depth.load_action = LoadAction::from_raw(d.depth.load).map_err(e("load action"))?;
+         depth.store_action = StoreAction::from_raw(d.depth.store).map_err(e("store action"))?;
+         depth.clear_depth = d.depth.clear[0];
+@@ -1849,6 +1867,10 @@
+         stencil.level = d.stencil.level;
+         stencil.slice = d.stencil.slice;
+         stencil.depth_plane = d.stencil.depth_plane;
++        stencil.resolve_texture = resolve_of(&d.stencil)?;
++        stencil.resolve_level = d.stencil.resolve_level;
++        stencil.resolve_slice = d.stencil.resolve_slice;
++        stencil.resolve_depth_plane = d.stencil.resolve_depth_plane;
+         stencil.load_action = LoadAction::from_raw(d.stencil.load).map_err(e("load action"))?;
+         stencil.store_action = StoreAction::from_raw(d.stencil.store).map_err(e("store action"))?;
+         stencil.clear_stencil = d.stencil.clear[0] as u32;

@@ -146,6 +146,32 @@ int main(void) {
         uint64_t all = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - began;
         printf("BEGONIA SPRITEKIT: speed: 400 sprites, 60 frames in %llu ms: %.1f ms a frame, the slowest %.1f ms\n",
                all / 1000000ull, all / 60.0 / 1e6, slowest / 1e6);
+
+        /* MSAA as games use it: a 4x multisampled pass (the 400 sprites over a clear) resolved into a plain texture */
+        MTLTextureDescriptor *md = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                                                     width:W height:H mipmapped:NO];
+        md.textureType = MTLTextureType2DMultisample;
+        md.sampleCount = 4;
+        md.usage = MTLTextureUsageRenderTarget;
+        md.storageMode = MTLStorageModePrivate;
+        id<MTLTexture> msaa = [device newTextureWithDescriptor:md];
+        MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = msaa;
+        pass.colorAttachments[0].resolveTexture = target;
+        pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 1, 0, 1);
+        pass.colorAttachments[0].storeAction = MTLStoreActionMultisampleResolve;
+        id<MTLCommandBuffer> commands = [queue commandBuffer];
+        id<MTLRenderCommandEncoder> encoder = msaa ? [commands renderCommandEncoderWithDescriptor:pass] : nil;
+        [encoder endEncoding];
+        [commands commit];
+        [commands waitUntilCompleted];
+        [target getBytes:px bytesPerRow:W * 4 fromRegion:MTLRegionMake2D(0, 0, W, H) mipmapLevel:0];
+        printf("BEGONIA SPRITEKIT: msaa: texture %s, encoder %s, status %lu\n", msaa ? "made" : "NOT made", encoder ? "made" : "NOT made",
+               (unsigned long)commands.status);
+        unsigned before = passed;
+        check(px, 128, 128, 0, 255, 0, "4x MSAA clear, resolved");
+        printf("BEGONIA SPRITEKIT: msaa %s\n", passed > before ? "PASS" : "FAIL");
     }
     return passed == checks ? 0 : 2;
 }

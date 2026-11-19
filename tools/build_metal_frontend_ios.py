@@ -470,6 +470,15 @@ hooks=[
   '  id<MTLComputePipelineState> state=[(id<MTLDevice>)self newComputePipelineStateWithFunction:function options:options reflection:&reflection error:&error];\n'
   '  if(handler)dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{handler(state,reflection,error);});'),
 ]
+# (a pass attachment's resolve target, MSAA resolve: the bridge's record has it now, userland/metal/bridge/patches/0001)
+hooks.append(('  out.texture=texture.handle;out.level=a.level;out.slice=a.slice;out.depth_plane=a.depthPlane;out.load=a.loadAction;out.store=a.storeAction;\n',
+              '  out.texture=texture.handle;out.level=a.level;out.slice=a.slice;out.depth_plane=a.depthPlane;out.load=a.loadAction;out.store=a.storeAction;\n'
+              '  if(a.resolveTexture) {\n'
+              '   if(![(id)a.resolveTexture isKindOfClass:[NBTexture class]])return false;\n'
+              '   NBTexture *resolve=(NBTexture *)a.resolveTexture;if(resolve.surface)[_surfaces addObject:resolve];\n'
+              '   [_resourceOwners addObject:resolve];\n'
+              '   out.resolve_texture=resolve.handle;out.resolve_level=a.resolveLevel;out.resolve_slice=a.resolveSlice;out.resolve_depth_plane=a.resolveDepthPlane;\n'
+              '  }\n'))
 # (shader source: userland/metal/frontend_source.mm.inc, a category of the device's methods, after their class)
 hooks.append(('// Bare AIR bitcode (no metallib wrapper), which Metal itself refuses: for the bridge\'s own fixtures only.',
               (root/'userland/metal/frontend_source.mm.inc').read_text()+'\n// Bare AIR bitcode (no metallib wrapper), which Metal itself refuses: for the bridge\'s own fixtures only.'))

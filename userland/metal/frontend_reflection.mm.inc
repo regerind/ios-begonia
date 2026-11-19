@@ -370,6 +370,15 @@ static void nbTraceClass(const char *name) {
  free(methods);
  class_addMethod(cls, @selector(forwardInvocation:), (IMP)nbForwardInvocation, "v@:@");
 }
+// begonia: what a command buffer answers that the front end had not got (Measure, y41: "missing NBCommandBuffer logs", and
+// Metal's unknown selector aborts the program): no shader logs, no error options asked.
+__attribute__((constructor)) static void nbCommandBufferAnswers() {
+ Class cls = objc_getClass("NBCommandBuffer");
+ if (!cls) return;
+ class_addMethod(cls, @selector(logs), imp_implementationWithBlock(^id(id self) {(void)self; return @[];}), "@@:");
+ class_addMethod(cls, @selector(errorOptions), imp_implementationWithBlock(^NSUInteger(id self) {(void)self; return 0;}), "Q@:");
+}
+
 __attribute__((constructor)) static void nbTraceCalls() {
  char args[1024] = ""; size_t size = sizeof(args) - 1;
  if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) != 0 || strstr(args, "metal_calls=1") == NULL) return;

@@ -16,6 +16,12 @@ python3 "$R/tools/prepare_vulkan_userland.py" | tail -1
 bridge=$R/out/metal2vulkan-bridge; mkdir -p "$bridge"
 for f in "$R"/upstream/ios-s9plus-exynos/core/tools/metal/bridge/*; do [ -f "$f" ] && cp "$f" "$bridge/"; done
 sed -i 's#\.\./src/crates/metal2vulkan#../../upstream/metal2vulkan/crates/metal2vulkan#g' "$bridge/Cargo.toml"
+# begonia's changes to the bridge's own files (userland/metal/bridge/patches), on the fresh copy
+for p in "$R"/userland/metal/bridge/patches/*.patch; do
+	[ -f "$p" ] || continue
+	patch --force -s -p1 -d "$bridge" -i "$p" || { echo "bridge patch does not apply: $p" >&2; exit 1; }
+	echo "m2v: bridge $(basename "$p")"
+done
 # begonia's additions to the bridge (userland/metal/bridge): pipeline reflection, in the same file's scope
 cp "$R"/userland/metal/bridge/begonia_*.rs "$bridge/"
 echo 'include!("begonia_reflection.rs");' >> "$bridge/NativeMetalObjects.rs"
