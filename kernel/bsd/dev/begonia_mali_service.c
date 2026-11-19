@@ -177,6 +177,12 @@ static void flush_tables(void) {
  if(any && gpu) {
   uint64_t root=space.tables[0].physical;
   wr(0x2400,(uint32_t)root);wr(0x2404,root>>32);
+  /* x65: with the memory attributes and the translation's configuration, as init_gpu_hardware() writes them. That
+   * one runs before there is any table and then writes none of this, so the first job of every boot ran with the
+   * address space not set up, failed after 400 ms with JS_STATUS 0x42 (it could not read its own chain) and the GPU
+   * was reset; only the recovery then set it up (x62, x63: "BEGONIA GPU FAILURES: ... job 1"). */
+  wr(0x2408,0x88888888);wr(0x240c,0x88888888);
+  wr(0x2430,BEG_GPU_TRANSCFG);wr(0x2434,0);
   wr(0x2418,1);
   (void)wait(0x2428,1,0);
  }
