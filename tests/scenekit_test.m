@@ -66,7 +66,8 @@ int main(void) {
         SCNRenderer *renderer = [SCNRenderer rendererWithDevice:device options:nil];
         renderer.scene = scene;
         renderer.pointOfView = camera;
-        printf("BEGONIA SCENEKIT: renderer made (rendering API %lu)\n", (unsigned long)renderer.renderingAPI);
+        printf("BEGONIA SCENEKIT: renderer made (rendering API %lu, reverse Z %d)\n", (unsigned long)renderer.renderingAPI,
+               renderer.usesReverseZ);
 
         MTLTextureDescriptor *cd = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                                                       width:W height:H mipmapped:NO];
@@ -88,7 +89,8 @@ int main(void) {
             pass.colorAttachments[0].storeAction = MTLStoreActionStore;
             pass.depthAttachment.texture = depth;
             pass.depthAttachment.loadAction = MTLLoadActionClear;
-            pass.depthAttachment.clearDepth = 1;
+            /* (SceneKit's depth is reversed by default -- near is 1, far is 0, the test "greater" -- as an SCNView clears it) */
+            pass.depthAttachment.clearDepth = renderer.usesReverseZ ? 0 : 1;
             pass.depthAttachment.storeAction = MTLStoreActionDontCare;
             id<MTLCommandBuffer> commands = [queue commandBuffer];
             [renderer renderAtTime:frame / 60.0 viewport:CGRectMake(0, 0, W, H) commandBuffer:commands passDescriptor:pass];
