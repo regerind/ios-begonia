@@ -1,3 +1,4 @@
+#include <objc/message.h>
 // begonia: a pipeline's reflection, as Metal's objects (MTLArgument, MTLBinding, MTLRenderPipelineReflection,
 // MTLComputePipelineReflection). Put into NativeBridgeMetalFrontend.mm by tools/build_metal_frontend_ios.py.
 //
@@ -214,6 +215,82 @@ static void nbImageAdded(const struct mach_header *header, intptr_t slide) {
 }
 __attribute__((constructor)) static void nbSayImages() {
  _dyld_register_func_for_add_image(nbImageAdded);
+}
+
+// begonia: boot-arg metal_calls=1 -- what a program encodes, call by call, on the console: every method of the render
+// and blit encoders and of the command buffer goes through forwardInvocation:, which says its selector and arguments
+// (the first 300 calls of a process) and then runs the method itself. For finding why a frame comes out empty (SceneKit,
+// y38: pipelines made, buffers completed, not one pixel of the box).
+static std::atomic<unsigned> nbCallsSaid{0};
+static NSString *nbArgument(NSInvocation *invocation, NSUInteger i) {
+ const char *type = [invocation.methodSignature getArgumentTypeAtIndex:i];
+ while (*type == 'r' || *type == 'n' || *type == 'N' || *type == 'o' || *type == 'O' || *type == 'R' || *type == 'V') type++;
+ switch (*type) {
+ case 'c': case 'C': case 'B': {unsigned char v = 0; [invocation getArgument:&v atIndex:i]; return [NSString stringWithFormat:@"%u", v];}
+ case 'i': case 'I': {unsigned v = 0; [invocation getArgument:&v atIndex:i]; return [NSString stringWithFormat:@"%u", v];}
+ case 'q': case 'Q': case 'l': case 'L': {unsigned long long v = 0; [invocation getArgument:&v atIndex:i]; return [NSString stringWithFormat:@"%llu", v];}
+ case 'f': {float v = 0; [invocation getArgument:&v atIndex:i]; return [NSString stringWithFormat:@"%g", v];}
+ case 'd': {double v = 0; [invocation getArgument:&v atIndex:i]; return [NSString stringWithFormat:@"%g", v];}
+ case '@': {
+  __unsafe_unretained id v = nil; [invocation getArgument:&v atIndex:i];
+  if (!v) return @"nil";
+  NSString *label = [v respondsToSelector:@selector(label)] ? [v label] : nil;
+  return label.length ? [NSString stringWithFormat:@"%s'%@'", object_getClassName(v), label] : [NSString stringWithUTF8String:object_getClassName(v)];
+ }
+ case '^': {void *v = NULL; [invocation getArgument:&v atIndex:i]; return [NSString stringWithFormat:@"%p", v];}
+ case '{': {
+  NSUInteger size = 0; NSGetSizeAndAlignment(type, &size, NULL);
+  if (strncmp(type, "{?=dddddd}", 10) == 0 || strncmp(type, "{MTLViewport", 12) == 0 || (size == 48 && strstr(type, "dddddd"))) {
+   double v[6]; [invocation getArgument:v atIndex:i];
+   return [NSString stringWithFormat:@"{%g %g %g %g %g %g}", v[0], v[1], v[2], v[3], v[4], v[5]];
+  }
+  if (size <= 64) {
+   uint64_t v[8] = {0}; [invocation getArgument:v atIndex:i];
+   NSMutableString *s = [NSMutableString stringWithString:@"{"];
+   for (NSUInteger k = 0; k < (size + 7) / 8; k++) [s appendFormat:@"%s%llu", k ? " " : "", v[k]];
+   [s appendString:@"}"]; return s;
+  }
+  return [NSString stringWithFormat:@"{%lu bytes}", (unsigned long)size];
+ }
+ default: return [NSString stringWithFormat:@"(%s)", type];
+ }
+}
+static void nbForwardInvocation(id self, SEL _cmd, NSInvocation *invocation) {
+ (void)_cmd;
+ SEL original = NSSelectorFromString([@"nbOriginal_" stringByAppendingString:NSStringFromSelector(invocation.selector)]);
+ if (nbCallsSaid.fetch_add(1) < 300) {
+  NSMutableString *line = [NSMutableString stringWithFormat:@"call %s %@", object_getClassName(self), NSStringFromSelector(invocation.selector)];
+  for (NSUInteger i = 2; i < invocation.methodSignature.numberOfArguments; i++) [line appendFormat:@" %@", nbArgument(invocation, i)];
+  nbConsole(line.length > 600 ? [line substringToIndex:600] : line);
+ }
+ invocation.selector = original;
+ [invocation invoke];
+}
+static void nbTraceClass(const char *name) {
+ Class cls = objc_getClass(name);
+ if (!cls) return;
+ unsigned count = 0; Method *methods = class_copyMethodList(cls, &count);
+ for (unsigned i = 0; i < count; i++) {
+  SEL sel = method_getName(methods[i]);
+  const char *s = sel_getName(sel);
+  if (strncmp(s, "nbOriginal_", 11) == 0 || strcmp(s, "dealloc") == 0 || strcmp(s, ".cxx_destruct") == 0 || strcmp(s, "handle") == 0 ||
+      strncmp(s, "set", 3) != 0 && strncmp(s, "draw", 4) != 0 && strncmp(s, "end", 3) != 0 && strncmp(s, "commit", 6) != 0 &&
+      strncmp(s, "render", 6) != 0 && strncmp(s, "blit", 4) != 0 && strncmp(s, "copy", 4) != 0 && strncmp(s, "present", 7) != 0 &&
+      strncmp(s, "use", 3) != 0 && strncmp(s, "wait", 4) != 0)
+   continue;
+  SEL renamed = NSSelectorFromString([@"nbOriginal_" stringByAppendingString:NSStringFromSelector(sel)]);
+  if (class_addMethod(cls, renamed, method_getImplementation(methods[i]), method_getTypeEncoding(methods[i])))
+   method_setImplementation(methods[i], _objc_msgForward);
+ }
+ free(methods);
+ class_addMethod(cls, @selector(forwardInvocation:), (IMP)nbForwardInvocation, "v@:@");
+}
+__attribute__((constructor)) static void nbTraceCalls() {
+ char args[1024] = ""; size_t size = sizeof(args) - 1;
+ if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) != 0 || strstr(args, "metal_calls=1") == NULL) return;
+ nbTraceClass("NBRenderEncoder");
+ nbTraceClass("NBBlitEncoder");
+ nbTraceClass("NBCommandBuffer");
 }
 
 static MTLComputePipelineReflection *computeReflection(const NmbComputePipelineDescriptor *p, NSString *label) {
