@@ -470,6 +470,9 @@ hooks=[
   '  id<MTLComputePipelineState> state=[(id<MTLDevice>)self newComputePipelineStateWithFunction:function options:options reflection:&reflection error:&error];\n'
   '  if(handler)dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{handler(state,reflection,error);});'),
 ]
+# (shader source: userland/metal/frontend_source.mm.inc, a category of the device's methods, after their class)
+hooks.append(('// Bare AIR bitcode (no metallib wrapper), which Metal itself refuses: for the bridge\'s own fixtures only.',
+              (root/'userland/metal/frontend_source.mm.inc').read_text()+'\n// Bare AIR bitcode (no metallib wrapper), which Metal itself refuses: for the bridge\'s own fixtures only.'))
 for old,new in hooks:
  assert mtext.count(old)==1,'reflection hook does not fit: '+old[:90]
  mtext=mtext.replace(old,new)
