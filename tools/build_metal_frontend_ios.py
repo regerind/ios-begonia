@@ -426,7 +426,7 @@ mtext = mtext.replace(old_func_const_validate, new_func_const_validate)
 # out-parameter answered with them instead of nil, the completion-handler forms too.
 reflection_code=(root/'userland/metal/frontend_reflection.mm.inc').read_text()
 hooks=[
- ('#define NBLOG(', '#include <atomic>\n#include <sys/sysctl.h>\n#include <objc/runtime.h>\n'+reflection_code+'\n#define NBLOG('),
+ ('#define NBLOG(', '#include <atomic>\n#include <sys/sysctl.h>\n#include <objc/runtime.h>\n#include <dlfcn.h>\n#include <mach-o/dyld.h>\n'+reflection_code+'\n#define NBLOG('),
  # (an empty reflection on the front end's early exits too: a caller that asked aborts on nil)
  (' if(reflection)*reflection=nil;\n if(!d){\n  if(error)*error=nbError(@"nil render pipeline descriptor");',
   ' if(reflection)*reflection=nbReflectionWanted()?[[NBRenderReflection alloc] init]:nil;\n if(!d){\n  if(error)*error=nbError(@"nil render pipeline descriptor");'),

@@ -197,6 +197,20 @@ __attribute__((constructor)) static void nbMetallibsFromTheSupportImage() {
   nbOriginalPath = method_setImplementation(m, (IMP)nbPathForResource);
 }
 
+// begonia: where the Metal stack's libraries are in this process, said as each one is loaded, so that a crash's pc
+// (kernel patch 0016's usertrap note) can be placed in them: offset = pc - the address said, then llvm-symbolizer on the
+// unstripped library (out/...).
+static void nbImageAdded(const struct mach_header *header, intptr_t slide) {
+ Dl_info info;
+ (void)slide;
+ if (dladdr(header, &info) == 0 || info.dli_fname == NULL) return;
+ if (strstr(info.dli_fname, "HakiosMetal") || strstr(info.dli_fname, "libmetal2vulkan") || strstr(info.dli_fname, "libvulkan_panfrost"))
+  nbConsole([NSString stringWithFormat:@"image %s at %#lx", info.dli_fname, (unsigned long)header]);
+}
+__attribute__((constructor)) static void nbSayImages() {
+ _dyld_register_func_for_add_image(nbImageAdded);
+}
+
 static MTLComputePipelineReflection *computeReflection(const NmbComputePipelineDescriptor *p, NSString *label) {
  if (!nbReflectionWanted()) return nil;
  NBComputeReflection *r = [[NBComputeReflection alloc] init];
