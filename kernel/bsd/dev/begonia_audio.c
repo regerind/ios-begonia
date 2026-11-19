@@ -232,13 +232,34 @@ poll32(volatile uint8_t *b, uint32_t off, uint32_t mask, uint32_t want, unsigned
 	return (r32(b, off) & mask) == want;
 }
 
+/*
+ * The ring the AFE plays from (DL1), in the 4 MiB the Wi-Fi driver's window reserves at 0xab000000 (its EMI from 0,
+ * its DMA at +3 MiB for 512 KiB): the last 512 KiB is nobody's. 64 KiB = 16384 frames of 16-bit stereo, 341 ms.
+ */
+#define RING_PA                 0xab380000u
+#define RING_BYTES              0x10000u
+#define RING_FRAMES             (RING_BYTES / 4)
+#define AFE_CONN3               0x002c          /* O03 (the DAC link's left): bit 5 = DL1_CH1 */
+#define AFE_CONN4               0x0030          /* O04 (its right): bit 6 = DL1_CH2 */
+#define AFE_DL1_CON0            0x004c          /* 24..28 rate (10 = 48 kHz), 8 mono, 0..1 HD (0 = 16 bits) */
+#define AFE_DL1_BASE_MSB        0x0050
+#define AFE_DL1_BASE            0x0054
+#define AFE_DL1_CUR             0x005c
+#define AFE_DL1_END_MSB         0x0060
+#define AFE_DL1_END             0x0064
+#define DL1_ON                  (1u << 4)
+extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
+static volatile int16_t *ring;
+
+/*
+ * Everything up to sound coming out of the earpiece: the clocks and the domain, the AFE, the DAC link, then either the
+ * AFE's sine (a test) or DL1 playing the ring, then the codec and its receiver at gain index GAIN (8 = 0 dB, 18 =
+ * -10 dB, 0x1f = -40 dB). *OK: whether every write went through.
+ */
 static size_t
-tone(char *out, size_t len, size_t o)
+hw_up(char *out, size_t len, size_t o, bool sine, unsigned gain, bool *ok)
 {
-	if (!permitted()) {
-		say("tone: not permitted (boot-arg begonia_audio=1)\n");
-		return o;
-	}
+	*ok = false;
 	/* 1. clocks: audio_sel = clk26m and on, aud_intbus_sel = mainpll_d2_d4 and on; infra's audio gate open */
 	w32(topck, CLK_CFG_6_CLR, (3u << 8) | (1u << 15) | (3u << 16) | (1u << 23));
 	w32(topck, CLK_CFG_6_SET, 1u << 16);
@@ -290,10 +311,35 @@ tone(char *out, size_t len, size_t o)
 	w32(afe, AFE_ADDA_DL_SDM_AUTO_RESET_CON, 0x400u | (1u << 31));
 	m32(afe, AFE_ADDA_UL_DL_CON0, (1u << 29) | 1u, 1u);
 	m32(afe, AFE_ADDA_DL_SRC2_CON0, 1u, 1u);
-	/* 5. the sine into O3/O4 (the DAC link): 48 kHz both channels, amplitude 1/8 */
-	m32(afe, AFE_SINEGEN_CON2, 0x3f, 34);
-	w32(afe, AFE_SINEGEN_CON0, 0x04a82a81);
-	m32(afe, AFE_DAC_CON0, 1u, 1u);
+	if (sine) {
+		/* 5. the sine into O3/O4 (the DAC link): 48 kHz both channels, amplitude 1/8 */
+		m32(afe, AFE_SINEGEN_CON2, 0x3f, 34);
+		w32(afe, AFE_SINEGEN_CON0, 0x04a82a81);
+		m32(afe, AFE_DAC_CON0, 1u, 1u);
+	} else {
+		/* 5. DL1 plays the ring into O3/O4 (mt6785-afe-pcm.c's memif DL1; mt6785-dai-adda.c's DL1_CH1/CH2 mix) */
+		if (ring == NULL) {
+			ring = (volatile int16_t *)ml_io_map_wcomb(RING_PA, RING_BYTES);
+		}
+		if (ring == NULL) {
+			say("stream: the ring not mapped\n");
+			return o;
+		}
+		for (unsigned i = 0; i < RING_BYTES / 2; i++) {
+			ring[i] = 0;
+		}
+		__builtin_arm_dsb(0xf);
+		w32(afe, AFE_SINEGEN_CON0, 0);
+		m32(afe, AFE_SINEGEN_CON2, 0x3f, 0x3f);
+		w32(afe, AFE_DL1_BASE_MSB, 0);
+		w32(afe, AFE_DL1_BASE, RING_PA);
+		w32(afe, AFE_DL1_END_MSB, 0);
+		w32(afe, AFE_DL1_END, RING_PA + RING_BYTES - 1);
+		m32(afe, AFE_DL1_CON0, (0x1fu << 24) | (1u << 8) | 3u, 10u << 24);
+		m32(afe, AFE_CONN3, 1u << 5, 1u << 5);
+		m32(afe, AFE_CONN4, 1u << 6, 1u << 6);
+		m32(afe, AFE_DAC_CON0, DL1_ON | 1u, DL1_ON | 1u);
+	}
 	say("tone: AFE on: TOP_CON0 %#x DAC_CON0 %#x UL_DL %#x DL_SRC2 %#x SINEGEN %#x/%#x\n", r32(afe, AUDIO_TOP_CON0),
 	    r32(afe, AFE_DAC_CON0), r32(afe, AFE_ADDA_UL_DL_CON0), r32(afe, AFE_ADDA_DL_SRC2_CON0), r32(afe, AFE_SINEGEN_CON0),
 	    r32(afe, AFE_SINEGEN_CON2));
@@ -340,12 +386,26 @@ tone(char *out, size_t len, size_t o)
 	e |= pm_write(AUDDEC_ANA_CON10, 0x7000);
 	e |= pm_write(AUDDEC_ANA_CON6, 0x0092);
 	e |= pm_write(AUDDEC_ANA_CON6, 0x0093);
-	e |= pm_write(ZCD_CON3, 18);
+	e |= pm_write(ZCD_CON3, gain);
 	e |= pm_update(AUDDEC_ANA_CON13, 1u, 1u);                               /* decoder clock */
 	e |= pm_write(AUDDEC_ANA_CON0, 0x0009);                                 /* the DAC */
 	e |= pm_write(AUDDEC_ANA_CON9, 0x0001);
 	e |= pm_write(AUDDEC_ANA_CON6, 0x009b);                                 /* HS mux to the DAC */
-	say("tone: codec %s; the earpiece plays for 3 s\n", e ? "A PMIC WRITE FAILED" : "on");
+	say("audio: codec %s (receiver gain index %u)\n", e ? "A PMIC WRITE FAILED" : "on", gain);
+	*ok = e == 0;
+	return o;
+}
+
+static size_t
+tone(char *out, size_t len, size_t o)
+{
+	bool ok;
+	if (!permitted()) {
+		say("tone: not permitted (boot-arg begonia_audio=1)\n");
+		return o;
+	}
+	o = hw_up(out, len, o, true, 18, &ok);
+	say("tone: the earpiece plays for 3 s\n");
 	o = status(out, len, o);
 	delay(3000000);
 	/* the receiver off again (mt_rcv_event PRE_PMD): gain to -40 dB, HS driver off; the sine stopped */
@@ -354,6 +414,121 @@ tone(char *out, size_t len, size_t o)
 	w32(afe, AFE_SINEGEN_CON0, 0);
 	say("tone: done (receiver off, sine off)\n");
 	return o;
+}
+
+/*
+ * ---- Darwin's sound to the earpiece: the sink of /dev/hakios-audio (upstream's drivers/audio/hakios.audio.c) ----
+ * The audio server's plug-in writes what it has mixed, 48 kHz 16-bit stereo; here it goes into the ring just ahead of
+ * where DL1 reads (AFE_DL1_CUR), at Darwin's volume, left and right mixed (the earpiece is one speaker; the bottom
+ * speaker, and the dual-speaker stereo, come with the TFA98xx). A timer clears what DL1 has played, so that silence,
+ * not the last sound again, plays when nothing is written. The hardware comes up on a thread call at the first write
+ * (the writer is the audio server's real-time thread and must not wait); frames before that are dropped.
+ */
+#include <sys/hakios.audio.h>
+#include <kern/thread_call.h>
+#include <kern/clock.h>
+
+static const uint16_t gain_eighths[48] = { 32768, 32300, 31838, 31383, 30935, 30493, 30057, 29628, 29205, 28787, 28376,
+	27970, 27571, 27177, 26789, 26406, 26029, 25657, 25290, 24929, 24573, 24221, 23875, 23534, 23198, 22867, 22540, 22218,
+	21900, 21587, 21279, 20975, 20675, 20380, 20089, 19802, 19519, 19240, 18965, 18694, 18427, 18164, 17904, 17648, 17396,
+	17147, 16902, 16661 };
+static volatile int stream_state;               /* 0 down, 1 coming up, 2 playing, -1 failed */
+static uint32_t wp;                             /* the next frame written, in the ring */
+static uint32_t cleared;                        /* the next frame the timer clears */
+static thread_call_t up_call, clear_call;
+static uint64_t frames_in, frames_dropped;
+
+static uint32_t
+read_frame(void)
+{
+	uint32_t cur = r32(afe, AFE_DL1_CUR);
+	return cur >= RING_PA && cur < RING_PA + RING_BYTES ? (cur - RING_PA) / 4 : 0;
+}
+
+static void
+clear_played(__unused thread_call_param_t a, __unused thread_call_param_t b)
+{
+	uint32_t rd = read_frame();
+	while (cleared != rd) {
+		if (cleared != wp) {                    /* (what is written but not played yet stays) */
+			ring[cleared * 2] = 0;
+			ring[cleared * 2 + 1] = 0;
+		} else {
+			wp = (wp + 1) % RING_FRAMES;     /* the writer is behind: keep it ahead of what is cleared */
+		}
+		cleared = (cleared + 1) % RING_FRAMES;
+	}
+	__builtin_arm_dsb(0xf);
+	uint64_t deadline;
+	clock_interval_to_deadline(20, NSEC_PER_MSEC, &deadline);
+	thread_call_enter_delayed(clear_call, deadline);
+}
+
+static void
+come_up(__unused thread_call_param_t a, __unused thread_call_param_t b)
+{
+	static char log[2048];
+	bool ok;
+	size_t o = hw_up(log, sizeof(log), 0, false, 8, &ok);
+	(void)o;
+	printf("%s", log);
+	if (!ok || ring == NULL) {
+		stream_state = -1;
+		printf("BEGONIA AUDIO: the stream did not come up\n");
+		return;
+	}
+	cleared = read_frame();
+	wp = (cleared + 960) % RING_FRAMES;             /* 20 ms ahead of DL1 */
+	clear_call = thread_call_allocate(clear_played, NULL);
+	clear_played(NULL, NULL);
+	stream_state = 2;
+	printf("BEGONIA AUDIO: Darwin's sound plays on the earpiece (DL1 at 0x%x, 0 dB receiver, Darwin's volume)\n", RING_PA);
+}
+
+static uint32_t
+sink(const int16_t *frames, uint32_t count)
+{
+	if (stream_state == 0) {
+		stream_state = 1;
+		thread_call_enter(up_call);
+		return 0;
+	}
+	if (stream_state != 2) {
+		return 0;
+	}
+	uint32_t below = 0, generation;
+	bool muted = false;
+	(void)hakios_audio_volume(&below, &muted, &generation);
+	uint32_t g = muted ? 0 : (uint32_t)gain_eighths[below % 48] >> (below / 48 > 15 ? 15 : below / 48);
+	uint32_t rd = read_frame();
+	uint32_t room = (rd + RING_FRAMES - wp - 1) % RING_FRAMES;
+	uint32_t n = count < room ? count : room;
+	for (uint32_t i = 0; i < n; i++) {
+		int32_t m = ((int32_t)frames[2 * i] + frames[2 * i + 1]) / 2;
+		int16_t s = (int16_t)((m * (int32_t)g) >> 15);
+		ring[wp * 2] = s;
+		ring[wp * 2 + 1] = s;
+		wp = (wp + 1) % RING_FRAMES;
+	}
+	__builtin_arm_dsb(0xf);
+	frames_in += n;
+	frames_dropped += count - n;
+	return n;                                       /* (what did not fit is counted as lost by hakios.audio.c) */
+}
+
+void
+begonia_audio_init(void)
+{
+	if (!permitted()) {
+		return;
+	}
+	if (!mapped()) {
+		printf("BEGONIA AUDIO: registers not mapped\n");
+		return;
+	}
+	up_call = thread_call_allocate(come_up, NULL);
+	hakios_audio_set_sink("begonia earpiece (MT6359 receiver)", sink);
+	printf("BEGONIA AUDIO: sink set: Darwin's sound goes to the earpiece when it first plays\n");
 }
 
 static char answer[4096];

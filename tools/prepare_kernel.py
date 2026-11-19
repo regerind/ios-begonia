@@ -90,6 +90,8 @@ hakios_input_init(void)
 \tbegonia_backlight_init();
 \textern void begonia_battery_init(void);
 \tbegonia_battery_init();
+\textern void begonia_audio_init(void);
+\tbegonia_audio_init();
 \textern void begonia_wlan_init(void);
 \textern void BegoniaWLANStart(void);
 \tbegonia_wlan_init();
