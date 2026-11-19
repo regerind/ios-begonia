@@ -87,14 +87,26 @@ static inline vm_offset_t begonia_pwrap_get(void) {
     return g_begonia_pwrap_base;
 }
 
-static int begonia_pwrap_read(uint32_t addr, uint32_t *value) {
-    vm_offset_t base = begonia_pwrap_get();
-    if (!base || (addr & 1) || addr > 0xfffe) return -1;
+/*
+ * The PMIC wrapper's one command register (WACS2: command 0xc20, state 0xc24, clear 0xc28) is shared with
+ * begonia_perf.c, begonia_battery.c and begonia_buttons.c: every command here holds their lock (begonia_pwrap_take,
+ * begonia_perf.c). Without it two drivers' commands interleaved (y58 read the PMIC's chip id as 0x5100 once).
+ * A wait that times out fails the command; nothing is sent to a wrapper that is not idle.
+ */
+void begonia_pwrap_take(void);
+void begonia_pwrap_give(void);
+
+static bool pwrap_idle(vm_offset_t base) {
     for (int i = 0; i < 1000; i++) {
         uint32_t st = *(volatile uint32_t *)(base + 0xc24);
-        if ((st & (1u << 22)) && ((st >> 16) & 7) == 0) break;
+        if ((st & (1u << 22)) && ((st >> 16) & 7) == 0) return true;
         delay(10);
     }
+    return false;
+}
+
+static int pwrap_read_locked(vm_offset_t base, uint32_t addr, uint32_t *value) {
+    if (!pwrap_idle(base)) return -1;
     *(volatile uint32_t *)(base + 0xc20) = (addr >> 1) << 16;
     for (int i = 0; i < 1000; i++) {
         uint32_t st = *(volatile uint32_t *)(base + 0xc24);
@@ -108,28 +120,45 @@ static int begonia_pwrap_read(uint32_t addr, uint32_t *value) {
     return -1;
 }
 
+static int pwrap_write_locked(vm_offset_t base, uint32_t addr, uint32_t val) {
+    if (!pwrap_idle(base)) return -1;
+    *(volatile uint32_t *)(base + 0xc20) = (1u << 31) | ((addr >> 1) << 16) | (val & 0xffff);
+    return pwrap_idle(base) ? 0 : -1;
+}
+
+static int begonia_pwrap_read(uint32_t addr, uint32_t *value) {
+    vm_offset_t base = begonia_pwrap_get();
+    if (!base || (addr & 1) || addr > 0xfffe) return -1;
+    begonia_pwrap_take();
+    int e = pwrap_read_locked(base, addr, value);
+    begonia_pwrap_give();
+    return e;
+}
+
 static int begonia_pwrap_write(uint32_t addr, uint32_t val) {
     vm_offset_t base = begonia_pwrap_get();
     if (!base || (addr & 1) || addr > 0xfffe) return -1;
-    for (int i = 0; i < 1000; i++) {
-        uint32_t st = *(volatile uint32_t *)(base + 0xc24);
-        if ((st & (1u << 22)) && ((st >> 16) & 7) == 0) break;
-        delay(10);
-    }
-    *(volatile uint32_t *)(base + 0xc20) = (1u << 31) | ((addr >> 1) << 16) | (val & 0xffff);
-    for (int i = 0; i < 1000; i++) {
-        uint32_t st = *(volatile uint32_t *)(base + 0xc24);
-        if ((st & (1u << 22)) && ((st >> 16) & 7) == 0) return 0;
-        delay(10);
-    }
-    return -1;
+    begonia_pwrap_take();
+    int e = pwrap_write_locked(base, addr, val);
+    begonia_pwrap_give();
+    return e;
 }
 
+/* read, change the masked bits, write: one locked unit, and the result read back */
 static int begonia_pwrap_write_regulator(uint32_t addr, uint32_t mask, uint32_t value) {
-    uint32_t cur = 0;
-    if (begonia_pwrap_read(addr, &cur) != 0) return -1;
-    uint32_t next = (cur & ~mask) | (value & mask);
-    return begonia_pwrap_write(addr, next);
+    vm_offset_t base = begonia_pwrap_get();
+    uint32_t cur = 0, back = 0;
+    if (!base || (addr & 1) || addr > 0xfffe) return -1;
+    begonia_pwrap_take();
+    int e = pwrap_read_locked(base, addr, &cur);
+    if (e == 0) {
+        e = pwrap_write_locked(base, addr, (cur & ~mask) | (value & mask));
+    }
+    if (e == 0 && (pwrap_read_locked(base, addr, &back) != 0 || (back & mask) != (value & mask))) {
+        e = -1;
+    }
+    begonia_pwrap_give();
+    return e;
 }
 
 #define WIFI_FW_DIR             "/usr/share/firmware/wifi/viva/"
