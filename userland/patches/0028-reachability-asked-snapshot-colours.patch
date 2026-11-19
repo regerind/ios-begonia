@@ -1,0 +1,84 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2189,6 +2189,33 @@
+ 	}
+ }
+ 
++/* begonia: a picture's colours, sixteen samples of it drawn small: is the wallpaper's snapshot a picture or one flat colour? */
++static void
++pbui_image_colour(const char *what, id image)
++{
++	CGImageRef cg = image != NULL && class_respondsToSelector(object_getClass(image), sel_registerName("CGImage")) ?
++	    SEND(CGImageRef, image, "CGImage") : NULL;
++	uint8_t px[4 * 4 * 4];
++	CGColorSpaceRef space;
++	CGContextRef context;
++
++	if (cg == NULL) {
++		say("hakios: pbui: %s: no picture to look at (%s)\n", what, image ? object_getClassName(image) : "none");
++		return;
++	}
++	memset(px, 0, sizeof(px));
++	space = CGColorSpaceCreateDeviceRGB();
++	context = CGBitmapContextCreate(px, 4, 4, 8, 16, space, kCGImageAlphaPremultipliedLast);
++	if (context != NULL) {
++		CGContextDrawImage(context, CGRectMake(0, 0, 4, 4), cg);
++		CGContextRelease(context);
++	}
++	CGColorSpaceRelease(space);
++	say("hakios: pbui: %s: picture %zu x %zu, %zu bits a pixel; red,green,blue of four of sixteen parts: %u,%u,%u %u,%u,%u "
++	    "%u,%u,%u %u,%u,%u\n", what, CGImageGetWidth(cg), CGImageGetHeight(cg), CGImageGetBitsPerPixel(cg), px[0], px[1], px[2],
++	    px[20], px[21], px[22], px[40], px[41], px[42], px[60], px[61], px[62]);
++}
++
+ static void
+ pbui_views(id view, int depth)
+ {
+@@ -2212,6 +2239,9 @@
+ 		}
+ 		if (class_respondsToSelector(cls, sel_registerName("source")) && SEND(id, view, "source") != NULL) {
+ 			say("hakios: pbui: view %d   source %s\n", depth, text_of(SEND(id, view, "source")));
++			if (class_respondsToSelector(object_getClass(SEND(id, view, "source")), sel_registerName("snapshot"))) {
++				pbui_image_colour("that source's snapshot", SEND(id, SEND(id, view, "source"), "snapshot"));
++			}
+ 		}
+ 		if (class_respondsToSelector(cls, sel_registerName("imageProvider")) && SEND(id, view, "imageProvider") != NULL) {
+ 			say("hakios: pbui: view %d   imageProvider %s\n", depth, text_of(SEND(id, view, "imageProvider")));
+@@ -2258,6 +2288,27 @@
+ 	say("hakios: pbui: end\n");
+ }
+ 
++/*
++ * begonia: the notification com.hakios.reach asks SpringBoard for one-handed mode (reachability) as the swipe down
++ * on the bottom edge does, for sessions nobody is at: a scripted swipe did not bring it.
++ */
++static void
++reach(void)
++{
++	Class cls = objc_getClass("SBReachabilityManager");
++	id manager = cls != NULL && class_getClassMethod(cls, sel_registerName("sharedInstance")) ? SEND(id, cls, "sharedInstance") : NULL;
++	Class kind = manager ? object_getClass(manager) : NULL;
++
++	say("hakios: reach: manager %s; enabled %d; active %d\n", manager ? "there" : "not there",
++	    kind && class_respondsToSelector(kind, sel_registerName("reachabilityEnabled")) ? SEND(BOOL, manager, "reachabilityEnabled") : -1,
++	    kind && class_respondsToSelector(kind, sel_registerName("reachabilityModeActive")) ? SEND(BOOL, manager, "reachabilityModeActive") : -1);
++	if (kind != NULL && class_respondsToSelector(kind, sel_registerName("toggleReachability"))) {
++		SEND(void, manager, "toggleReachability");
++		say("hakios: reach: asked; active %d\n",
++		    class_respondsToSelector(kind, sel_registerName("reachabilityModeActive")) ? SEND(BOOL, manager, "reachabilityModeActive") : -1);
++	}
++}
++
+ __attribute__((constructor))
+ static void
+ hakios_springboard_init(void)
+@@ -2422,6 +2473,9 @@
+ 	notify_register_dispatch("com.hakios.unlock", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		unlock();
+ 	});
++	notify_register_dispatch("com.hakios.reach", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		reach();
++	});
+ 	notify_register_dispatch("com.hakios.pbui", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		pbui();
+ 	});

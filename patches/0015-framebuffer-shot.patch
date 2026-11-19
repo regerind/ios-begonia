@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
 +++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
-@@ -263,6 +263,49 @@
+@@ -263,6 +263,59 @@
  static TUNABLE(uint32_t, gBeam, "fb_beam", 1);
  extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
  static inline uint32_t refreshHz(void);
@@ -43,7 +43,17 @@
 +			}
 +		}
 +		line[n] = 0;
-+		IOLog("SHO%c%u %03u %s\n", gShotRgb ? 'C' : 'T', number, (y - top) / step, line);
++		if (gShotRgb) {	/* (a line of the log keeps about 250 characters: the row in two halves) */
++			unsigned half = (n / 4) * 2;
++			char kept = line[half];
++
++			line[half] = 0;
++			IOLog("SHOC%u %03ua %s\n", number, (y - top) / step, line);
++			line[half] = kept;
++			IOLog("SHOC%u %03ub %s\n", number, (y - top) / step, line + half);
++		} else {
++			IOLog("SHOT%u %03u %s\n", number, (y - top) / step, line);
++		}
 +	}
 +	IOLog("SHOT%u ends\n", number);
 +}
