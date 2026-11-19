@@ -165,9 +165,14 @@ static MTLRenderPipelineReflection *renderReflection(const NmbRenderPipelineDesc
 static IMP nbOriginalURL, nbOriginalURLIn, nbOriginalPath;
 
 static NSString *nbKeptMetallib(NSBundle *bundle, NSString *name, NSString *extension) {
- if (![extension hasSuffix:@"metallib"] || !name || !bundle.bundleIdentifier) return nil;
- NSString *path = [NSString stringWithFormat:@"/redwood/ext/metallib/%@/%@.metallib", bundle.bundleIdentifier, name];
- if (![[NSFileManager defaultManager] isReadableFileAtPath:path]) return nil;
+ if (![extension hasSuffix:@"metallib"] || !name) return nil;
+ // an application's by its identifier (where it is installed differs from phone to phone); a framework's by its path
+ NSString *path = bundle.bundleIdentifier ?
+     [NSString stringWithFormat:@"/redwood/ext/metallib/%@/%@.metallib", bundle.bundleIdentifier, name] : nil;
+ if (!path || ![[NSFileManager defaultManager] isReadableFileAtPath:path]) {
+  path = bundle.bundlePath ? [NSString stringWithFormat:@"/redwood/ext/metallib%@/%@.metallib", bundle.bundlePath, name] : nil;
+  if (!path || ![[NSFileManager defaultManager] isReadableFileAtPath:path]) return nil;
+ }
  static std::atomic<unsigned> said{0};
  if (said.fetch_add(1) < 8) nbConsole([NSString stringWithFormat:@"%@.metallib of %@ from the support image", name, bundle.bundleIdentifier]);
  return path;

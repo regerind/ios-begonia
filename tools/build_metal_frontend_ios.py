@@ -16,6 +16,23 @@ for f in (ref/'metal-wip/frontend').iterdir():
  if f.is_file():shutil.copy2(f,source/f.name)
 for name in ('hakios_metal_shown.h','hakios_metal_shown.c'):
  shutil.copy2(ref/'core/userland/src'/name,out/name)
+# begonia: "@apps" in HakiosMetal.clients shows the device to every application -- a program inside an .app of
+# /Applications, of the installed applications' containers or of the staged system applications -- and to no daemon,
+# nor SpringBoard (its .app is in /System/Library/CoreServices): games are named in no list.
+shown=out/'hakios_metal_shown.c';stext=shown.read_text()
+old_match='\t\tlisted = strcmp(line, "*") == 0 || (line[0] != \'\\0\' && strcmp(line, name) == 0);'
+assert stext.count(old_match)==1
+stext=stext.replace(old_match,old_match+'''
+\t\tif (!listed && strcmp(line, "@apps") == 0) {
+\t\t\tchar executable[1024];
+\t\t\tuint32_t length = sizeof(executable);
+
+\t\t\tlisted = _NSGetExecutablePath(executable, &length) == 0 && strstr(executable, ".app/") != NULL &&
+\t\t\t    (strncmp(executable, "/Applications/", 14) == 0 || strstr(executable, "/containers/Bundle/Application/") != NULL ||
+\t\t\t    strstr(executable, "/staged_system_apps/") != NULL);
+\t\t}''')
+stext=stext.replace('#include <dlfcn.h>','#include <dlfcn.h>\n#include <mach-o/dyld.h>\n#include <stdint.h>',1)
+shown.write_text(stext)
 f=source/'HakiosMetalVK.mm';text=f.read_text();old='#define DEFAULT_ICD "/redwood/lib/libhakios.vk.dylib"'
 assert text.count(old)==1;text=text.replace(old,'#define DEFAULT_ICD "/redwood/lib/libvulkan_panfrost.dylib"')
 text=text.replace('tried = true;','tried = true;\n\t\tsetenv("PAN_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 1);')

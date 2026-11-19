@@ -40,11 +40,17 @@ if a.metal_client:
  for app in sorted((sysimage/'rootfs/private/var/staged_system_apps').glob('*.app'))+sorted((sysimage/'rootfs/Applications').glob('*.app')):
   try:info=plistlib.loads((app/'Info.plist').read_bytes())
   except Exception:continue
-  if info.get('CFBundleExecutable') not in a.metal_client:continue
+  if '@apps' not in a.metal_client and info.get('CFBundleExecutable') not in a.metal_client:continue
   libraries=sysimage/'metallibs'/app.relative_to(sysimage/'rootfs')
   kept=dest/'ext/metallib'/info['CFBundleIdentifier'];kept.mkdir(parents=True,exist_ok=True)
   for library in sorted(libraries.glob('*.metallib')):
    shutil.copy2(library,kept/library.name);print('metal: '+library.name+' of '+info['CFBundleIdentifier'])
+ # The frameworks' libraries that games draw with and that fit in the boot image (SceneKit's 2.1 MB and
+ # MetalPerformanceShaders' 95 MB do not: they need the system volume), by their bundle's path.
+ for path in ('System/Library/Frameworks/SpriteKit.framework/default.metallib',):
+  if (sysimage/'metallibs'/path).exists():
+   (dest/'ext/metallib'/path).parent.mkdir(parents=True,exist_ok=True)
+   shutil.copy2(sysimage/'metallibs'/path,dest/'ext/metallib'/path);print('metal: /'+path)
  for t in ('metal_frontend_test','vulkan_device_test'):
   if (root/'out/native-gpu-tests'/t).exists():
    shutil.copy2(root/'out/native-gpu-tests'/t,dest/'bin'/t);metal_tests+='/redwood/bin/'+t+'\n'
