@@ -1,0 +1,66 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -518,6 +518,12 @@
+  */
+ static int hash_wrapped;
+ static unsigned wrapped_skipped;
++/*
++ * begonia (x31): calls that set what is already set -- the same texture on the same unit, the same program, the
++ * same unit, the same framebuffer -- counted before they are handed on (each call's total is in the list below
++ * the summary): what a cache of the library's state in this bridge could save.
++ */
++static unsigned same_texture, same_program, same_unit, same_framebuffer;
+ 
+ static void
+ summary(struct eagl *e)
+@@ -536,6 +542,16 @@
+ 	    seed_missed[0], seed_looks[0], seed_missed[1], seed_looks[1]);
+ 	say("hakios-gl:   wrapped memory %s: %u looks skipped\n", hash_wrapped ? "looked at (glwraphash=1)" :
+ 	    "not looked at", wrapped_skipped);
++	say("hakios-gl:   calls that set what was set already: glBindTexture %u, glUseProgram %u, glActiveTexture %u, "
++	    "glBindFramebuffer %u\n", same_texture, same_program, same_unit, same_framebuffer);
++	{
++		char clocks[200] = "";
++		size_t length = sizeof(clocks) - 1;
++
++		if (sysctlbyname("kern.begonia_clocks", clocks, &length, NULL, 0) == 0) {
++			say("hakios-gl:   drawing thread: %s\n", clocks);
++		}
++	}
+ 	say("hakios-gl:   text masks drawn with (every 30th frame): %u looked at, %u incomplete (a mipmap filter, one level), "
+ 	    "%u with alpha not from the channel it was put in\n", mask_checked, mask_incomplete, mask_swizzle);
+ 	for (unsigned i = 0; i < 7; i++) {
+@@ -1664,6 +1680,9 @@
+ 	if (eagl_tracing) {
+ 		eagl_trace("glBindTexture(%#x, %u)\n", target, texture);
+ 	}
++	if (target == GL_TEXTURE_2D && e->unit < 8 && e->bound[e->unit] == texture) {
++		same_texture++;
++	}
+ 	glBindTexture(target, texture);
+ 	if (target == GL_TEXTURE_2D && e->unit < 8) {
+ 		e->bound[e->unit] = texture;
+@@ -3507,6 +3526,7 @@
+ 	if (eagl_tracing) {
+ 		eagl_trace("glUseProgram(%u)\n", program);
+ 	}
++	same_program += e->program == program;
+ 	e->program = program;
+ 	glUseProgram(program);
+ 	EAGL_LEAVE(e, 0x12c8);
+@@ -3521,6 +3541,7 @@
+ 	if (eagl_tracing) {
+ 		eagl_trace("glActiveTexture(%#x)\n", unit);
+ 	}
++	same_unit += e->unit == unit - 0x84c0;
+ 	e->unit = unit - 0x84c0;
+ 	glActiveTexture(unit);
+ 	EAGL_LEAVE(e, 0xab8);
+@@ -3996,6 +4017,7 @@
+ 		eagl_trace("glBindFramebuffer(%#x, %u)\n", target, framebuffer);
+ 	}
+ 	clear_now(e);                   /* (a clear put off is of what was drawn into until now) */
++	same_framebuffer += target != GL_READ_FRAMEBUFFER && e->framebuffer == framebuffer;
+ 	glBindFramebuffer(target, framebuffer);
+ 	if (target == GL_READ_FRAMEBUFFER) {
+ 		EAGL_LEAVE(e, 0x1508);

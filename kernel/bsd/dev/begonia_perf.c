@@ -4,6 +4,7 @@
  * Enable explicitly with begonia_perf_probe=1. This is not a DVFS governor.
  */
 #include <kern/clock.h>
+#include <kern/cpu_number.h>
 #include <mach/mach_types.h>
 #include <machine/machine_routines.h>
 #include <pexpert/pexpert.h>
@@ -12,6 +13,7 @@
 #include <sys/errno.h>
 #include "begonia_clock_policy.h"
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+static vm_offset_t perf_pll, perf_div;  /* (kept for kern.begonia_clocks) */
 
 static uint32_t
 rd(vm_offset_t base, unsigned offset)
@@ -312,6 +314,8 @@ begonia_perf_init(void)
         printf("BEGONIA PERF: mapping failed; no register access\n");
         return;
     }
+    perf_pll = pll;
+    perf_div = div;
     /* Report raw mux/divider state: PLL output alone is not CPU clock rate. */
     printf("BEGONIA PERF: MPIDR=%llx MIDR=%llx CNTFRQ=%llu\n",
         __builtin_arm_rsr64("MPIDR_EL1"), __builtin_arm_rsr64("MIDR_EL1"),
@@ -397,3 +401,33 @@ sysctl_begonia_bind_cpu SYSCTL_HANDLER_ARGS
 }
 SYSCTL_PROC(_kern, OID_AUTO, begonia_bind_cpu, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_ANYBODY,
     0, 0, sysctl_begonia_bind_cpu, "I", "bind the calling thread to a processor");
+
+/*
+ * kern.begonia_clocks (read): the processor the caller is on, and the PLLs as they are now -- for the
+ * window server's drawing thread to say in its summary where it runs and how fast (x31). MediaTek
+ * ARMPLL/CCIPLL/MFGPLL CON1: PCW in bits 0..21 (26 MHz * PCW / 2^14), post divider 2^(bits 24..26).
+ * The CPU muxes' dividers (perf_div, raw) are shown as they are: a PLL is not a core's clock on its own.
+ */
+static unsigned
+pll_mhz(uint32_t con1)
+{
+    return (unsigned)(((26ull * (con1 & 0x3fffff)) >> 14) >> ((con1 >> 24) & 7));
+}
+static int
+sysctl_begonia_clocks SYSCTL_HANDLER_ARGS
+{
+#pragma unused(oidp, arg1, arg2)
+    char line[200];
+    int cpu = cpu_number();
+    if (!perf_pll || !perf_div) {
+        snprintf(line, sizeof(line), "processor %d; clocks not mapped (begonia_perf_probe=1)", cpu);
+    } else {
+        snprintf(line, sizeof(line), "processor %d; PLLs: A55 %u MHz, A76 %u MHz, interconnect %u MHz, GPU %u MHz; "
+            "dividers %08x %08x %08x", cpu, pll_mhz(rd(perf_pll, 0x204)), pll_mhz(rd(perf_pll, 0x214)),
+            pll_mhz(rd(perf_pll, 0x2a4)), pll_mhz(rd(perf_pll, 0x254)), rd(perf_div, 0x2a0), rd(perf_div, 0x2a4),
+            rd(perf_div, 0x2e0));
+    }
+    return SYSCTL_OUT(req, line, strlen(line) + 1);
+}
+SYSCTL_PROC(_kern, OID_AUTO, begonia_clocks, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED | CTLFLAG_ANYBODY,
+    0, 0, sysctl_begonia_clocks, "A", "the caller's processor and the clocks now");
