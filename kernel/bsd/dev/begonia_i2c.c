@@ -233,13 +233,92 @@ torch(char *out, size_t len, size_t o)
 	return o;
 }
 
-/* the speaker amp: TFA98xx on I2C6 0x34, its revision register 0x03 (16 bits) */
+/*
+ * GPIO (0x10005000): mode registers 0x300 + 0x10 * (pin / 8), 4 bits a pin; direction 0x000 + 0x10 * (pin / 32) (set
+ * +4, clear +8); output 0x100 + 0x10 * (pin / 32) (set +4, clear +8) -- the layout begonia_touch.c uses.
+ */
+#define GPIO_BASE       0x10005000
+static volatile uint32_t *gpio;
+
+static bool
+gpio_map(void)
+{
+	if (gpio == NULL) {
+		gpio = (volatile uint32_t *)ml_io_map(GPIO_BASE, 0x1000);
+	}
+	return gpio != NULL;
+}
+
+static unsigned
+pin_mode(unsigned pin)
+{
+	return (gpio[(0x300 + 0x10 * (pin / 8)) / 4] >> ((pin % 8) * 4)) & 0xf;
+}
+
+static void
+pin_set_mode(unsigned pin, unsigned mode)
+{
+	volatile uint32_t *r = &gpio[(0x300 + 0x10 * (pin / 8)) / 4];
+	*r = (*r & ~(0xfu << ((pin % 8) * 4))) | (mode << ((pin % 8) * 4));
+	__builtin_arm_dsb(0xf);
+}
+
+static void
+pin_output(unsigned pin, bool high)
+{
+	gpio[(0x004 + 0x10 * (pin / 32)) / 4] = 1u << (pin % 32);                       /* direction: out */
+	gpio[((high ? 0x104 : 0x108) + 0x10 * (pin / 32)) / 4] = 1u << (pin % 32);
+	__builtin_arm_dsb(0xf);
+}
+
+/*
+ * The speaker amp: TFA98xx on I2C6 0x34 (device tree: reset GPIO24, irq GPIO69). y81: the bus "answered" every
+ * address -- its pins (GPIO45 SCL, GPIO46 SDA) were not in I2C mode. Here: the pins to mode 1 (SCL6 / SDA6; mode 2
+ * would be the SCP's I2C0), the amp's reset pulsed (Xiaomi's tfa98xx: high, then low = running), its revision
+ * register 0x03 (16 bits) read, and a probe of an address nobody should be at (the bus's honesty).
+ */
 static size_t
 tfa(char *out, size_t len, size_t o)
 {
-	uint8_t reg = 0x03, v[2] = { 0, 0 };
+	if (!gpio_map()) {
+		say("tfa: GPIO not mapped\n");
+		return o;
+	}
+	unsigned m45 = pin_mode(45), m46 = pin_mode(46), m24 = pin_mode(24);
+	pin_set_mode(45, 1);
+	pin_set_mode(46, 1);
+	if (m24 == 0) {
+		pin_output(24, true);
+		delay(2000);
+		pin_output(24, false);
+		delay(10000);
+	}
+	uint8_t reg = 0x03, v[2] = { 0, 0 }, x;
 	int r = begonia_i2c_xfer(6, 0x34, &reg, 1, v, 2);
-	say("tfa: I2C6 0x34 rev %s %02x%02x\n", r == 0 ? "read" : r == -2 ? "NO ACK (in reset? pins not muxed?)" : "FAILED", v[0], v[1]);
+	int nobody = begonia_i2c_xfer(6, 0x77, NULL, 0, &x, 1);
+	say("tfa: pins 45/46 were mode %u/%u (now 1/1), reset GPIO24 mode %u%s; I2C6 0x34 rev %s %02x%02x; 0x77 %s\n", m45, m46,
+	    m24, m24 == 0 ? " pulsed" : " (not a GPIO: not pulsed)",
+	    r == 0 ? "read" : r == -2 ? "NO ACK" : r == -3 ? "TIMED OUT" : "FAILED", v[0], v[1],
+	    nobody == -2 ? "no ack (the bus is honest)" : nobody == 0 ? "ACKS TOO (the bus is not right yet)" : "failed");
+	return o;
+}
+
+/* the usual chip-id registers of a device: 0x00 (Bosch, AKM), 0x0f (ST WHO_AM_I), 0x75 (InvenSense), 0x01 */
+static size_t
+who(int bus, uint8_t addr, char *out, size_t len, size_t o)
+{
+	static const uint8_t regs_[] = { 0x00, 0x01, 0x0f, 0x75 };
+	say("who %d %02x:", bus, addr);
+	for (unsigned i = 0; i < sizeof(regs_); i++) {
+		uint8_t v = 0;
+		int r = reg_read(bus, addr, regs_[i], &v);
+		if (r == 0) {
+			say(" [%02x]=%02x", regs_[i], v);
+		} else {
+			say(" [%02x]:%d", regs_[i], r);
+		}
+	}
+	say("\n");
 	return o;
 }
 
@@ -268,6 +347,8 @@ sysctl_begonia_i2c SYSCTL_HANDLER_ARGS
 			o = torch(out, len, o);
 		} else if (strncmp(cmd, "tfa", 3) == 0) {
 			o = tfa(out, len, o);
+		} else if (sscanf(cmd, "who %u %x", &bus, &addr) == 2) {
+			o = who((int)bus, (uint8_t)addr, out, len, o);
 		} else if (sscanf(cmd, "r %u %x %x %u", &bus, &addr, &reg, &val) == 4 && val <= 8) {
 			uint8_t r8 = (uint8_t)reg, v[8] = { 0 };
 			int r = begonia_i2c_xfer((int)bus, (uint8_t)addr, &r8, 1, v, val);
