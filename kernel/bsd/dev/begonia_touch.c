@@ -254,7 +254,9 @@ static void touch_thread(__unused void *arg,__unused wait_result_t result) {
    static unsigned seen_events;static uint64_t last_active;uint64_t now=mach_absolute_time(),quiet_ns;
    if(events!=seen_events) {seen_events=events;last_active=now;}
    absolutetime_to_nanoseconds(now-last_active,&quiet_ns);
-   delay_for_interval(quiet_ns<NSEC_PER_SEC?8:20,NSEC_PER_MSEC);
+   /* the screen dark (locked): no tap-to-wake (y95), so nothing to look for but the odd touch; 500 ms */
+   extern bool begonia_backlight_dark(void);
+   delay_for_interval(begonia_backlight_dark()?500:quiet_ns<NSEC_PER_SEC?8:20,NSEC_PER_MSEC);
   }
  }
 stop:

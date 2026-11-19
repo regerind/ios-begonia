@@ -437,6 +437,17 @@ static uint32_t wp;                             /* the next frame written, in th
 static uint32_t cleared;                        /* the next frame the timer clears */
 static thread_call_t up_call, clear_call;
 static uint64_t frames_in, frames_dropped;
+static volatile uint32_t volume_gain = 32768;   /* Darwin's volume, 0..32768, read by the timer (not under audio_lock) */
+
+static void
+volume_follow(void)
+{
+	uint32_t below = 0, generation = 0;
+	bool muted = false;
+
+	(void)hakios_audio_volume(&below, &muted, &generation);
+	volume_gain = muted ? 0 : (uint32_t)gain_eighths[below % 48] >> (below / 48 > 15 ? 15 : below / 48);
+}
 
 static uint32_t
 read_frame(void)
@@ -448,6 +459,7 @@ read_frame(void)
 static void
 clear_played(__unused thread_call_param_t a, __unused thread_call_param_t b)
 {
+	volume_follow();
 	uint32_t rd = read_frame();
 	while (cleared != rd) {
 		if (cleared != wp) {                    /* (what is written but not played yet stays) */
@@ -496,10 +508,12 @@ sink(const int16_t *frames, uint32_t count)
 	if (stream_state != 2) {
 		return 0;
 	}
-	uint32_t below = 0, generation;
-	bool muted = false;
-	(void)hakios_audio_volume(&below, &muted, &generation);
-	uint32_t g = muted ? 0 : (uint32_t)gain_eighths[below % 48] >> (below / 48 > 15 ? 15 : below / 48);
+	/*
+	 * Darwin's volume as the timer last read it: the sink is called with hakios.audio.c's audio_lock held, and
+	 * hakios_audio_volume() takes that lock again (y94: "Mutex audio_lock unexpectedly owned", a panic at YouTube's
+	 * first sound).
+	 */
+	uint32_t g = volume_gain;
 	uint32_t rd = read_frame();
 	uint32_t room = (rd + RING_FRAMES - wp - 1) % RING_FRAMES;
 	uint32_t n = count < room ? count : room;

@@ -87,6 +87,13 @@ begonia_backlight_get(void)
 	return level_set;
 }
 
+/* the screen dark: the display off, or the backlight at 0 (SpringBoard's blanked screen, patch 0043) */
+bool
+begonia_backlight_dark(void)
+{
+	return !powered || level_set == 0;
+}
+
 void
 begonia_backlight_set(uint32_t level)
 {

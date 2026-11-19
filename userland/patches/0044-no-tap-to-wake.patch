@@ -1,0 +1,23 @@
+--- a/userland/src/inject.c
++++ b/userland/src/inject.c
+@@ -1065,16 +1065,12 @@
+ 			}
+ 		} else if (t.type == HAKIOS_TOUCH_DOWN && !begonia_touch_direct && (touch_mode & 0xff) == TOUCH_MODE_WAKE && buttons != NULL) {
+ 			/*
+-			 * The display is off and a tap is to wake it. The lock button is what wakes it here:
+-			 * press it for the finger, and keep the rest of this touch to ourselves.
++			 * The display is off. begonia: no tap-to-wake (the user's wish: it woke the phone in the pocket, and
++			 * the touch screen polled for it); the touch is kept to ourselves and the lock button wakes the phone.
++			 * The kernel polls the touch screen slowly while the screen is dark (begonia_touch.c).
+ 			 */
+-			struct hakios_touch press = { .time = t.time, .type = HAKIOS_BUTTON_DOWN, .finger = HAKIOS_BUTTON_LOCK };
+-
+-			send_button(buttons, &press);
+-			press.type = HAKIOS_BUTTON_UP;
+-			send_button(buttons, &press);
+ 			waking |= 1u << (t.finger & 31);
+-			status_woke++;
++			status_swallowed++;
+ 		} else if (waking & (1u << (t.finger & 31))) {
+ 			status_swallowed++;
+ 			if (t.type == HAKIOS_TOUCH_UP) {
