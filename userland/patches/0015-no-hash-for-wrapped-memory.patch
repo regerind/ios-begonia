@@ -1,0 +1,55 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -511,6 +511,13 @@
+ static uint64_t hash_us, hash_bytes;
+ static unsigned seed_looks[2], seed_missed[2];
+ static unsigned mask_checked, mask_incomplete, mask_swizzle, mask_said, mask_ok_said;
++/*
++ * begonia (x31): wrapped memory -- pictures CoreAnimation made a surface around (methodWrapClientImage) -- is not
++ * looked at for changes the seed did not show: x30 looked 6801 times and found none (and 831 on surfaces of their
++ * own, which are still looked at). Boot-arg glwraphash=1: looked at as before.
++ */
++static int hash_wrapped;
++static unsigned wrapped_skipped;
+ 
+ static void
+ summary(struct eagl *e)
+@@ -527,6 +534,8 @@
+ 	say("hakios-gl:   looking for changes: %llu us and %llu KB a frame; changes the seed did not show: %u of %u looks "
+ 	    "at surfaces of their own, %u of %u at wrapped memory\n", hash_us / frames, (hash_bytes / frames) >> 10,
+ 	    seed_missed[0], seed_looks[0], seed_missed[1], seed_looks[1]);
++	say("hakios-gl:   wrapped memory %s: %u looks skipped\n", hash_wrapped ? "looked at (glwraphash=1)" :
++	    "not looked at", wrapped_skipped);
+ 	say("hakios-gl:   text masks drawn with (every 30th frame): %u looked at, %u incomplete (a mipmap filter, one level), "
+ 	    "%u with alpha not from the channel it was put in\n", mask_checked, mask_incomplete, mask_swizzle);
+ 	for (unsigned i = 0; i < 7; i++) {
+@@ -1575,6 +1584,10 @@
+ 	if (IOSurfaceGetSeed(image->surface) != image->seed) {
+ 		return true;
+ 	}
++	if (image->wrapped && !hash_wrapped) {
++		wrapped_skipped++;
++		return false;
++	}
+ 	changed = surface_changed(e, image);
+ 	if (image->looked != looked) {
+ 		seed_looks[image->wrapped]++;
+@@ -4402,7 +4415,9 @@
+ 	image->wrapped = IOSurfaceGetPixelFormat(surface) == 0;
+ 	began = now_us();
+ 	if (!surface_shared(e, image)) {
+-		surface_changed(e, image);              /* (what it adds up to now) */
++		if (!image->wrapped || hash_wrapped) {
++			surface_changed(e, image);      /* (what it adds up to now; wrapped memory: never asked, x31) */
++		}
+ 		surface_to_texture(e, image);
+ 	}
+ 	e->attaching += now_us() - began;
+@@ -4637,6 +4652,7 @@
+ 			bind_cpu = atoi(argument + 7);
+ 		}
+ 		sync_frames = strstr(arguments, "glsync=0") == NULL;
++		hash_wrapped = strstr(arguments, "glwraphash=1") != NULL;
+ 		if (strstr(arguments, "glwait=0") != NULL || (strstr(arguments, "glwait=1") == NULL && display_waits())) {
+ 			wait_for_frames = 0;
+ 		}
