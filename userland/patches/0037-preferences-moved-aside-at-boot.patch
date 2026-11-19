@@ -1,6 +1,6 @@
 --- a/userland/src/init.c
 +++ b/userland/src/init.c
-@@ -925,6 +925,29 @@
+@@ -925,6 +925,33 @@
  		}
  		ok = 1;
  		check(ok, "mount the data volume on /private/var");
@@ -10,21 +10,25 @@
 +		 * cannot be turned off again from Settings (Bold Text, com.apple.Accessibility). Nothing is deleted.
 +		 */
 +		{
++			static const char dir[] = "/private/var/mobile/Library/Preferences/";
 +			const char *aside = boot_arg("prefs_aside");
-+			static char list[128];
++			static char from[256], to[256];
 +
-+			if (aside != NULL && strlen(aside) < sizeof(list)) {
-+				strcpy(list, aside);
-+				for (char *name = strtok(list, ","); name != NULL; name = strtok(NULL, ",")) {
-+					char from[256], to[256];
++			while (aside != NULL && *aside) {
++				const char *comma = strchr(aside, ',');
++				size_t n = comma ? (size_t)(comma - aside) : strlen(aside);
 +
-+					if (strchr(name, '/') != NULL || strlen(name) > 150) {
-+						continue;
++				if (n > 0 && n < 150) {
++					strcpy(from, dir);
++					memcpy(from + sizeof(dir) - 1, aside, n);
++					strcpy(from + sizeof(dir) - 1 + n, ".plist");
++					strcpy(to, from);
++					strcpy(to + strlen(to), ".aside");
++					if (strchr(from + sizeof(dir) - 1, '/') == NULL) {
++						printf("  prefs_aside: %s %s\n", from, rename(from, to) == 0 ? "moved aside" : strerror(errno));
 +					}
-+					snprintf(from, sizeof(from), "/private/var/mobile/Library/Preferences/%s.plist", name);
-+					snprintf(to, sizeof(to), "%s.aside", from);
-+					printf("  prefs_aside: %s %s\n", from, rename(from, to) == 0 ? "moved aside" : strerror(errno));
 +				}
++				aside = comma ? comma + 1 : NULL;
 +			}
 +		}
  	} else {
