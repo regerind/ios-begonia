@@ -426,7 +426,10 @@ mtext = mtext.replace(old_func_const_validate, new_func_const_validate)
 # out-parameter answered with them instead of nil, the completion-handler forms too.
 reflection_code=(root/'userland/metal/frontend_reflection.mm.inc').read_text()
 hooks=[
- ('#define NBLOG(', '#include <atomic>\n#include <sys/sysctl.h>\n'+reflection_code+'\n#define NBLOG('),
+ ('#define NBLOG(', '#include <atomic>\n#include <sys/sysctl.h>\n#include <objc/runtime.h>\n'+reflection_code+'\n#define NBLOG('),
+ # (an empty reflection on the front end's early exits too: a caller that asked aborts on nil)
+ (' if(reflection)*reflection=nil;\n if(!d){\n  if(error)*error=nbError(@"nil render pipeline descriptor");',
+  ' if(reflection)*reflection=nbReflectionWanted()?[[NBRenderReflection alloc] init]:nil;\n if(!d){\n  if(error)*error=nbError(@"nil render pipeline descriptor");'),
  (' const NmbPipelineOptions creation={(uint64_t)options,archives.data(),archives.size()};\n const uint64_t pipelineBegan=nowUs();const NBCost costBegan=NBCost::now();',
   ' if(reflection)*reflection=renderReflection(p,d.label);\n const NmbPipelineOptions creation={(uint64_t)options,archives.data(),archives.size()};\n const uint64_t pipelineBegan=nowUs();const NBCost costBegan=NBCost::now();'),
  (' NmbComputePipeline *handle=nmb_compute_pipeline_new_with_descriptor(gDevice,&p,&creation);',
@@ -453,6 +456,11 @@ hooks=[
 for old,new in hooks:
  assert mtext.count(old)==1,'reflection hook does not fit: '+old[:90]
  mtext=mtext.replace(old,new)
+# (the front end's warnings -- "returning stub pipeline" and the like -- on the console too: an application's NSLog
+# reaches no kept log)
+assert mtext.count('NSLog(@"[BegoniaMetal] WARNING: ')>0
+mtext=mtext.replace('#define NBLOG(','#define NBWARN(...) do{NSString *nbWarning=[NSString stringWithFormat:__VA_ARGS__];NSLog(@"[BegoniaMetal] WARNING: %@",nbWarning);nbConsole(nbWarning);}while(0)\n#define NBLOG(',1)
+mtext=mtext.replace('NSLog(@"[BegoniaMetal] WARNING: ','NBWARN(@"')
 
 frontend = mtext
 if a.quartzcore:

@@ -31,6 +31,20 @@ if a.metal_client:
   shutil.copy2(root/'out/metal-frontend-ios/HakiosMetal',bundle/'HakiosMetal')
   shutil.copy2(root/'upstream/hakios-xnu-kernel/userland/src/HakiosMetal.plist',bundle/'Info.plist')
   (bundle.parent/'HakiosMetal.clients').write_text(clients)
+ # The shader libraries of the applications shown the device: the system image has no .metallib at all
+ # (select-system.py skips them), so they come along here, ext/metallib/<bundle identifier>/, where the plug-in looks
+ # when a bundle has none (userland/metal/frontend_reflection.mm.inc). Taken from sysimage/metallibs/, every
+ # .metallib of the firmware's root filesystem, extracted from the IPSW with 7z (docs/SESSION-2026-11-19d.md).
+ import plistlib
+ sysimage=root/'upstream/hakios-xnu-kernel/sysimage'
+ for app in sorted((sysimage/'rootfs/private/var/staged_system_apps').glob('*.app'))+sorted((sysimage/'rootfs/Applications').glob('*.app')):
+  try:info=plistlib.loads((app/'Info.plist').read_bytes())
+  except Exception:continue
+  if info.get('CFBundleExecutable') not in a.metal_client:continue
+  libraries=sysimage/'metallibs'/app.relative_to(sysimage/'rootfs')
+  kept=dest/'ext/metallib'/info['CFBundleIdentifier'];kept.mkdir(parents=True,exist_ok=True)
+  for library in sorted(libraries.glob('*.metallib')):
+   shutil.copy2(library,kept/library.name);print('metal: '+library.name+' of '+info['CFBundleIdentifier'])
  for t in ('metal_frontend_test','vulkan_device_test'):
   if (root/'out/native-gpu-tests'/t).exists():
    shutil.copy2(root/'out/native-gpu-tests'/t,dest/'bin'/t);metal_tests+='/redwood/bin/'+t+'\n'

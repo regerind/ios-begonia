@@ -157,6 +157,46 @@ static MTLRenderPipelineReflection *renderReflection(const NmbRenderPipelineDesc
  return r;
 }
 
+// begonia: the shader libraries of applications. The system image was made without any .metallib (the port had no
+// Metal; select-system.py SKIP_EXT), so Freeform's bundle has no default.metallib (31 KB in the firmware) and every
+// function it asks for was a stub without code -- no pipeline, no reflection, an abort at launch. The libraries of the
+// programs shown the device are in the support image instead, /redwood/ext/metallib/<bundle identifier>/<name>.metallib
+// (tools/make_gles_support.py --metal-client); a lookup of a .metallib that the bundle has not got answers with that.
+static IMP nbOriginalURL, nbOriginalURLIn, nbOriginalPath;
+
+static NSString *nbKeptMetallib(NSBundle *bundle, NSString *name, NSString *extension) {
+ if (![extension hasSuffix:@"metallib"] || !name || !bundle.bundleIdentifier) return nil;
+ NSString *path = [NSString stringWithFormat:@"/redwood/ext/metallib/%@/%@.metallib", bundle.bundleIdentifier, name];
+ if (![[NSFileManager defaultManager] isReadableFileAtPath:path]) return nil;
+ static std::atomic<unsigned> said{0};
+ if (said.fetch_add(1) < 8) nbConsole([NSString stringWithFormat:@"%@.metallib of %@ from the support image", name, bundle.bundleIdentifier]);
+ return path;
+}
+static NSURL *nbURLForResource(NSBundle *bundle, SEL selector, NSString *name, NSString *extension) {
+ NSURL *url = ((NSURL *(*)(id, SEL, NSString *, NSString *))nbOriginalURL)(bundle, selector, name, extension);
+ NSString *kept = url ? nil : nbKeptMetallib(bundle, name, extension);
+ return kept ? [NSURL fileURLWithPath:kept] : url;
+}
+static NSURL *nbURLForResourceIn(NSBundle *bundle, SEL selector, NSString *name, NSString *extension, NSString *directory) {
+ NSURL *url = ((NSURL *(*)(id, SEL, NSString *, NSString *, NSString *))nbOriginalURLIn)(bundle, selector, name, extension, directory);
+ NSString *kept = url ? nil : nbKeptMetallib(bundle, name, extension);
+ return kept ? [NSURL fileURLWithPath:kept] : url;
+}
+static NSString *nbPathForResource(NSBundle *bundle, SEL selector, NSString *name, NSString *type) {
+ NSString *path = ((NSString *(*)(id, SEL, NSString *, NSString *))nbOriginalPath)(bundle, selector, name, type);
+ return path ?: nbKeptMetallib(bundle, name, type);
+}
+__attribute__((constructor)) static void nbMetallibsFromTheSupportImage() {
+ Class bundle = [NSBundle class];
+ Method m;
+ if ((m = class_getInstanceMethod(bundle, @selector(URLForResource:withExtension:))))
+  nbOriginalURL = method_setImplementation(m, (IMP)nbURLForResource);
+ if ((m = class_getInstanceMethod(bundle, @selector(URLForResource:withExtension:subdirectory:))))
+  nbOriginalURLIn = method_setImplementation(m, (IMP)nbURLForResourceIn);
+ if ((m = class_getInstanceMethod(bundle, @selector(pathForResource:ofType:))))
+  nbOriginalPath = method_setImplementation(m, (IMP)nbPathForResource);
+}
+
 static MTLComputePipelineReflection *computeReflection(const NmbComputePipelineDescriptor *p, NSString *label) {
  if (!nbReflectionWanted()) return nil;
  NBComputeReflection *r = [[NBComputeReflection alloc] init];
