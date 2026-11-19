@@ -1,0 +1,15 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2714,6 +2714,12 @@
+ 	notify_register_dispatch("com.hakios.open.settings", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		open_application("com.apple.Preferences");
+ 	});
++	/* begonia: a shot of the panel into the log now (kernel patch 0015), when a session's script says so */
++	notify_register_dispatch("com.hakios.shot", &token, dispatch_get_main_queue(), ^(__unused int t) {
++		uint32_t one = 1;
++
++		say("hakios: shot: asked: %d\n", sysctlbyname("kern.hakios.fb_shot_now", NULL, NULL, &one, sizeof(one)));
++	});
+ 	notify_register_dispatch("com.hakios.pbui", &token, dispatch_get_main_queue(), ^(__unused int t) {
+ 		pbui();
+ 	});

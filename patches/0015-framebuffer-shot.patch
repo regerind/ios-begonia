@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
 +++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
-@@ -263,6 +263,59 @@
+@@ -263,6 +263,62 @@
  static TUNABLE(uint32_t, gBeam, "fb_beam", 1);
  extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
  static inline uint32_t refreshHz(void);
@@ -17,6 +17,9 @@
 +static TUNABLE(uint32_t, gShotTop, "fb_shot_top", 0);
 +static TUNABLE(uint32_t, gShotBottom, "fb_shot_bottom", 100);
 +static TUNABLE(uint32_t, gShotRgb, "fb_shot_rgb", 0);	/* 1: colour, twelve bits a pixel in two characters (SHOCn) */
++/* kern.hakios.fb_shot_now: set to 1 by a session's script (the notification com.hakios.shot): a shot at the next frame */
++static uint32_t gShotNow;
++SYSCTL_UINT(_kern_hakios, OID_AUTO, fb_shot_now, CTLFLAG_RW | CTLFLAG_ANYBODY | CTLFLAG_LOCKED, &gShotNow, 0, "a shot of the panel at the next frame");
 +
 +static void
 +panelShot(const uint8_t * base, uint32_t width, uint32_t height, uint32_t rowBytes, unsigned number)
@@ -60,16 +63,17 @@
  
  /*
   * Boot-arg fb_intf=PHYSICAL: the registers of the display interface the panel is on, for a port. Without it the SoC the kernel
-@@ -1624,6 +1661,15 @@
+@@ -1624,6 +1680,16 @@
  		fLayersShown = layers;
  	}
  
-+	if (gShot != 0) {
++	if (gShot != 0 || gShotNow != 0) {
 +		static unsigned shots;
 +		uint64_t up;
 +
 +		absolutetime_to_nanoseconds(mach_absolute_time(), &up);
-+		if (shots < gShotCount && shots < 9 && up / NSEC_PER_SEC >= gShot + gShotGap * shots) {
++		if (shots < 9 && (gShotNow != 0 || (gShot != 0 && shots < gShotCount && up / NSEC_PER_SEC >= gShot + gShotGap * shots))) {
++			gShotNow = 0;
 +			panelShot(fBase, fPanelWidth, fPanelHeight, fRowBytes, ++shots);
 +		}
 +	}
