@@ -1,0 +1,15 @@
+diff -ru a/NativeMetalObjects.rs b/NativeMetalObjects.rs
+--- a/NativeMetalObjects.rs	2026-11-19 19:23:35.437054250 +0300
++++ b/NativeMetalObjects.rs	2026-11-19 19:23:35.449484960 +0300
+@@ -185,6 +185,11 @@
+         // A texture over a buffer whose rows lie apart is an image over the bytes, rendered or written too: the window server's padded
+         // framebuffers (3048x2032 BGRA8 at 12288-byte rows, int-251) were otherwise copied in and out of a shadow image every pass.
+         options.policy.padded_reads = metal2vulkan::device::PaddedReadsPolicy::AliasWrites;
++        // begonia: framebuffer fetch without rasterization-order attachment access (PanVK on Bifrost v7 has neither it nor
++        // fragment shader pixel interlock), read as input attachments, the colour in the tile buffer: QuartzCore's drawing
++        // shaders (com.apple.coreanimation.draw.*, CoreGraphics into an IOSurface: WebKit's page tiles) read the destination
++        // and were refused ("Unsupported FramebufferFetch"), so curved paths, SVG icons and strokes never drew (y67-y69).
++        options.policy.framebuffer_fetch = metal2vulkan::device::FramebufferFetchPolicy::AcceptUnordered;
+         // Every texture given a shadow image is announced with why no image aliases its bytes (`shadow.log`).
+         options.announce_each.insert(metal2vulkan_runtime::Degradation::ShadowedTexture);
+         let _ = SHADOW_LOG.set(PathBuf::from(cache.to_string_lossy().into_owned()).join("shadow.log"));
