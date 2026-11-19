@@ -1,0 +1,177 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -3983,6 +3983,138 @@
+ 	EAGL_LEAVE(e, 0x1000);
+ }
+ 
++/*
++ * begonia (y125): a draw's own rectangle as the scissor, where CoreAnimation draws with none.
++ * YouTube in Safari: the display's picture (1080 x 2340) was bound 12 times in a frame between the backdrops' captures
++ * and blurs, and every time Mesa (panfrost) flushed it and loaded it again over all of its extent -- the union of the
++ * draws' scissors, or the whole picture for a draw with no scissor: 11-14 thousand full-screen fragment jobs in 5 s, 300 us
++ * each, the GPU 82-91% busy and every frame 30 fps. A draw's corners are in CoreAnimation's arrays in the target's own
++ * pixels (array 0: x, y[, 0, 1]); their bounds, made the scissor, keep the job to the tiles drawn.
++ * Only where it is known to be right: for each framebuffer, the draws CoreAnimation scissors itself are compared with
++ * their corners -- the same way up (counted), or turned over or elsewhere (then never for that framebuffer). Two
++ * agreements and no disagreement, and a draw with no scissor there gets its corners' rectangle. Only plain draws (not
++ * ours of groups); corners not in plain memory (a buffer bound) or not like pixels: left alone.
++ * Boot-arg glautoscissor=0: never.
++ */
++static int auto_scissor_on = 1;
++static unsigned auto_scissored, auto_skipped;
++static struct auto_fb { GLuint fb; uint16_t agree, disagree; } auto_fbs[64];
++
++static struct auto_fb *
++auto_fb_of(GLuint fb)
++{
++	unsigned free_at = 64;
++	for (unsigned i = 0; i < 64; i++) {
++		if (auto_fbs[i].fb == fb && (auto_fbs[i].agree || auto_fbs[i].disagree)) {
++			return &auto_fbs[i];
++		}
++		if (free_at == 64 && auto_fbs[i].agree == 0 && auto_fbs[i].disagree == 0) {
++			free_at = i;
++		}
++	}
++	if (free_at == 64) {
++		free_at = (unsigned)(fb % 64);
++	}
++	auto_fbs[free_at] = (struct auto_fb){ fb, 0, 0 };
++	return &auto_fbs[free_at];
++}
++
++/* the corners' bounds, in pixels; false where they cannot be read or do not look like pixels */
++static bool
++draw_bounds(struct eagl *e, GLenum type, const void *indices, GLint first, GLsizei count, float low[2], float high[2])
++{
++	GLint array_buffer = 0, element_buffer = 0;
++	const uint8_t *base = e->arrays[0].pointer;
++	GLint size = e->arrays[0].size;
++
++	if (base == NULL || e->arrays[0].type != GL_FLOAT || size < 2 || size > 4 || count <= 0 || count > 4096) {
++		return false;
++	}
++	glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &array_buffer);
++	if (array_buffer != 0) {
++		return false;
++	}
++	if (indices != NULL) {
++		glGetIntegerv(0x8895 /* GL_ELEMENT_ARRAY_BUFFER_BINDING */, &element_buffer);
++		if (element_buffer != 0) {
++			return false;
++		}
++	}
++	size_t stride = e->arrays[0].stride ? (size_t)e->arrays[0].stride : (size_t)size * 4;
++	low[0] = low[1] = 1e9f;
++	high[0] = high[1] = -1e9f;
++	for (GLsizei i = 0; i < count; i++) {
++		unsigned vertex = indices == NULL ? (unsigned)(first + i) : type == GL_UNSIGNED_SHORT ?
++		    ((const uint16_t *)indices)[i] : type == GL_UNSIGNED_BYTE ? ((const uint8_t *)indices)[i] :
++		    ((const uint32_t *)indices)[i];
++		float p[4] = { 0, 0, 0, 1 };
++		memcpy(p, base + (size_t)vertex * stride, (size_t)size * 4);
++		if (size == 4 && (p[3] < 0.999f || p[3] > 1.001f)) {
++			return false;           /* a perspective: not pixels */
++		}
++		for (unsigned a = 0; a < 2; a++) {
++			low[a] = p[a] < low[a] ? p[a] : low[a];
++			high[a] = p[a] > high[a] ? p[a] : high[a];
++		}
++	}
++	/* pixels of a picture of at most 8192: not texture places (0..1) nor anything far off */
++	return high[0] - low[0] > 2.0f && high[1] - low[1] > 2.0f && low[0] > -64.0f && low[1] > -64.0f &&
++	       high[0] < 8192.0f && high[1] < 8192.0f;
++}
++
++struct auto_box { bool set; GLint box[4]; };
++
++static void
++auto_scissor_begin(struct eagl *e, GLenum type, const void *indices, GLint first, GLsizei count, struct auto_box *ab)
++{
++	float low[2], high[2];
++	GLint box[4];
++
++	ab->set = false;
++	if (!auto_scissor_on || e->framebuffer == 0 || !draw_bounds(e, type, indices, first, count, low, high)) {
++		return;
++	}
++	struct auto_fb *f = auto_fb_of(e->framebuffer);
++	if (glIsEnabled(GL_SCISSOR_TEST)) {
++		/* CoreAnimation's own scissor: do the corners fall in it, the same way up? */
++		glGetIntegerv(GL_SCISSOR_BOX, box);
++		bool inside = low[0] >= box[0] - 2 && low[1] >= box[1] - 2 && high[0] <= box[0] + box[2] + 2 &&
++		    high[1] <= box[1] + box[3] + 2;
++		bool overlaps = low[0] < box[0] + box[2] && high[0] > box[0] && low[1] < box[1] + box[3] && high[1] > box[1];
++		if (inside) {
++			f->agree += f->agree < 1000;
++		} else if (!overlaps) {
++			f->disagree += f->disagree < 1000;
++		}
++		return;
++	}
++	if (f->agree < 2 || f->disagree != 0) {
++		auto_skipped++;
++		return;
++	}
++	glGetIntegerv(GL_SCISSOR_BOX, ab->box);
++	GLint x0 = (GLint)low[0] - 1, y0 = (GLint)low[1] - 1, x1 = (GLint)high[0] + 2, y1 = (GLint)high[1] + 2;
++	x0 = x0 < 0 ? 0 : x0;
++	y0 = y0 < 0 ? 0 : y0;
++	glScissor(x0, y0, x1 - x0, y1 - y0);
++	glEnable(GL_SCISSOR_TEST);
++	ab->set = true;
++	auto_scissored++;
++	if (auto_scissored == 1 || auto_scissored % 20000 == 0) {
++		say("hakios-gl: draws given their corners' rectangle as the scissor: %u (%u not: the framebuffer not known)\n",
++		    auto_scissored, auto_skipped);
++	}
++}
++
++static void
++auto_scissor_end(struct auto_box *ab)
++{
++	if (ab->set) {
++		glDisable(GL_SCISSOR_TEST);
++		glScissor(ab->box[0], ab->box[1], ab->box[2], ab->box[3]);
++	}
++}
++
+ static void
+ my_glDrawArrays(void *context, GLenum mode, GLint first, GLsizei count)
+ {
+@@ -4009,8 +4141,12 @@
+ 		glDrawArrays(mode, first, count);
+ 		group_draw_end(e, enabled);
+ 	} else {
++		struct auto_box ab;
++
+ 		plain = plain_draw_begin(e, enabled);
++		auto_scissor_begin(e, 0, NULL, first, count, &ab);
+ 		glDrawArrays(mode, first, count);
++		auto_scissor_end(&ab);
+ 		if (plain) {
+ 			plain_draw_end(e, enabled);
+ 		}
+@@ -4057,10 +4193,14 @@
+ 	} else {
+ 		uint64_t began;
+ 
++		struct auto_box ab;
++
+ 		plain = plain_draw_begin(e, enabled);
++		auto_scissor_begin(e, type, indices, 0, count, &ab);
+ 		began = now_us();
+ 		glDrawElements(mode, count, type, indices);
+ 		draw_lib_us += now_us() - began;
++		auto_scissor_end(&ab);
+ 		draw_plain += plain;
+ 		draw_other += !plain;
+ 		if (plain) {
+@@ -5216,6 +5356,7 @@
+ 			}
+ 		}
+ 		share_surfaces = strstr(arguments, "glcopy=1") == NULL;
++		auto_scissor_on = strstr(arguments, "glautoscissor=0") == NULL;
+ 		trust_seed = strstr(arguments, "glseed=0") == NULL;
+ 		share_planes = strstr(arguments, "glplanes=0") == NULL;
+ 		blit_targets = strstr(arguments, "glblit=0") == NULL;
