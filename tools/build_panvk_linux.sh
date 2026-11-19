@@ -29,6 +29,12 @@ MESON="python3 $R/.tools/meson-src/meson.py"
 
 # ---- the native transport as libdrm -----------------------------------------------------
 python3 "$R/tools/prepare_native_vulkan_drm.py" | tail -1
+# begonia's changes to the staged transport (userland/vulkan/native-patches), on a fresh copy every build
+for p in "$R"/userland/vulkan/native-patches/*.patch; do
+	[ -f "$p" ] || continue
+	patch --force -s -p1 -d "$N" -i "$p" || { echo "transport patch does not apply: $p" >&2; exit 1; }
+	echo "panvk: transport $(basename "$p")"
+done
 objects=()
 for n in hakios.drm hakios-native-posix hakios-native-sync hakios-native-surface-fd; do
 	"$CC" -arch arm64 -isysroot "$SDK" -O2 -Wall -Wextra -I"$N" -I"$M/include" -I"$V/libdrm-xnu/include" \

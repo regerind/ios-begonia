@@ -1,0 +1,59 @@
+--- a/hakios-native-posix.c
++++ b/hakios-native-posix.c
+@@ -16,7 +16,14 @@
+ /* A descriptor returned for this virtual node still owns a real OS descriptor.
+  * Keep its classification local rather than misclassifying every /dev/null fd. */
+ struct render_fd { int fd; struct render_fd *next; };
+-struct gpu_map { void *address; size_t length, mapped_length; uint32_t handle; struct gpu_map *next; };
++/*
++ * begonia: one mapping of a buffer in this process, however many ask for it, counted (users). IOKit hands a second
++ * IOConnectMapMemory64 of the same buffer the same mapping, and the first unmap then took it away from every other
++ * user: the Metal runtime keeps its memory blocks mapped while PanVK maps and unmaps them around every host image copy,
++ * and the next write into the block faulted (Freeform, y30: a 64 MiB block, an address written a moment before).
++ * Nor is the shared mapping's protection narrowed for one of its users any more (PanVK maps with PROT_WRITE alone).
++ */
++struct gpu_map { void *address; size_t length, mapped_length; uint32_t handle; unsigned users; struct gpu_map *next; };
+ static struct render_fd *render_fds;
+ static struct gpu_map *gpu_maps;
+ static pthread_mutex_t native_lock = PTHREAD_MUTEX_INITIALIZER;
+@@ -131,21 +138,20 @@
+         flags & ~(MAP_SHARED | MAP_FIXED) || flags & MAP_FIXED) {
+         pthread_mutex_unlock(&native_lock); errno = EINVAL; return MAP_FAILED;
+     }
++    uint32_t handle = (uint32_t)((uint64_t)offset >> 12);
++    for (struct gpu_map *map = gpu_maps; map; map = map->next) {
++        if (map->handle != handle) continue;
++        if (length > map->mapped_length) { pthread_mutex_unlock(&native_lock); errno = EINVAL; return MAP_FAILED; }
++        map->users++;
++        pthread_mutex_unlock(&native_lock);
++        return map->address;
++    }
+     struct gpu_map *record = malloc(sizeof(*record));
+     if (!record) { pthread_mutex_unlock(&native_lock); errno = ENOMEM; return MAP_FAILED; }
+-    uint32_t handle = (uint32_t)((uint64_t)offset >> 12);
+     size_t mapped_length = 0;
+     void *mapped = hakios_native_drm_map_checked(handle, length, &mapped_length);
+     if (mapped == MAP_FAILED) { free(record); pthread_mutex_unlock(&native_lock); return MAP_FAILED; }
+-    /* PanVK maps upload pools with PROT_WRITE alone. Honor all non-executable
+-     * access modes instead of accepting only the read/write combination. */
+-    if (prot != (PROT_READ | PROT_WRITE) && mprotect(mapped, mapped_length, prot)) {
+-        int saved = errno;
+-        hakios_native_drm_unmap_checked(handle, mapped);
+-        free(record); pthread_mutex_unlock(&native_lock); errno = saved;
+-        return MAP_FAILED;
+-    }
+-    record->address = mapped; record->length = length; record->handle = handle;
++    record->address = mapped; record->length = length; record->handle = handle; record->users = 1;
+     record->mapped_length = mapped_length;
+     record->next = gpu_maps; gpu_maps = record;
+     pthread_mutex_unlock(&native_lock);
+@@ -169,7 +175,8 @@
+         pthread_mutex_unlock(&native_lock);
+         return munmap(address, length);
+     }
+-    if ((*p)->length != length) { pthread_mutex_unlock(&native_lock); errno = EINVAL; return -1; }
++    if (length > (*p)->mapped_length) { pthread_mutex_unlock(&native_lock); errno = EINVAL; return -1; }
++    if (--(*p)->users > 0) { pthread_mutex_unlock(&native_lock); return 0; }
+     struct gpu_map *old = *p;
+     if (hakios_native_drm_unmap_checked(old->handle, address)) {
+         pthread_mutex_unlock(&native_lock); return -1;
