@@ -8,6 +8,11 @@
  *
  *   wifi [status]  read only: SPM CONN power, bus protection, EMI remap, CONN reset, PMIC rails, and (only when
  *                  CONN is powered and its bus protection released) chip id / HW version / MCU idle magic.
+ * BEGONIA (MT6785): the platform part below ("wifi on", "wifi off", "wifi status", the rails) is MT6785's own now,
+ * from mt6785.c / clk-mt6785-pg.c (see the register block). The descriptions of "detect" and "on" that follow are the
+ * MT6781 original's, kept for the history: "detect" is refused here, and "on" writes the PMIC (enable bits of VCN18 and
+ * VCN33_1 only, never a voltage) only when booted with begonia_wifi_rails=1.
+ *
  *   wifi detect    A-die detection as Linux's consys_adie_chipid_checking_flow (6631 rails: VCN18 only):
  *                  VCN18 on, A-die pinmux, CONN CPU held in reset, MTCMOS on, bus protection off, chip id poll,
  *                  EMI HW mode, AFE, XO (co-clock), A-die SPI read of 0xB024 (6631) and 0xB02C (6635), then
@@ -128,67 +133,84 @@ static int begonia_pwrap_write_regulator(uint32_t addr, uint32_t mask, uint32_t 
 }
 
 #define WIFI_FW_DIR             "/usr/share/firmware/wifi/viva/"
-#define EMI_SIZE                0x400000
+#define EMI_SIZE                0x400000        /* the DT's consys-reserve-memory: 4 MiB, 16 MiB aligned */
 #define EMI_CONN_BASE           0xf0000000u
 
+/*
+ * MT6785 (begonia), from MediaTek's own platform code as LineageOS's android_kernel_xiaomi_mt6785 carries it:
+ * connectivity/common/common_main/platform/mt6785.c + include/mt6785.h, clk-mt6785-pg.c (spm_mtcmos_ctrl_conn),
+ * clk-mt6785.c (infra_ccif4_ap), mtk_wcn_consys_hw.c (the order). Copies in C:\begonia-private\dl\mt6785-consys.
+ * The MT6781 values this driver came with (other SPM registers, pinmux pins, PMIC MT6358 rails) are all gone: on
+ * this phone they were other power domains, other pins and other PMIC registers (VM18_CON0, the memory's rail).
+ */
 /* AP side */
-#define SPM_POWERON_CONFIG_EN   0x10006000
-#define SPM_CONN_PWR_CON        0x10006304
-#define SPM_PWR_STATUS          0x1000616c
-#define SPM_PWR_STATUS_2ND      0x10006170
+#define SPM_POWERON_CONFIG_EN   0x10006000      /* (0xb16 << 16) | 1: SPM registers writable */
+#define SPM_CONN_PWR_CON        0x10006320
+#define SPM_PWR_STATUS          0x10006160
+#define SPM_PWR_STATUS_2ND      0x10006164
 #define CONN_PWR_STA            (1u << 1)
 #define PWR_RST_B               (1u << 0)
 #define PWR_ISO                 (1u << 1)
 #define PWR_ON                  (1u << 2)
 #define PWR_ON_2ND              (1u << 3)
 #define PWR_CLK_DIS             (1u << 4)
-#define INFRA_PROT_SET          0x100012a0
+#define INFRA_PROT_SET          0x100012a0      /* INFRA_TOPAXI_PROTECTEN */
 #define INFRA_PROT_CLR          0x100012a4
 #define INFRA_PROT_STA1         0x10001228
-#define INFRA_PROT1_SET         0x100012a8
+#define INFRA_PROT1_SET         0x100012a8      /* INFRA_TOPAXI_PROTECTEN_1 */
 #define INFRA_PROT1_CLR         0x100012ac
 #define INFRA_PROT1_STA1        0x10001258
-#define INFRA_CCIF4_CG_CLR      0x100010c4
-#define INFRA_CONN_CCU_CONFIG   0x10001c14
+#define CONN_PROT_STEP1         ((1u << 13) | (1u << 18))       /* PROTECTEN */
+#define CONN_PROT_STEP2_0       (1u << 14)                      /* PROTECTEN */
+#define CONN_PROT_STEP2_1       (1u << 10)                      /* PROTECTEN_1 */
+#define INFRA_CCIF4_CG_CLR      0x100010c4      /* infra3 gates: set 0xc0, clr 0xc4, sta 0xc8 */
+#define INFRA_CCIF4_CG_STA      0x100010c8
+#define INFRA_CCIF4_AP          (1u << 28)
+#define PERI_CONN_CCU_CONFIG    0x10003438      /* infra_ao_pericfg + 0x438: bit 0 CON_PWR_ON */
 #define INFRA_EMI_MAPPING       0x10001380
 #define INFRA_PERI_MAPPING      0x10001388
-#define TOPRGU_SWSYSRST         0x10007018
-#define GPIO_MODE23             0x10005470
-#define GPIO_MODE24             0x10005480
-#define IOCFG_LT_DRV            0x10002c00
+#define TOPRGU_SWSYSRST         0x10007018      /* bit 12 CONN CPU reset, key 0x88 << 24 */
+/* the A-die interface pins (mt6785.h CONSYS_IF_PINMUX_*) */
+#define GPIO_IF_MODE1           0x10005430      /* keep 0x0000ffff, set 0x11110000 */
+#define GPIO_IF_MODE2           0x10005440      /* keep 0xfff00000, set 0x00011111 */
+#define GPIO_IF_DRV             0x11ea0000      /* keep 0xff000007, rest 0 (2 mA) */
 /* CONN side (only with CONN powered and protection released) */
 #define CONN_VERSION            0x180b1010
 #define CONN_CFG_ID             0x180b101c
 #define CONN_HW_VER             0x18002000
 #define CONN_FW_VER             0x18002004
 #define CONN_MCU_COM_REG0       0x18002600
-#define CONN_MCU_EMI_SLPPROT    0x180c1168
-#define CONN_AFE_WBG_PLL_04     0x180b3030
-#define CONN_AFE_WBG_GL5_02     0x180b3104
-#define CONN_XO_1200            0x180c1200
-#define CONN_XO_1204            0x180c1204
-#define CONN_XO_1240            0x180c1240
-#define CONN_ADIE_CTL           0x180c1500
-#define CONN_SPI_STA            0x180c6000
-#define CONN_SPI_ADDR           0x180c6050
-#define CONN_SPI_WDAT           0x180c6054
-#define CONN_SPI_RDAT           0x180c6058
-#define CONN_VERSION_VALUE      0x100b0000
-#define CONN_BUSHANGCR          0x18002440
-#define CONN_BT_EMI_ENTRY       0x18002504
-#define CONN_WF_EMI_ENTRY       0x18002508
 #define CONN_MCU_DBG_216C       0x1800216c
 #define CONN_HOST_CSR           0x18007000      /* readability check: write 0x30000, bits 16/17 = HCLK/OSC on */
 #define CONN_MCU_PC             0x18007104
-#define CONN_ADIE_SEL           0x180c1130
-#define CONN_RGU_DLY_CHAIN      0x180c0284
+#define CONN_SLPPROT_CTRL       0x18004160      /* bit 4: CONN2EMI HW sleep protection */
+#define CONN_TOPPOSE_RESTORE    0x180c1600      /* bit 23 */
+#define CONN_WPLL_SETTING       0x180b3034      /* bits 19..20 = 01 */
+#define CONN_VERSION_VALUE      0x10020600
 #define CONN_IDLE_MAGIC         0x00001d1e
-/* PMIC MT6358 on Begonia */
-#define PMIC_VCN18_CON0         0x1c58
-#define PMIC_VCN33_CON0_0       0x1d1c
-#define PMIC_VCN33_CON0_1       0x1d2a
-#define PMIC_VCN33_ANA_CON0     0x1e28
-#define PMIC_VCN28_CON0         0x1d88
+/* the RAM patches' build dates in EMI (mt6785.h CONSYS_EMI_RAM_*_BUILDTIME_OFFSET) */
+#define EMI_DATE_BT             0x68300
+#define EMI_DATE_WIFI           0x68310
+#define EMI_DATE_MCU            0x68320
+
+/*
+ * PMIC MT6359 (or MT6359P, by HWCID): the Wi-Fi rails are VCN18 (fixed 1.8 V) and VCN33_1 (3.3 V, its "wifi" enable
+ * bit). MT6785 is not co-clock (consys_co_clock_type 0), so VCN33_2 (2.8 V, FM and GPS) is not needed for Wi-Fi.
+ * Only enable bits are ever written, and only with the boot argument begonia_wifi_rails=1; the voltage selectors
+ * are read and checked, never written: when VCN33_1 is not already set to 3.3 V the power-on stops.
+ */
+#define PMIC_HWCID              0x0008
+struct wifi_rails {
+	const char *name;
+	uint16_t vcn18_en, vcn18_mon, vcn18_vosel;          /* EN bit 0, MON bit 0 (DA_B_EN), VOSEL bits 8..11 */
+	uint16_t vcn33_en, vcn33_mon, vcn33_vosel;          /* EN bit 15 (EN_1, wifi), MON bit 0, VOSEL bits 8..11 */
+};
+static const struct wifi_rails rails_mt6359  = { "MT6359",  0x1c2a, 0x1c2c, 0x2010, 0x1be8, 0x1bda, 0x1f98 };
+static const struct wifi_rails rails_mt6359p = { "MT6359P", 0x1c2e, 0x1c32, 0x2010, 0x1bf4, 0x1be6, 0x1f98 };
+#define VCN33_EN_BIT            (1u << 15)
+#define VOSEL(v)                (((v) >> 8) & 0xf)
+#define VCN33_VOSEL_3V3         13              /* vcn33_voltages[13] = 3300000 */
+#define VCN18_VOSEL_1V8         12              /* volt18_voltages[12] = 1800000 */
 
 /* WiFi (WFDMA) side, step 3 */
 #define WF_LPCTL                0x18007000      /* BIT0 HOST_SET_OWN (read: 1 = firmware own), BIT1 HOST_CLR_OWN */
@@ -236,11 +258,47 @@ conn_powered(void)
 	return (rd(SPM_PWR_STATUS) & CONN_PWR_STA) && (rd(SPM_PWR_STATUS_2ND) & CONN_PWR_STA);
 }
 
-/* Bus protection bits CONNSYS needs released (clk-mt6781-pg.c conn steps 1-4). */
+/* Bus protection bits CONNSYS needs released (clk-mt6785-pg.c spm_mtcmos_ctrl_conn). */
 static bool
 conn_unprotected(void)
 {
-	return (rd(INFRA_PROT_STA1) & 0x16000) == 0 && (rd(INFRA_PROT1_STA1) & 0x40000) == 0;
+	return (rd(INFRA_PROT_STA1) & (CONN_PROT_STEP1 | CONN_PROT_STEP2_0)) == 0 &&
+	       (rd(INFRA_PROT1_STA1) & CONN_PROT_STEP2_1) == 0;
+}
+
+/* The PMIC's rail map by its chip id, NULL when it is not an MT6359 at all (then nothing is written). */
+static const struct wifi_rails *
+rails_map(uint32_t *hwcid)
+{
+	*hwcid = pmic(PMIC_HWCID);
+	if ((*hwcid >> 8) != 0x59) {
+		return NULL;
+	}
+	return *hwcid >= 0x5930 ? &rails_mt6359p : &rails_mt6359;
+}
+
+static bool
+rails_permitted(void)
+{
+	uint32_t v = 0;
+	return PE_parse_boot_argn("begonia_wifi_rails", &v, sizeof(v)) && v == 1;
+}
+
+static size_t
+say_rails(char *out, size_t len, size_t o, const char *what)
+{
+	uint32_t id;
+	const struct wifi_rails *r = rails_map(&id);
+	if (r == NULL) {
+		say("%s: PMIC hwcid 0x%04x is not an MT6359: rails not read\n", what, id);
+		return o;
+	}
+	uint32_t e18 = pmic(r->vcn18_en), m18 = pmic(r->vcn18_mon), v18 = pmic(r->vcn18_vosel);
+	uint32_t e33 = pmic(r->vcn33_en), m33 = pmic(r->vcn33_mon), v33 = pmic(r->vcn33_vosel);
+	say("%s: PMIC %s (hwcid 0x%04x); VCN18 en %u on %u vosel %u (12 = 1.8 V); VCN33_1 wifi-en %u on %u vosel %u "
+	    "(13 = 3.3 V); rail writes %s\n", what, r->name, id, e18 & 1, m18 & 1, VOSEL(v18), !!(e33 & VCN33_EN_BIT),
+	    m33 & 1, VOSEL(v33), rails_permitted() ? "PERMITTED (begonia_wifi_rails=1)" : "not permitted");
+	return o;
 }
 
 static size_t
@@ -251,11 +309,11 @@ wifi_status(char *out, size_t len, size_t o)
 	    pwr, !!(pwr & PWR_ON), !!(pwr & PWR_ON_2ND), !!(pwr & PWR_ISO), !!(pwr & PWR_RST_B), !!(pwr & PWR_CLK_DIS),
 	    !!(rd(SPM_PWR_STATUS) & CONN_PWR_STA), !!(rd(SPM_PWR_STATUS_2ND) & CONN_PWR_STA), rd(INFRA_PROT_STA1),
 	    rd(INFRA_PROT1_STA1), conn_unprotected() ? "conn released" : "conn protected");
-	say("emi remap 0x%08x, toprgu swsysrst 0x%08x (conn reset bit12 %u), pinmux mode23 0x%08x mode24 0x%08x drv 0x%08x\n",
-	    rd(INFRA_EMI_MAPPING), rd(TOPRGU_SWSYSRST), !!(rd(TOPRGU_SWSYSRST) & (1u << 12)), rd(GPIO_MODE23),
-	    rd(GPIO_MODE24), rd(IOCFG_LT_DRV));
-	say("pmic: vcn18 %04x; vcn33_0 %04x vcn33_1 %04x vcn28 %04x\n",
-	    pmic(PMIC_VCN18_CON0), pmic(PMIC_VCN33_CON0_0), pmic(PMIC_VCN33_CON0_1), pmic(PMIC_VCN28_CON0));
+	say("emi remap 0x%08x peri 0x%08x, toprgu swsysrst 0x%08x (conn cpu reset %u), ccu config 0x%08x, ccif4 gated %u, "
+	    "pinmux 0x%08x 0x%08x drv 0x%08x\n", rd(INFRA_EMI_MAPPING), rd(INFRA_PERI_MAPPING), rd(TOPRGU_SWSYSRST),
+	    !!(rd(TOPRGU_SWSYSRST) & (1u << 12)), rd(PERI_CONN_CCU_CONFIG), !!(rd(INFRA_CCIF4_CG_STA) & INFRA_CCIF4_AP),
+	    rd(GPIO_IF_MODE1), rd(GPIO_IF_MODE2), rd(GPIO_IF_DRV));
+	o = say_rails(out, len, o, "pmic");
 	if (conn_powered() && conn_unprotected()) {
 		wr(CONN_HOST_CSR, 0x30000);
 		delay(200);
@@ -276,32 +334,19 @@ wifi_status(char *out, size_t len, size_t o)
 	return o;
 }
 
-static uint32_t
-adie_read(uint32_t addr)
-{
-	if (!poll(CONN_SPI_STA, 1u << 0, 0, 5000)) {
-		return 0xfffffffe;
-	}
-	wr(CONN_SPI_ADDR, addr);
-	wr(CONN_SPI_WDAT, 0);
-	if (!poll(CONN_SPI_STA, 1u << 5, 0, 5000)) {
-		return 0xfffffffd;
-	}
-	return rd(CONN_SPI_RDAT);
-}
-
-/* Power-off (mtk_wcn_consys_hw.c / clk-mt6781-pg.c conn off): protection on with acks, MTCMOS off. */
+/* Power-off (clk-mt6785-pg.c conn off, mt6785.c consys_hw_power_ctrl(DISABLE)): protection on with acks, MTCMOS off. */
 static size_t
 conn_off(char *out, size_t len, size_t o)
 {
-	static const struct { uint64_t set, sta; uint32_t bit; } prot[] = {
-		{ INFRA_PROT1_SET, INFRA_PROT1_STA1, 0x40000 }, { INFRA_PROT_SET, INFRA_PROT_STA1, 0x4000 },
-		{ INFRA_PROT_SET, INFRA_PROT_STA1, 0x2000 }, { INFRA_PROT_SET, INFRA_PROT_STA1, 0x10000 },
+	static const struct { uint64_t set, sta; uint32_t bits; } prot[] = {
+		{ INFRA_PROT_SET, INFRA_PROT_STA1, CONN_PROT_STEP1 }, { INFRA_PROT_SET, INFRA_PROT_STA1, CONN_PROT_STEP2_0 },
+		{ INFRA_PROT1_SET, INFRA_PROT1_STA1, CONN_PROT_STEP2_1 },
 	};
+	rmw(PERI_CONN_CCU_CONFIG, 1u << 0, 0);
 	for (unsigned i = 0; i < sizeof(prot) / sizeof(prot[0]); i++) {
-		wr(prot[i].set, prot[i].bit);
-		if (!poll(prot[i].sta, prot[i].bit, prot[i].bit, 10000)) {
-			say("off: bus protection 0x%x not acknowledged\n", prot[i].bit);
+		wr(prot[i].set, prot[i].bits);
+		if (!poll(prot[i].sta, prot[i].bits, prot[i].bits, 10000)) {
+			say("off: bus protection 0x%x not acknowledged\n", prot[i].bits);
 		}
 	}
 	rmw(SPM_CONN_PWR_CON, PWR_ISO, PWR_ISO);
@@ -314,105 +359,15 @@ conn_off(char *out, size_t len, size_t o)
 	return o;
 }
 
+/* The MT6781 A-die detection is not this SoC's: MT6785 has no such step (its A-die is fixed by the board). */
 static size_t
 wifi_detect(char *out, size_t len, size_t o)
 {
-	if (rd(SPM_PWR_STATUS) & CONN_PWR_STA) {
-		say("detect: CONN is already powered: refused (wifi status)\n");
-		return o;
-	}
-	uint32_t old18 = pmic(PMIC_VCN18_CON0);
-	uint32_t oldM23 = rd(GPIO_MODE23), oldM24 = rd(GPIO_MODE24), oldDrv = rd(IOCFG_LT_DRV);
-	/* 1. VCN18 on */
-	int e = begonia_pwrap_write_regulator(PMIC_VCN18_CON0, 1, 1);
-	delay(300);
-	say("detect: vcn18 %s\n", e ? "WRITE FAILED" : "on");
-	if (e) {
-		goto rails;
-	}
-	/* 2. A-die interface pins (set_if_pinmux(1)), 150 us */
-	rmw(GPIO_MODE24, 0x77777777, 0x11111111);
-	rmw(GPIO_MODE23, 0x70000000, 0x10000000);
-	rmw(IOCFG_LT_DRV, 0x07ffffff, 0x1209);
-	delay(150);
-	/* 3. CONN CPU held in reset (key 0x88, bit 12), SPM register access */
-	rmw(TOPRGU_SWSYSRST, 0xff001000, 0x88001000);
-	rmw(SPM_POWERON_CONFIG_EN, 0xffff0001, 0x0b160001);
-	/* 4. MTCMOS on (consys_hw_power_ctrl_mt6781_gen) */
-	wr(INFRA_CCIF4_CG_CLR, 1u << 24);
-	rmw(SPM_CONN_PWR_CON, PWR_ON, PWR_ON);
-	if (!poll(SPM_PWR_STATUS, CONN_PWR_STA, CONN_PWR_STA, 5000)) {
-		say("detect: PWR_STATUS did not come up\n");
-		goto off;
-	}
-	rmw(SPM_CONN_PWR_CON, PWR_ON_2ND, PWR_ON_2ND);
-	if (!poll(SPM_PWR_STATUS_2ND, CONN_PWR_STA, CONN_PWR_STA, 5000)) {
-		say("detect: PWR_STATUS_2ND did not come up\n");
-		goto off;
-	}
-	rmw(SPM_CONN_PWR_CON, PWR_CLK_DIS, 0);
-	delay(1);
-	rmw(SPM_CONN_PWR_CON, PWR_ISO, 0);
-	rmw(SPM_CONN_PWR_CON, PWR_RST_B, PWR_RST_B);
-	delay(5000);
-	/* 5. bus protection off, each acknowledged */
-	{
-		static const struct { uint64_t clr, sta; uint32_t bit; } prot[] = {
-			{ INFRA_PROT_CLR, INFRA_PROT_STA1, 0x10000 }, { INFRA_PROT_CLR, INFRA_PROT_STA1, 0x4000 },
-			{ INFRA_PROT1_CLR, INFRA_PROT1_STA1, 0x40000 }, { INFRA_PROT_CLR, INFRA_PROT_STA1, 0x2000 },
-		};
-		for (unsigned i = 0; i < sizeof(prot) / sizeof(prot[0]); i++) {
-			wr(prot[i].clr, prot[i].bit);
-			if (!poll(prot[i].sta, prot[i].bit, 0, 10000)) {
-				say("detect: bus protection 0x%x did not release: CONN registers not touched\n", prot[i].bit);
-				goto off;
-			}
-		}
-	}
-	wr(INFRA_CONN_CCU_CONFIG, 0);
-	delay(10);
-	/* 6. chip id (polling_consys_chipid: 10 x 20 ms) */
-	{
-		bool idOK = false;
-		for (int i = 0; i < 10 && !(idOK = rd(CONN_VERSION) == CONN_VERSION_VALUE); i++) {
-			delay(20000);
-		}
-		say("detect: conn version 0x%08x (%s), cfg id %u, hw 0x%04x, fw 0x%04x\n", rd(CONN_VERSION),
-		    idOK ? "ok" : "UNEXPECTED", rd(CONN_CFG_ID) & 0xf, rd(CONN_HW_VER) & 0xffff, rd(CONN_FW_VER) & 0xffff);
-		if (!idOK) {
-			goto off;
-		}
-	}
-	/* 7. EMI HW mode, AFE, XO (legacy co-clock branch: WMT_SOC.cfg co_clock_flag=1) */
-	rmw(CONN_MCU_EMI_SLPPROT, 1u << 0, 1u << 0);
-	wr(CONN_AFE_WBG_PLL_04, 0x00040088);
-	wr(CONN_AFE_WBG_GL5_02, 0xa8808800);
-	rmw(CONN_XO_1240, 1u << 7, 0);
-	rmw(CONN_XO_1204, 0xff00, 0x0600);
-	rmw(CONN_XO_1200, 0xffff, 0x0708);
-	rmw(CONN_XO_1204, 1u << 0, 0);
-	/* 8. A-die id over the RF SPI (consys_adie_chipid_checking_flow) */
-	rmw(CONN_ADIE_CTL, 1u << 0, 1u << 0);
-	{
-		uint32_t a = adie_read(0xb024), b = adie_read(0xb02c);
-		say("detect: a-die spi 0xb024 -> 0x%08x (id 0x%04x), 0xb02c -> 0x%08x (id 0x%04x): %s\n", a, a >> 16, b, b >> 16,
-		    (a >> 16) == 0x6631 ? "MT6631 (firmware *_soc2_2_*_2_1*)" : (b >> 16) == 0x6635 ?
-		    "MT6635 (firmware *_2a_1*; its 1.3 V rail was off, so this read is lucky)" :
-		    "no answer (MT6635 needs VS2 1.4625 V + GPIO12 on to answer)");
-	}
-	rmw(CONN_ADIE_CTL, 1u << 0, 0);
-off:
-	o = conn_off(out, len, o);
-	wr(GPIO_MODE24, (rd(GPIO_MODE24) & ~0x77777777u) | (oldM24 & 0x77777777u));
-	wr(GPIO_MODE23, (rd(GPIO_MODE23) & ~0x70000000u) | (oldM23 & 0x70000000u));
-	wr(IOCFG_LT_DRV, (rd(IOCFG_LT_DRV) & ~0x07ffffffu) | (oldDrv & 0x07ffffffu));
-rails:
-	begonia_pwrap_write(PMIC_VCN18_CON0, old18);
-	say("detect: rails and pinmux restored (vcn18 con0 %04x)\n", pmic(PMIC_VCN18_CON0));
+	say("detect: not on MT6785 (no A-die detection step in mt6785.c); see wifi status\n");
 	return o;
 }
 
-/* ---- step 2: CONNSYS on with the RAM patches (MT6631 A-die) ---- */
+/* ---- step 2: CONNSYS on with the RAM patches ---- */
 
 struct wmt_rom_patch {                  /* common_main/core/include/wmt_core.h: 48 bytes, stripped */
 	char     date[16];
@@ -425,10 +380,12 @@ struct wmt_rom_patch {                  /* common_main/core/include/wmt_core.h: 
 
 static struct {
 	bool     on, wmt;
+	bool     railed;                /* the enable bits below were written by "wifi on" */
 	void    *emi;
 	uint64_t emiPA;
-	uint32_t old18, old33, old33_1, old28;
-	uint32_t oldM23, oldM24, oldDrv;
+	const struct wifi_rails *r;
+	uint32_t old18, old33;          /* the enable registers as they were */
+	uint32_t oldM1, oldM2, oldDrv;
 } vw;
 
 /* Load patch from embedded memory array into the EMI window at wantOff; date at +dateOff. */
@@ -463,18 +420,22 @@ load_patch_mem(const char *name, const uint8_t *data, size_t size, uint32_t want
 static void
 rails_restore(void)
 {
-	begonia_pwrap_write(PMIC_VCN28_CON0, vw.old28);
-	begonia_pwrap_write(PMIC_VCN33_CON0_1, vw.old33_1);
-	begonia_pwrap_write(PMIC_VCN33_CON0_0, vw.old33);
-	begonia_pwrap_write(PMIC_VCN18_CON0, vw.old18);
+	if (!vw.railed || vw.r == NULL) {
+		return;
+	}
+	/* VCN33_1 first, then VCN18 (mt6785.c consys_hw_vcn18_ctrl(DISABLE)); only the enable bits, as they were */
+	begonia_pwrap_write_regulator(vw.r->vcn33_en, VCN33_EN_BIT, vw.old33);
+	delay(300);
+	begonia_pwrap_write_regulator(vw.r->vcn18_en, 1, vw.old18);
+	vw.railed = false;
 }
 
 static void
 pinmux_restore(void)
 {
-	wr(GPIO_MODE24, (rd(GPIO_MODE24) & ~0x77777777u) | (vw.oldM24 & 0x77777777u));
-	wr(GPIO_MODE23, (rd(GPIO_MODE23) & ~0x70000000u) | (vw.oldM23 & 0x70000000u));
-	wr(IOCFG_LT_DRV, (rd(IOCFG_LT_DRV) & ~0x07ffffffu) | (vw.oldDrv & 0x07ffffffu));
+	wr(GPIO_IF_MODE1, (rd(GPIO_IF_MODE1) & 0x0000ffffu) | (vw.oldM1 & ~0x0000ffffu));
+	wr(GPIO_IF_MODE2, (rd(GPIO_IF_MODE2) & 0xfff00000u) | (vw.oldM2 & ~0xfff00000u));
+	wr(GPIO_IF_DRV, (rd(GPIO_IF_DRV) & 0xff000007u) | (vw.oldDrv & ~0xff000007u));
 }
 
 static void wl_reset(void);      /* station state, defined with it */
@@ -496,13 +457,32 @@ wifi_off(char *out, size_t len, size_t o)
 	return o;
 }
 
+/*
+ * The MT6785 power-on, in mtk_wcn_consys_hw_reg_ctrl(1)'s order with mt6785.c's operations: VCN18 + VCN33_1 on,
+ * A-die pinmux, CPU held in reset, CCIF4 clock + CONN MTCMOS + bus protection released + CON_PWR_ON, chip id, the
+ * RAM patches in EMI (already there: the CPU is in reset), CONN2EMI sleep protection, TOPPOSE restore, WPLL, CPU out
+ * of reset, then the MCU's idle loop (0x18002600 == 0x1D1E).
+ */
 static size_t
 wifi_on(char *out, size_t len, size_t o)
 {
 	if (vw.on) {
 		return o;
 	}
-	if (rd(SPM_PWR_STATUS) & CONN_PWR_STA) {
+	/* the rails before anything else: without permission or a known PMIC nothing at all is touched */
+	uint32_t id;
+	vw.r = rails_map(&id);
+	o = say_rails(out, len, o, "on");
+	if (vw.r == NULL || !rails_permitted()) {
+		say("on: stopped before any write (%s)\n", vw.r == NULL ? "unknown PMIC" : "boot with begonia_wifi_rails=1");
+		return o;
+	}
+	if (VOSEL(pmic(vw.r->vcn33_vosel)) != VCN33_VOSEL_3V3 || VOSEL(pmic(vw.r->vcn18_vosel)) != VCN18_VOSEL_1V8) {
+		say("on: a rail's voltage is not what Wi-Fi needs (VCN33_1 3.3 V, VCN18 1.8 V); voltages are never set "
+		    "here: stopped before any write\n");
+		return o;
+	}
+	if (conn_powered()) {
 		say("on: CONN was already powered, power cycling via conn_off\n");
 		rmw(TOPRGU_SWSYSRST, 0xff001000, 0x88001000);  /* CPU back in reset first */
 		o = conn_off(out, len, o);
@@ -510,7 +490,9 @@ wifi_on(char *out, size_t len, size_t o)
 	}
 
 	/* EMI window + RAM patches */
-	vw.emi = begonia_wifi_emi_alloc(EMI_SIZE, &vw.emiPA);
+	if (vw.emi == NULL) {
+		vw.emi = begonia_wifi_emi_alloc(EMI_SIZE, &vw.emiPA);
+	}
 	if (vw.emi == NULL) {
 		say("on: no EMI window allocated\n");
 		return o;
@@ -519,94 +501,79 @@ wifi_on(char *out, size_t len, size_t o)
 	begonia_wifi_emi_flush(0, EMI_SIZE);
 	say("on: EMI window PA 0x%llx (%s aligned), MCU sees it at 0x%08x\n", vw.emiPA,
 	    (vw.emiPA & 0xffffff) == 0 ? "16 MiB" : "64 KiB", EMI_CONN_BASE);
-	if (load_patch_mem("soc1_0_ram_mcu", g_begonia_fw_ram_mcu, g_begonia_fw_ram_mcu_len, 0x000000, 0x88320, out, len, &o) ||
-	    load_patch_mem("soc1_0_ram_bt", g_begonia_fw_ram_bt, g_begonia_fw_ram_bt_len, 0x080000, 0x88300, out, len, &o) ||
-	    load_patch_mem("soc1_0_ram_wifi", g_begonia_fw_ram_wifi, g_begonia_fw_ram_wifi_len, 0x140000, 0x88310, out, len, &o)) {
+	if (load_patch_mem("soc1_0_ram_mcu", g_begonia_fw_ram_mcu, g_begonia_fw_ram_mcu_len, 0x000000, EMI_DATE_MCU, out, len, &o) ||
+	    load_patch_mem("soc1_0_ram_bt", g_begonia_fw_ram_bt, g_begonia_fw_ram_bt_len, 0x080000, EMI_DATE_BT, out, len, &o) ||
+	    load_patch_mem("soc1_0_ram_wifi", g_begonia_fw_ram_wifi, g_begonia_fw_ram_wifi_len, 0x140000, EMI_DATE_WIFI, out, len, &o)) {
 		return o;
 	}
 	rmw(INFRA_EMI_MAPPING, 0xfffff, (uint32_t)(vw.emiPA >> 16));
 	rmw(INFRA_PERI_MAPPING, 0xfffff, 0x1000);
-	/* rails: VCN18 (1.8 V) + VCN33_1 (3.3 V) via MT6359 PMIC */
-	vw.old18 = pmic(PMIC_VCN18_CON0);
-	vw.old33 = pmic(PMIC_VCN33_CON0_0);
-	vw.old33_1 = pmic(PMIC_VCN33_CON0_1);
-	vw.old28 = pmic(PMIC_VCN28_CON0);
-	vw.oldM23 = rd(GPIO_MODE23);
-	vw.oldM24 = rd(GPIO_MODE24);
-	vw.oldDrv = rd(IOCFG_LT_DRV);
-	int e = 0;
-	e |= begonia_pwrap_write_regulator(PMIC_VCN18_CON0, 1, 1);
-	e |= begonia_pwrap_write_regulator(PMIC_VCN33_ANA_CON0, 0x300, 0x100); /* 3.3V */
-	e |= begonia_pwrap_write_regulator(PMIC_VCN33_CON0_0, 1, 1);
-	e |= begonia_pwrap_write_regulator(PMIC_VCN33_CON0_1, 1, 1);
-	e |= begonia_pwrap_write_regulator(PMIC_VCN28_CON0, 1, 1);
-	delay(500);
-	say("on: rails %s: vcn18 %04x, vcn33_0 %04x, vcn33_1 %04x, vcn28 %04x\n", e ? "WRITE FAILED" : "on",
-	    pmic(PMIC_VCN18_CON0), pmic(PMIC_VCN33_CON0_0), pmic(PMIC_VCN33_CON0_1), pmic(PMIC_VCN28_CON0));
+
+	/* 1. rails: VCN18, then VCN33_1 (its wifi enable); only enable bits */
+	vw.old18 = pmic(vw.r->vcn18_en) & 1;
+	vw.old33 = pmic(vw.r->vcn33_en) & VCN33_EN_BIT;
+	vw.oldM1 = rd(GPIO_IF_MODE1);
+	vw.oldM2 = rd(GPIO_IF_MODE2);
+	vw.oldDrv = rd(GPIO_IF_DRV);
 	vw.on = true;           /* from here "wifi off" undoes everything */
-	if (e) {
+	vw.railed = true;
+	int e = begonia_pwrap_write_regulator(vw.r->vcn18_en, 1, 1);
+	delay(300);
+	e |= begonia_pwrap_write_regulator(vw.r->vcn33_en, VCN33_EN_BIT, VCN33_EN_BIT);
+	delay(500);
+	o = say_rails(out, len, o, e ? "on: rails WRITE FAILED" : "on: rails on");
+	if (e || !(pmic(vw.r->vcn18_mon) & 1) || !(pmic(vw.r->vcn33_mon) & 1)) {
+		say("on: a rail did not come on\n");
 		goto fail;
 	}
-	rmw(GPIO_MODE24, 0x77777777, 0x11111111);
-	rmw(GPIO_MODE23, 0x70000000, 0x10000000);
-	rmw(IOCFG_LT_DRV, 0x07ffffff, 0x1209);
+	/* 2. the A-die interface pins, 2 mA */
+	wr(GPIO_IF_MODE1, (rd(GPIO_IF_MODE1) & 0x0000ffffu) | 0x11110000u);
+	wr(GPIO_IF_MODE2, (rd(GPIO_IF_MODE2) & 0xfff00000u) | 0x00011111u);
+	wr(GPIO_IF_DRV, rd(GPIO_IF_DRV) & 0xff000007u);
 	delay(150);
+	/* 3. CONN CPU held in reset */
 	rmw(TOPRGU_SWSYSRST, 0xff001000, 0x88001000);
-	rmw(SPM_POWERON_CONFIG_EN, 0xffff0001, 0x0b160001);
-	wr(INFRA_CCIF4_CG_CLR, 1u << 24);
+	/* 4. CCIF4 clock, CONN MTCMOS (spm_mtcmos_ctrl_conn), bus protection, CON_PWR_ON */
+	wr(INFRA_CCIF4_CG_CLR, INFRA_CCIF4_AP);
+	wr(SPM_POWERON_CONFIG_EN, (0xb16u << 16) | 1u);
 	rmw(SPM_CONN_PWR_CON, PWR_ON, PWR_ON);
-	if (!poll(SPM_PWR_STATUS, CONN_PWR_STA, CONN_PWR_STA, 5000)) {
-		say("on: PWR_STATUS did not come up\n");
-		goto fail;
-	}
 	rmw(SPM_CONN_PWR_CON, PWR_ON_2ND, PWR_ON_2ND);
-	if (!poll(SPM_PWR_STATUS_2ND, CONN_PWR_STA, CONN_PWR_STA, 5000)) {
-		say("on: PWR_STATUS_2ND did not come up\n");
+	if (!poll(SPM_PWR_STATUS, CONN_PWR_STA, CONN_PWR_STA, 5000) ||
+	    !poll(SPM_PWR_STATUS_2ND, CONN_PWR_STA, CONN_PWR_STA, 5000)) {
+		say("on: PWR_STATUS did not come up (0x%08x / 0x%08x)\n", rd(SPM_PWR_STATUS), rd(SPM_PWR_STATUS_2ND));
 		goto fail;
 	}
 	rmw(SPM_CONN_PWR_CON, PWR_CLK_DIS, 0);
-	delay(1);
 	rmw(SPM_CONN_PWR_CON, PWR_ISO, 0);
 	rmw(SPM_CONN_PWR_CON, PWR_RST_B, PWR_RST_B);
-	delay(5000);
-	{
-		static const struct { uint64_t clr, sta; uint32_t bit; } prot[] = {
-			{ INFRA_PROT_CLR, INFRA_PROT_STA1, 0x10000 }, { INFRA_PROT_CLR, INFRA_PROT_STA1, 0x4000 },
-			{ INFRA_PROT1_CLR, INFRA_PROT1_STA1, 0x40000 }, { INFRA_PROT_CLR, INFRA_PROT_STA1, 0x2000 },
-		};
-		for (unsigned i = 0; i < sizeof(prot) / sizeof(prot[0]); i++) {
-			wr(prot[i].clr, prot[i].bit);
-			if (!poll(prot[i].sta, prot[i].bit, 0, 10000)) {
-				say("on: bus protection 0x%x did not release\n", prot[i].bit);
-				goto fail;
-			}
-		}
+	wr(INFRA_PROT_CLR, CONN_PROT_STEP2_0);
+	wr(INFRA_PROT1_CLR, CONN_PROT_STEP2_1);
+	wr(INFRA_PROT_CLR, CONN_PROT_STEP1);
+	if (!poll(INFRA_PROT_STA1, CONN_PROT_STEP1 | CONN_PROT_STEP2_0, 0, 10000) ||
+	    !poll(INFRA_PROT1_STA1, CONN_PROT_STEP2_1, 0, 10000)) {
+		say("on: bus protection did not release (0x%08x / 0x%08x)\n", rd(INFRA_PROT_STA1), rd(INFRA_PROT1_STA1));
+		goto fail;
 	}
-	wr(INFRA_CONN_CCU_CONFIG, 0);
+	rmw(PERI_CONN_CCU_CONFIG, 1u << 0, 1u << 0);
 	delay(10);
+	/* 5. chip id (polling_consys_chipid: 10 x 20 ms) */
 	{
 		bool idOK = false;
 		for (int i = 0; i < 10 && !(idOK = rd(CONN_VERSION) == CONN_VERSION_VALUE); i++) {
 			delay(20000);
 		}
+		say("on: conn version 0x%08x (want 0x%08x), cfg id %u, hw 0x%04x fw 0x%04x\n", rd(CONN_VERSION),
+		    CONN_VERSION_VALUE, rd(CONN_CFG_ID) & 0xf, rd(CONN_HW_VER) & 0xffff, rd(CONN_FW_VER) & 0xffff);
 		if (!idOK) {
-			say("on: conn version 0x%08x, not 0x%08x\n", rd(CONN_VERSION), CONN_VERSION_VALUE);
 			goto fail;
 		}
 	}
-	rmw(CONN_MCU_EMI_SLPPROT, 1u << 0, 1u << 0);           /* 11. EMI HW mode */
-	wr(CONN_AFE_WBG_PLL_04, 0x00040088);                    /* 13. AFE */
-	wr(CONN_AFE_WBG_GL5_02, 0xa8808800);
-	wr(CONN_BT_EMI_ENTRY, EMI_CONN_BASE + 0x080000);        /* 14. EMI entries */
-	wr(CONN_WF_EMI_ENTRY, EMI_CONN_BASE + 0x140000);
-	rmw(CONN_XO_1240, 1u << 7, 0);                          /* 15. XO, legacy co-clock */
-	rmw(CONN_XO_1204, 0xff00, 0x0600);
-	rmw(CONN_XO_1200, 0xffff, 0x0708);
-	rmw(CONN_XO_1204, 1u << 0, 0);
-	rmw(CONN_ADIE_SEL, 0x300, 0x100);                       /* 16. A-die = MT6631 */
-	wr(CONN_BUSHANGCR, 0x90000002);                         /* 18. bus timeout */
-	rmw(CONN_RGU_DLY_CHAIN, 0xf0000, 0x40000);              /* 19. MCU mem PDN delay */
-	rmw(TOPRGU_SWSYSRST, 0xff001000, 0x88000000);           /* 20. CPU out of reset: ROM, then the patches */
+	/* 6. CONN2EMI HW sleep protection, TOPPOSE restore done, WPLL setting (mt6785.c after the chip id) */
+	rmw(CONN_SLPPROT_CTRL, 1u << 4, 1u << 4);
+	rmw(CONN_TOPPOSE_RESTORE, 1u << 23, 1u << 23);
+	rmw(CONN_WPLL_SETTING, 0x00180000u, 0x00080000u);
+	/* 7. CPU out of reset: ROM, then the patches; the MCU's idle loop (consys_hw_reset_bit_set(DISABLE)) */
+	rmw(TOPRGU_SWSYSRST, 0xff001000, 0x88000000);
 	{
 		bool idle = false;
 		uint32_t t;
@@ -616,8 +583,7 @@ wifi_on(char *out, size_t len, size_t o)
 		say("on: MCU %s after ~%u ms: com_reg0 0x%08x, pc 0x%08x, dbg 0x%08x\n", idle ? "IDLE LOOP" :
 		    "NOT IDLE", t * 6, rd(CONN_MCU_COM_REG0), rd(CONN_MCU_PC), rd(CONN_MCU_DBG_216C));
 		if (!idle) {
-			say("on: left on for inspection (wifi status, peek); wifi off to power down. Next suspects: EMI MPU "
-			    "SMC, patch placement\n");
+			say("on: left on for inspection (wifi status); wifi off to power down\n");
 		}
 	}
 	delay(20000);
@@ -879,10 +845,9 @@ wifi_wmt(char *out, size_t len, size_t o)
 	/* MT6781: 02 14 <len 0x22a> 00 01 + calibration data (0130 on the phone) */
 	static const uint8_t calEv[] = { 0x02, 0x14 };
 	int c = wmt_cmd("rf calibration", cal, sizeof(cal), calEv, sizeof(calEv), 5000, ev, sizeof(ev), out, len, &o);
-	/* wmt_ic_soc.c: the efuse PALDO (VCN28) goes off after the calibration */
-	begonia_pwrap_write_regulator(PMIC_VCN28_CON0, 1, 0);
+	/* (MT6785 is not co-clock: no efuse PALDO to turn off after the calibration, mtk_wcn_consys_hw_efuse_paldo_ctrl) */
 	vw.wmt = c >= 0;
-	say("wmt: %s; VCN28 off. Next: wifi fw\n", c >= 0 ? "done" : "calibration FAILED");
+	say("wmt: %s. Next: wifi fw\n", c >= 0 ? "done" : "calibration FAILED");
 	return o;
 }
 
