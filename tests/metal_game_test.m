@@ -26,66 +26,32 @@ static void part(const char *name, bool ok, NSString *detail) {
 }
 
 static const char *const source =
-    "#include <metal_stdlib>
-"
-    "using namespace metal;
-"
-    "
-"
-    "kernel void add(device const float *a [[buffer(0)]], device const float *b [[buffer(1)]], device float *out [[buffer(2)]],
-"
-    "                uint i [[thread_position_in_grid]]) {
-"
-    "    out[i] = a[i] + b[i];
-"
-    "}
-"
-    "
-"
-    "struct VertexIn { float2 position [[attribute(0)]]; float2 uv [[attribute(1)]]; };
-"
-    "struct VertexOut { float4 position [[position]]; float2 uv; };
-"
-    "struct Instance { float2 offset; float depth; float pad; };
-"
-    "
-"
-    "vertex VertexOut quad_vertex(VertexIn in [[stage_in]], constant Instance *instances [[buffer(1)]], uint instance [[instance_id]]) {
-"
-    "    VertexOut out;
-"
-    "    out.position = float4(in.position * 0.25 + instances[instance].offset, instances[instance].depth, 1);
-"
-    "    out.uv = in.uv;
-"
-    "    return out;
-"
-    "}
-"
-    "fragment half4 quad_fragment(VertexOut in [[stage_in]], texture2d<half> texture [[texture(0)]], sampler s [[sampler(0)]]) {
-"
-    "    return texture.sample(s, in.uv);
-"
-    "}
-"
-    "
-"
-    "struct Material { float4 colour; };
-"
-    "fragment float4 argument_fragment(VertexOut in [[stage_in]], constant Material &material [[buffer(0)]]) {
-"
-    "    return material.colour;
-"
-    "}
-"
-    "struct Arguments { device Material *material [[id(0)]]; };
-"
-    "fragment float4 argument_buffer_fragment(VertexOut in [[stage_in]], constant Arguments &arguments [[buffer(0)]]) {
-"
-    "    return arguments.material->colour;
-"
-    "}
-";
+    "#include <metal_stdlib>\n"
+    "using namespace metal;\n"
+    "kernel void add(device const float *a [[buffer(0)]], device const float *b [[buffer(1)]], device float *out [[buffer(2)]],\n"
+    "                uint i [[thread_position_in_grid]]) {\n"
+    "    out[i] = a[i] + b[i];\n"
+    "}\n"
+    "struct VertexIn { float2 position [[attribute(0)]]; float2 uv [[attribute(1)]]; };\n"
+    "struct VertexOut { float4 position [[position]]; float2 uv; };\n"
+    "struct Instance { float2 offset; float depth; float pad; };\n"
+    "vertex VertexOut quad_vertex(VertexIn in [[stage_in]], constant Instance *instances [[buffer(1)]], uint instance [[instance_id]]) {\n"
+    "    VertexOut out;\n"
+    "    out.position = float4(in.position * 0.25 + instances[instance].offset, instances[instance].depth, 1);\n"
+    "    out.uv = in.uv;\n"
+    "    return out;\n"
+    "}\n"
+    "fragment half4 quad_fragment(VertexOut in [[stage_in]], texture2d<half> texture [[texture(0)]], sampler s [[sampler(0)]]) {\n"
+    "    return texture.sample(s, in.uv);\n"
+    "}\n"
+    "struct Material { float4 colour; };\n"
+    "fragment float4 argument_fragment(VertexOut in [[stage_in]], constant Material &material [[buffer(0)]]) {\n"
+    "    return material.colour;\n"
+    "}\n"
+    "struct Arguments { device Material *material [[id(0)]]; };\n"
+    "fragment float4 argument_buffer_fragment(VertexOut in [[stage_in]], constant Arguments &arguments [[buffer(0)]]) {\n"
+    "    return arguments.material->colour;\n"
+    "}\n";
 
 static id<MTLTexture> target(id<MTLDevice> device, MTLPixelFormat format, NSUInteger w, NSUInteger h, MTLStorageMode mode) {
     MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:w height:h mipmapped:NO];
