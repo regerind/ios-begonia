@@ -1,0 +1,69 @@
+--- a/src/gallium/drivers/panfrost/pan_job.c
++++ b/src/gallium/drivers/panfrost/pan_job.c
+@@ -716,6 +716,56 @@
+    }
+ }
+ 
++
++/*
++ * begonia (y138): the batches that cover a large part of a large picture (at least half a million pixels of extent),
++ * by picture size and whether they begin by clearing (else every tile they cover is loaded first): with YouTube, ~2
++ * fragment jobs a frame took ~6 ms each and ~5 took 1-2 ms -- which pictures are they? Said with the reasons.
++ */
++#define PAN_BIG_KINDS 12
++static struct { unsigned w, h, cleared, count; uint64_t draws, area; } pan_big[PAN_BIG_KINDS];
++
++static void
++pan_count_big(struct panfrost_batch *batch)
++{
++   if (batch->maxx <= batch->minx || batch->maxy <= batch->miny)
++      return;
++   uint64_t area = (uint64_t)(batch->maxx - batch->minx) * (batch->maxy - batch->miny);
++   if (area < 500000)
++      return;
++   unsigned cleared = (batch->clear & PIPE_CLEAR_COLOR) ? 1 : 0;
++   for (unsigned i = 0; i < PAN_BIG_KINDS; i++) {
++      if (!pan_big[i].count || (pan_big[i].w == batch->key.width && pan_big[i].h == batch->key.height &&
++                                pan_big[i].cleared == cleared)) {
++         pan_big[i].w = batch->key.width;
++         pan_big[i].h = batch->key.height;
++         pan_big[i].cleared = cleared;
++         pan_big[i].count++;
++         pan_big[i].draws += batch->draw_count;
++         pan_big[i].area += area;
++         return;
++      }
++   }
++}
++
++__attribute__((visibility("default"))) int osmesa_big_batches(char *out, unsigned size);
++__attribute__((visibility("default"))) int
++osmesa_big_batches(char *out, unsigned size)
++{
++   int o = 0;
++   for (unsigned i = 0; i < PAN_BIG_KINDS && pan_big[i].count; i++) {
++      if (o < (int)size - 1)
++         o += snprintf(out + o, size - o, " %ux%u %s: %u, %llu draws, %llu%% of it each;", pan_big[i].w, pan_big[i].h,
++                       pan_big[i].cleared ? "cleared" : "LOADED", pan_big[i].count,
++                       (unsigned long long)(pan_big[i].draws / pan_big[i].count),
++                       (unsigned long long)(pan_big[i].area * 100 / pan_big[i].count /
++                                            ((uint64_t)pan_big[i].w * pan_big[i].h ? (uint64_t)pan_big[i].w * pan_big[i].h : 1)));
++   }
++   for (unsigned i = 0; i < PAN_BIG_KINDS; i++)
++      pan_big[i].count = 0, pan_big[i].draws = 0, pan_big[i].area = 0, pan_big[i].w = pan_big[i].h = 0;
++   return o;
++}
++
+ static void
+ panfrost_batch_submit(struct panfrost_context *ctx,
+                       struct panfrost_batch *batch)
+@@ -729,6 +779,9 @@
+    if (!has_frag && batch->compute_count == 0 && !batch->has_time_query)
+       goto out;
+ 
++   if (has_frag)
++      pan_count_big(batch);
++
+    if (batch->key.zsbuf && has_frag) {
+       struct pipe_surface *surf = batch->key.zsbuf;
+       struct panfrost_resource *z_rsrc = pan_resource(surf->texture);

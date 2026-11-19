@@ -1,0 +1,22 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -665,6 +665,19 @@
+ 	}
+ 	say("hakios-gl:   textures that are IOSurfaces now: %u of %zu places\n", e->image_count,
+ 	    sizeof(e->images) / sizeof(e->images[0]));
++	/* begonia (y138): the big batches since the last summary (mesa-patches 0010) */
++	{
++		static int (*big)(char *, unsigned);
++		static int looked;
++		char line[700];
++
++		if (!looked++) {
++			big = (int (*)(char *, unsigned))dlsym(RTLD_DEFAULT, "osmesa_big_batches");
++		}
++		if (big != NULL && big(line, sizeof(line)) > 0) {
++			say("hakios-gl:   big batches:%s\n", line);
++		}
++	}
+ 	/* begonia (y134): why Mesa sent its batches to the GPU since the last summary (mesa-patches 0008) */
+ 	{
+ 		static int (*reasons)(char *, unsigned);
