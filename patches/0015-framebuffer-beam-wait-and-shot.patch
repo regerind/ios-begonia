@@ -1,0 +1,67 @@
+--- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
++++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+@@ -279,6 +279,39 @@
+  * to take between 5 and 40 ms; otherwise frames stay on their beat, as without it.
+  */
+ static TUNABLE(uint64_t, gLinePhysical, "fb_line", 0);
++/*
++ * begonia, boot-arg fb_beam_wait=MS: how long after the driver starts the scan is looked at (60000 as it was:
++ * a test session of a minute was over before the frames were written behind the scan).
++ */
++static TUNABLE(uint32_t, gBeamWait, "fb_beam_wait", 60000);
++/*
++ * begonia, boot-arg fb_shot=SECONDS: what is on the panel, into the log, SECONDS after boot and again 15 s later --
++ * for sessions nobody watches. Every eighth pixel of every eighth row, its brightness as one of 64 characters
++ * ("SHOTn ROW chars"; tools: the session notes say how it is made a picture again).
++ */
++static TUNABLE(uint32_t, gShot, "fb_shot", 0);
++
++static void
++panelShot(const uint8_t * base, uint32_t width, uint32_t height, uint32_t rowBytes, unsigned number)
++{
++	static const char marks[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/";
++	char line[260];
++
++	IOLog("SHOT%u begins: %u x %u, every 8th\n", number, width, height);
++	for (uint32_t y = 0; y < height; y += 8) {
++		unsigned n = 0;
++
++		for (uint32_t x = 0; x < width && n < sizeof(line) - 1; x += 8) {
++			uint32_t pixel = *(const volatile uint32_t *) (base + (size_t) y * rowBytes + (size_t) x * 4);
++			uint32_t grey = (((pixel >> 16) & 255) * 2 + ((pixel >> 8) & 255) * 5 + (pixel & 255)) >> 3;
++
++			line[n++] = marks[grey >> 2];
++		}
++		line[n] = 0;
++		IOLog("SHOT%u %03u %s\n", number, y / 8, line);
++	}
++	IOLog("SHOT%u ends\n", number);
++}
+ extern "C" void begonia_perf_note(const char * format, ...) __printflike(1, 2);
+ 
+ static vm_offset_t
+@@ -967,7 +1000,7 @@
+ 	uint32_t first, frames, line, lines = 0, smallest = ~0u;
+ 	uint64_t began, ended, until;
+ 
+-	IOSleep(60000);
++	IOSleep(gBeamWait);
+ 	if (gLinePhysical != 0) {
+ 		vm_offset_t reg = ml_io_map((vm_offset_t) (gLinePhysical & ~0x3fffULL), 0x4000) + (vm_offset_t) (gLinePhysical & 0x3fffULL);
+ 		uint32_t before = *(volatile uint32_t *) reg, most = 0, least = ~0u, wraps = 0;
+@@ -1619,6 +1652,15 @@
+ 		fLayersShown = layers;
+ 	}
+ 
++	if (gShot != 0) {
++		static unsigned shots;
++		uint64_t up;
++
++		absolutetime_to_nanoseconds(mach_absolute_time(), &up);
++		if (shots < 2 && up / NSEC_PER_SEC >= gShot + 15 * shots) {
++			panelShot(fBase, fPanelWidth, fPanelHeight, fRowBytes, ++shots);
++		}
++	}
+ 	/* every five seconds in which something was drawn: how many frames, and what each cost here */
+ 	fStatFrames++;
+ 	fStatDrawing += mach_absolute_time() - began;

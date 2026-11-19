@@ -14,7 +14,9 @@ shutil.copy2(stage/'libOSMesa.8.dylib',dest/'lib/libOSMesa.8.dylib')
 shutil.copy2(stage/'gles_render_test',dest/'bin/gles_render_test')
 if a.ui:
  shutil.copy2(stage/'libhakios.gl.dylib',dest/'lib/libhakios.gl.dylib')
- jobs='/redwood/bin/gles_render_test\nsleep 60\n/bin/ps -A\n'
+ # a scripted touch workload of the base image (make_ui_support.py --touch-script) is kept
+ touch=''.join(line for line in (dest/'etc/rc.jobs').read_text().splitlines(True) if '/bin/rwtouch ' in line)
+ jobs=touch+'/redwood/bin/gles_render_test\nsleep 60\n/bin/ps -A\n'
 else:
  keep={'com.hakios.demo.plist','com.apple.notifyd.plist','com.apple.cfprefsd.xpc.daemon.plist'}
  for f in (dest/'LaunchDaemons').glob('*.plist'):
