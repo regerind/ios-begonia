@@ -1170,8 +1170,11 @@ init_cmd(uint8_t cid, const void *payload, uint32_t plen, uint32_t waitMs, char 
 		if (ring == 0) {
 			say("fw: cmd 0x%02x: event on RX ring 0 (%u bytes)\n", cid, got);
 		}
-		uint8_t *e = ev + 20;
-		if (got >= 32 && e[4] == 1 && e[5] == seq) {
+		/* MT6785 (gen4m "connac"): an init event's RX descriptor is 16 bytes (CONNAC_INIT_EVT_RX_DESC_LENGTH), then
+		 * the 8-byte init event header (eid at +4, seq at +5), then the result (status at +8): 28 bytes in all. The
+		 * MT6781 driver this came from read it at 20 and saw y60's answer (eid 1, seq 1) as "eid 0 seq 0". */
+		uint8_t *e = ev + 16;
+		if (got >= 28 && e[4] == 1 && e[5] == seq) {
 			ret = e[8];
 			if (ret != 0) {
 				say("fw: cmd 0x%02x seq %u: result status %u (1 params, 2 CRC, 3 decrypt)\n", cid, seq, e[8]);
