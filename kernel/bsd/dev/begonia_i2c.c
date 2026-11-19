@@ -431,6 +431,14 @@ sysctl_begonia_i2c SYSCTL_HANDLER_ARGS
 			o = torch(out, len, o);
 		} else if (strncmp(cmd, "tfa", 3) == 0) {
 			o = tfa(out, len, o);
+		} else if (sscanf(cmd, "pins %u %u %u", &bus, &addr, &reg) == 3 && bus < BUSES && gpio_map()) {
+			/* a bus's pins (the device tree's scl-gpio-id / sda-gpio-id) to I2C (mode 1), then bus 5's setup on it */
+			unsigned ms = pin_mode(addr), md = pin_mode(reg);
+			pin_set_mode(addr, 1);
+			pin_set_mode(reg, 1);
+			dead[bus] = false;
+			say("pins %u: GPIO%u mode %u -> 1, GPIO%u mode %u -> 1; ", bus, addr, ms, reg, md);
+			o = clone(5, (int)bus, out, len, o);
 		} else if (sscanf(cmd, "regs %u", &bus) == 1) {
 			o = regs_of((int)bus, out, len, o);
 		} else if (sscanf(cmd, "clone %u %u", &bus, &addr) == 2) {
