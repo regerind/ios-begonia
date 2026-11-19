@@ -15,9 +15,9 @@
 + * their corners -- the same way up (counted), or turned over or elsewhere (then never for that framebuffer). Two
 + * agreements and no disagreement, and a draw with no scissor there gets its corners' rectangle. Only plain draws (not
 + * ours of groups); corners not in plain memory (a buffer bound) or not like pixels: left alone.
-+ * Boot-arg glautoscissor=0: never.
++ * Off unless boot-arg glautoscissor=1 (y126: ~10% off the fragment jobs, and the picture's top came out black in a shot).
 + */
-+static int auto_scissor_on = 1;
++static int auto_scissor_on = 0;
 +static unsigned auto_scissored, auto_skipped;
 +static struct auto_fb { GLuint fb; uint16_t agree, disagree; } auto_fbs[64];
 +
@@ -171,7 +171,7 @@
  			}
  		}
  		share_surfaces = strstr(arguments, "glcopy=1") == NULL;
-+		auto_scissor_on = strstr(arguments, "glautoscissor=0") == NULL;
++		auto_scissor_on = strstr(arguments, "glautoscissor=1") != NULL;
  		trust_seed = strstr(arguments, "glseed=0") == NULL;
  		share_planes = strstr(arguments, "glplanes=0") == NULL;
  		blit_targets = strstr(arguments, "glblit=0") == NULL;
