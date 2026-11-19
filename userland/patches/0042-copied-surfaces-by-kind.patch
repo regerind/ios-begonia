@@ -1,0 +1,61 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -376,6 +376,35 @@
+ /* begonia: why surfaces were copied rather than shared, for the whole run (summary()) */
+ static unsigned refuse_count[7];
+ static unsigned long long refuse_bytes[7];
++/*
++ * begonia: which surfaces are copied rather than shared, by pixel format, size and reason, for the 5-second report
++ * (y90: Freeform's drawing copied ~100 MB in a few seconds -- "not BGRA bytes" and "the library refused" -- and
++ * the per-surface lines are said only for the first few, which the log ring loses).
++ */
++static struct copied_kind {
++	uint32_t format, width, height, why, count;
++	uint64_t bytes;
++} copied_kinds[12];
++
++static void
++copied_note(uint32_t format, size_t width, size_t height, unsigned why, size_t bytes)
++{
++	unsigned i, least = 0;
++
++	for (i = 0; i < 12; i++) {
++		struct copied_kind *k = &copied_kinds[i];
++		if (k->count != 0 && k->format == format && k->width == width && k->height == height && k->why == why) {
++			k->count++;
++			k->bytes += bytes;
++			return;
++		}
++		if (k->count < copied_kinds[least].count) {
++			least = i;
++		}
++	}
++	copied_kinds[least] = (struct copied_kind){ format, (uint32_t)width, (uint32_t)height, why, 1, bytes };
++}
++
+ static const char *const refuse_name[7] = { "sharing off", "turned over", "alpha first", "not BGRA bytes",
+     "a plane", "a part of it", "the library refused" };
+ 
+@@ -651,6 +680,14 @@
+ 			say("hakios-gl:   copied because %s: %u surfaces, %llu MB\n", refuse_name[i], refuse_count[i], refuse_bytes[i] >> 20);
+ 		}
+ 	}
++	for (unsigned k = 0; k < 12; k++) {
++		struct copied_kind *c = &copied_kinds[k];
++		if (c->count != 0) {
++			say("hakios-gl:   copied kind '%.4s' %u x %u (%s): %u times, %llu MB\n",
++			    (const char *)&(uint32_t){ OSSwapInt32(c->format) }, c->width, c->height, refuse_name[c->why], c->count,
++			    (unsigned long long)(c->bytes >> 20));
++		}
++	}
+ 	for (unsigned i = 0; i < sizeof(formats) / sizeof(formats[0]) && formats[i].count; i++) {
+ 		say("hakios-gl:   textures: %s %#x/%#x/%#x: %u times, up to %u x %u\n", formats[i].how, formats[i].internal,
+ 		    formats[i].format, formats[i].type, formats[i].count, formats[i].widest, formats[i].tallest);
+@@ -885,6 +922,7 @@
+ 
+ 			refuse_count[why]++;
+ 			refuse_bytes[why] += bytes;
++			copied_note(IOSurfaceGetPixelFormat(surface), IOSurfaceGetWidth(surface), IOSurfaceGetHeight(surface), why, bytes);
+ 			/* the big ones, whenever: a full-screen copy is what costs a frame */
+ 			if (bytes >= (4u << 20) && (refuse_count[why] < 8 || refuse_count[why] % 500 == 0)) {
+ 				say("hakios-gl: big surface %u ('%.4s' %zu x %zu, %zu bytes a row, texture %u x %u, format %#x/%#x) copied: %s\n",
