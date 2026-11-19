@@ -1,0 +1,15 @@
+#!/bin/bash
+# Linux port of tools/build_gpu_tests_ios.py for the two diagnostics a Metal image runs: metal_frontend_test (the
+# Metal device through the plug-in: buffers, blits, an IOSurface texture, a clear) and vulkan_device_test (PanVK alone).
+#   tools/build_gpu_tests_linux.sh       (WSL/Linux) -> out/native-gpu-tests/
+set -e -o pipefail
+R=$(cd "$(dirname "$0")/.." && pwd); H=$R/upstream/hakios-xnu-kernel
+source "$H/xnu-env.sh"
+SDK=$THEOS/sdks/iPhoneOS16.5.sdk; CC=$H/xnu-deps/host/bin/xnu-clang
+O=$R/out/native-gpu-tests; mkdir -p "$O"
+base=("$CC" -arch arm64 -isysroot "$SDK" -mios-version-min=16.5 -O1 -Wall -Wextra)
+"${base[@]}" "$R/tests/metal_frontend_test.m" -fobjc-arc -framework Foundation -framework Metal -framework IOSurface \
+	-framework IOKit -o "$O/metal_frontend_test"
+"${base[@]}" "$R/tests/vulkan_device_test.c" -I "$R/upstream/mesa-vulkan/include" -o "$O/vulkan_device_test"
+ls -la "$O"
+echo "gpu tests: built metal_frontend_test and vulkan_device_test"

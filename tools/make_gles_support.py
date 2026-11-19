@@ -3,20 +3,40 @@
 from pathlib import Path
 import argparse,shutil,subprocess,sys
 root=Path(__file__).resolve().parents[1];p=argparse.ArgumentParser(description=__doc__)
-p.add_argument('--base-root',type=Path,required=True);p.add_argument('--output-dir',type=Path,required=True);p.add_argument('--ui',action='store_true');a=p.parse_args()
+p.add_argument('--base-root',type=Path,required=True);p.add_argument('--output-dir',type=Path,required=True);p.add_argument('--ui',action='store_true')
+p.add_argument('--metal-client',action='append',default=[],help='a program that is shown the Metal device (PanVK, metal2vulkan and the HakiosMetal bundle are staged; boot with metal=1)')
+a=p.parse_args()
 base=a.base_root.resolve();out=a.output_dir.resolve();dest=out/'root'
 if base==dest or base in dest.parents or dest in base.parents or dest.exists():p.error('use a fresh separate output directory')
 shutil.copytree(base,dest,symlinks=True)
 stage=root/'out/gles-ios'
 for name in ('libvulkan_panfrost.dylib','libmetal2vulkan.dylib'):
  (dest/'lib'/name).unlink(missing_ok=True)
+metal_tests=''
+if a.metal_client:
+ # Metal for applications (the window server stays on OpenGL ES): the Vulkan driver, the Metal-on-Vulkan runtime, the
+ # plug-in Metal loads and the list of programs that are shown the device. Built by tools/build_panvk_linux.sh,
+ # tools/build_metal2vulkan_linux.sh and tools/build_metal_frontend_ios.py --cc. init puts ext/ over the system
+ # volume's Extensions (userland patch 0035), where Metal looks for the plug-in.
+ shutil.copy2(root/'out/panvk-ios/libvulkan_panfrost.dylib',dest/'lib/libvulkan_panfrost.dylib')
+ shutil.copy2(root/'out/metal2vulkan-target-ios/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib',dest/'lib/libmetal2vulkan.dylib')
+ clients=''.join(n+'\n' for n in dict.fromkeys(['metal_frontend_test','metal_test',*a.metal_client]))
+ for bundle in (dest/'lib/HakiosMetal.bundle',dest/'ext/HakiosMetal.bundle'):
+  bundle.mkdir(parents=True,exist_ok=True)
+  shutil.copy2(root/'out/metal-frontend-ios/HakiosMetal',bundle/'HakiosMetal')
+  shutil.copy2(root/'upstream/hakios-xnu-kernel/userland/src/HakiosMetal.plist',bundle/'Info.plist')
+  (bundle.parent/'HakiosMetal.clients').write_text(clients)
+ for t in ('metal_frontend_test','vulkan_device_test'):
+  if (root/'out/native-gpu-tests'/t).exists():
+   shutil.copy2(root/'out/native-gpu-tests'/t,dest/'bin'/t);metal_tests+='/redwood/bin/'+t+'\n'
 shutil.copy2(stage/'libOSMesa.8.dylib',dest/'lib/libOSMesa.8.dylib')
 shutil.copy2(stage/'gles_render_test',dest/'bin/gles_render_test')
 if a.ui:
  shutil.copy2(stage/'libhakios.gl.dylib',dest/'lib/libhakios.gl.dylib')
  # a scripted touch workload of the base image (make_ui_support.py --touch-script) is kept
  touch=''.join(line for line in (dest/'etc/rc.jobs').read_text().splitlines(True) if '/bin/rwtouch ' in line)
- jobs=touch+'/redwood/bin/gles_render_test\nsleep 60\n/bin/ps -A\n'
+ # (the Metal tests late: the log keeps only the last half minute of a session)
+ jobs=touch+'/redwood/bin/gles_render_test\n'+('sleep 50\n'+metal_tests if metal_tests else 'sleep 60\n')+'/bin/ps -A\n'
 else:
  keep={'com.hakios.demo.plist','com.apple.notifyd.plist','com.apple.cfprefsd.xpc.daemon.plist'}
  for f in (dest/'LaunchDaemons').glob('*.plist'):
