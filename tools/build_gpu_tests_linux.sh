@@ -13,5 +13,7 @@ base=("$CC" -arch arm64 -isysroot "$SDK" -mios-version-min=16.5 -O1 -Wall -Wextr
 "${base[@]}" "$R/tests/vulkan_device_test.c" -I "$R/upstream/mesa-vulkan/include" -o "$O/vulkan_device_test"
 "${base[@]}" "$R/tests/spritekit_test.m" -fobjc-arc -framework Foundation -framework Metal -framework SpriteKit \
 	-framework CoreGraphics -framework UIKit -o "$O/spritekit_test"
+"${base[@]}" "$R/tests/scenekit_test.m" -fobjc-arc -framework Foundation -framework Metal -framework SceneKit \
+	-framework UIKit -framework CoreGraphics -o "$O/scenekit_test"
 ls -la "$O"
-echo "gpu tests: built metal_frontend_test and vulkan_device_test"
+echo "gpu tests: built"

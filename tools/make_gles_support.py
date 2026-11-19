@@ -25,7 +25,7 @@ if a.metal_client:
  runtime=max((f for f in (small,full) if f.exists()),key=lambda f:f.stat().st_mtime)  # the one built last
  for source,name in ((root/'out/panvk-ios/libvulkan_panfrost.dylib','libvulkan_panfrost.dylib'),(runtime,'libmetal2vulkan.dylib')):
   subprocess.run(['llvm-strip','-S','-x','-o',str(dest/'lib'/name),str(source)],check=True)
- clients=''.join(n+'\n' for n in dict.fromkeys(['metal_frontend_test','metal_test','spritekit_test',*a.metal_client]))
+ clients=''.join(n+'\n' for n in dict.fromkeys(['metal_frontend_test','metal_test','spritekit_test','scenekit_test',*a.metal_client]))
  for bundle in (dest/'ext/HakiosMetal.bundle',):
   bundle.mkdir(parents=True,exist_ok=True)
   shutil.copy2(root/'out/metal-frontend-ios/HakiosMetal',bundle/'HakiosMetal')
@@ -47,11 +47,11 @@ if a.metal_client:
    shutil.copy2(library,kept/library.name);print('metal: '+library.name+' of '+info['CFBundleIdentifier'])
  # The frameworks' libraries that games draw with and that fit in the boot image (SceneKit's 2.1 MB and
  # MetalPerformanceShaders' 95 MB do not: they need the system volume), by their bundle's path.
- for path in ('System/Library/Frameworks/SpriteKit.framework/default.metallib',):
+ for path in ('System/Library/Frameworks/SpriteKit.framework/default.metallib','System/Library/Frameworks/SceneKit.framework/default.metallib'):
   if (sysimage/'metallibs'/path).exists():
    (dest/'ext/metallib'/path).parent.mkdir(parents=True,exist_ok=True)
    shutil.copy2(sysimage/'metallibs'/path,dest/'ext/metallib'/path);print('metal: /'+path)
- for t in ('metal_frontend_test','vulkan_device_test','spritekit_test'):
+ for t in ('metal_frontend_test','vulkan_device_test','spritekit_test','scenekit_test'):
   if (root/'out/native-gpu-tests'/t).exists():
    shutil.copy2(root/'out/native-gpu-tests'/t,dest/'bin'/t);metal_tests+='/redwood/bin/'+t+'\n'
 shutil.copy2(stage/'libOSMesa.8.dylib',dest/'lib/libOSMesa.8.dylib')
