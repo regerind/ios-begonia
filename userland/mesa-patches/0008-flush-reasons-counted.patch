@@ -5,7 +5,7 @@
  /*
   * Copyright (C) 2019-2020 Collabora, Ltd.
   * Copyright (C) 2019 Alyssa Rosenzweig
-@@ -158,6 +159,42 @@
+@@ -158,6 +159,44 @@
  static void panfrost_batch_submit(struct panfrost_context *ctx,
                                    struct panfrost_batch *batch);
  
@@ -16,6 +16,7 @@
 + * before (the bridge's glbackdrop=1) did not change that. osmesa_flush_reasons() says the counts and starts again.
 + */
 +#define PAN_FLUSH_REASONS 24
++static const char *pan_submit_why;
 +static struct { const char *why; unsigned count; } pan_flush_reasons[PAN_FLUSH_REASONS];
 +
 +static void
@@ -23,6 +24,7 @@
 +{
 +   if (!why)
 +      why = "(none)";
++   pan_submit_why = why;
 +   for (unsigned i = 0; i < PAN_FLUSH_REASONS; i++) {
 +      if (pan_flush_reasons[i].why == why || !pan_flush_reasons[i].why) {
 +         pan_flush_reasons[i].why = why;
@@ -48,7 +50,7 @@
  static struct panfrost_batch *
  panfrost_get_batch(struct panfrost_context *ctx,
                     const struct pipe_framebuffer_state *key)
-@@ -183,6 +220,7 @@
+@@ -183,6 +222,7 @@
     /* The selected slot is used, we need to flush the batch */
     if (batch->seqnum) {
        perf_debug(ctx, "Flushing batch due to seqnum overflow");
@@ -56,7 +58,7 @@
        panfrost_batch_submit(ctx, batch);
     }
  
-@@ -241,6 +279,7 @@
+@@ -241,6 +281,7 @@
  
     if (batch->draw_count + batch->compute_count > 0) {
        perf_debug(ctx, "Flushing the current FBO due to: %s", reason);
@@ -64,7 +66,7 @@
        panfrost_batch_submit(ctx, batch);
        batch = panfrost_get_batch(ctx, &ctx->pipe_framebuffer);
     }
-@@ -273,8 +312,10 @@
+@@ -273,8 +314,10 @@
     struct panfrost_batch *writer = entry ? entry->data : NULL;
  
     /* Both reads and writes flush the existing writer */
@@ -76,7 +78,7 @@
  
     /* Writes (only) flush readers too */
     if (writes) {
-@@ -287,8 +328,10 @@
+@@ -287,8 +330,10 @@
              continue;
  
           /* Submit if it's a user */
@@ -88,7 +90,76 @@
        }
     }
  }
-@@ -723,6 +766,7 @@
+@@ -644,6 +689,58 @@
+    }
+ }
+ 
++
++/*
++ * begonia (y138): the batches that cover a large part of a large picture (at least half a million pixels of extent),
++ * by picture size and whether they begin by clearing (else every tile they cover is loaded first): with YouTube, ~2
++ * fragment jobs a frame took ~6 ms each and ~5 took 1-2 ms -- which pictures are they? Said with the reasons.
++ */
++#define PAN_BIG_KINDS 12
++static struct { unsigned w, h, cleared, count; uint64_t draws, area; const char *why; } pan_big[PAN_BIG_KINDS];
++
++static void
++pan_count_big(struct panfrost_batch *batch)
++{
++   if (batch->maxx <= batch->minx || batch->maxy <= batch->miny)
++      return;
++   uint64_t area = (uint64_t)(batch->maxx - batch->minx) * (batch->maxy - batch->miny);
++   if (area < 500000)
++      return;
++   unsigned cleared = (batch->clear & PIPE_CLEAR_COLOR) ? 1 : 0;
++   for (unsigned i = 0; i < PAN_BIG_KINDS; i++) {
++      if (!pan_big[i].count || (pan_big[i].w == batch->key.width && pan_big[i].h == batch->key.height &&
++                                pan_big[i].cleared == cleared && pan_big[i].why == pan_submit_why)) {
++         pan_big[i].why = pan_submit_why;
++         pan_big[i].w = batch->key.width;
++         pan_big[i].h = batch->key.height;
++         pan_big[i].cleared = cleared;
++         pan_big[i].count++;
++         pan_big[i].draws += batch->draw_count;
++         pan_big[i].area += area;
++         return;
++      }
++   }
++}
++
++__attribute__((visibility("default"))) int osmesa_big_batches(char *out, unsigned size);
++__attribute__((visibility("default"))) int
++osmesa_big_batches(char *out, unsigned size)
++{
++   int o = 0;
++   for (unsigned i = 0; i < PAN_BIG_KINDS && pan_big[i].count; i++) {
++      if (o < (int)size - 1)
++         o += snprintf(out + o, size - o, " %ux%u %s (%s): %u, %llu draws, %llu%% of it each;", pan_big[i].w,
++                       pan_big[i].h, pan_big[i].cleared ? "cleared" : "LOADED",
++                       pan_big[i].why ? pan_big[i].why : "?", pan_big[i].count,
++                       (unsigned long long)(pan_big[i].draws / pan_big[i].count),
++                       (unsigned long long)(pan_big[i].area * 100 / pan_big[i].count /
++                                            ((uint64_t)pan_big[i].w * pan_big[i].h ? (uint64_t)pan_big[i].w * pan_big[i].h : 1)));
++   }
++   for (unsigned i = 0; i < PAN_BIG_KINDS; i++)
++      pan_big[i].count = 0, pan_big[i].draws = 0, pan_big[i].area = 0, pan_big[i].w = pan_big[i].h = 0;
++   return o;
++}
++
+ static void
+ panfrost_batch_submit(struct panfrost_context *ctx,
+                       struct panfrost_batch *batch)
+@@ -657,6 +754,9 @@
+    if (!has_frag && batch->compute_count == 0 && !batch->has_time_query)
+       goto out;
+ 
++   if (has_frag)
++      pan_count_big(batch);
++
+    if (batch->key.zsbuf && has_frag) {
+       struct pipe_surface *surf = batch->key.zsbuf;
+       struct panfrost_resource *z_rsrc = pan_resource(surf->texture);
+@@ -723,6 +823,7 @@
     if (!batch)
        return;
  
@@ -96,7 +167,7 @@
     panfrost_batch_submit(ctx, batch);
  
     for (unsigned i = 0; i < PAN_MAX_BATCHES; i++) {
-@@ -739,6 +783,7 @@
+@@ -739,6 +840,7 @@
  
     if (entry) {
        perf_debug(ctx, "Flushing writer due to: %s", reason);
@@ -104,7 +175,7 @@
        panfrost_batch_submit(ctx, entry->data);
     }
  }
-@@ -756,6 +801,7 @@
+@@ -756,6 +858,7 @@
           continue;
  
        perf_debug(ctx, "Flushing user due to: %s", reason);
