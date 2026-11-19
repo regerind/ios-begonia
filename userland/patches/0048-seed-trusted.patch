@@ -1,0 +1,35 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -1928,6 +1928,8 @@
+  * begonia (x30): has a shown surface changed since its texture was filled? As before -- the seed first, then a
+  * look at the memory -- with the looks counted: a change found while the seed stood still is one the seed missed.
+  */
++#define SEED_BACKSTOP   30
++static int trust_seed = 1;              /* boot-arg glseed=0: memory looked at every frame as before */
+ static bool
+ shown_changed(struct eagl *e, struct image *image)
+ {
+@@ -1944,6 +1946,15 @@
+ 		wrapped_skipped++;
+ 		return false;
+ 	}
++	/*
++	 * begonia (y109): the seed tells. Of 16985 looks at memory whose seed stood still, 1 found a change, and the looks
++	 * cost ~1 ms and 4-6 MB of reading a frame on the display's thread. With the seed unchanged the memory is now looked
++	 * at every SEED_BACKSTOP-th frame only (each surface in a frame of its own): a change the seed misses shows at most
++	 * half a second late. Boot-arg glseed=0: looked at as before.
++	 */
++	if (trust_seed && (e->frames + IOSurfaceGetID(image->surface)) % SEED_BACKSTOP != 0) {
++		return false;
++	}
+ 	changed = surface_changed(e, image);
+ 	if (image->looked != looked) {
+ 		seed_looks[image->wrapped]++;
+@@ -5205,6 +5216,7 @@
+ 			}
+ 		}
+ 		share_surfaces = strstr(arguments, "glcopy=1") == NULL;
++		trust_seed = strstr(arguments, "glseed=0") == NULL;
+ 		share_planes = strstr(arguments, "glplanes=0") == NULL;
+ 		blit_targets = strstr(arguments, "glblit=0") == NULL;
+ 		alpha_as_red = strstr(arguments, "glalpha=0") == NULL;
