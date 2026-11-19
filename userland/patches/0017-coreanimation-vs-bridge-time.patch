@@ -1,0 +1,46 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -145,6 +145,11 @@
+ static int latency_lines;               /* boot-arg touch_lat=1: when every frame began and ended (see frame_end()) */
+ static uint64_t slow_calls_us;          /* boot-arg glslow=US: a line for every call that takes longer (eagl_leave()) */
+ static uint64_t call_began_us;          /* (when the call in progress began) */
++/*
++ * begonia (x31): of a frame's time on the drawing thread, how much is inside GL calls (this bridge and Mesa,
++ * eagl_enter() to eagl_leave()) and so how much is between them: CoreAnimation's own work.
++ */
++static uint64_t inside_began, inside_us;
+ static uint64_t now_us(void);
+ static void eagl_trace(const char *format, ...) __attribute__((format(printf, 1, 2)));
+ static void eagl_trace_floats(const float *values, int count);
+@@ -406,8 +411,9 @@
+ 	}
+ 	slot_calls[offset / 8]++;
+ 	e->calls++;
++	inside_began = e->in_frame ? now_us() : 0;
+ 	if (slow_calls_us != 0) {
+-		call_began_us = now_us();
++		call_began_us = inside_began ? inside_began : now_us();
+ 	}
+ }
+ 
+@@ -416,6 +422,10 @@
+ {
+ 	GLenum error;
+ 
++	if (inside_began != 0) {
++		inside_us += now_us() - inside_began;
++		inside_began = 0;
++	}
+ 	if (check_errors && offset != 0x338 && (error = glGetError()) != 0) {
+ 		if (e->errors++ < 60) {
+ 			say("hakios-gl: %s: error %#x\n", eagl_slot_name(offset), error);
+@@ -542,6 +552,9 @@
+ 	    seed_missed[0], seed_looks[0], seed_missed[1], seed_looks[1]);
+ 	say("hakios-gl:   wrapped memory %s: %u looks skipped\n", hash_wrapped ? "looked at (glwraphash=1)" :
+ 	    "not looked at", wrapped_skipped);
++	say("hakios-gl:   of %llu us a frame, %llu inside GL calls (this bridge and Mesa), %llu between them "
++	    "(CoreAnimation's own work)\n", e->frame_us / frames, inside_us / frames,
++	    e->frame_us > inside_us ? (e->frame_us - inside_us) / frames : 0);
+ 	say("hakios-gl:   calls that set what was set already: glBindTexture %u, glUseProgram %u, glActiveTexture %u, "
+ 	    "glBindFramebuffer %u\n", same_texture, same_program, same_unit, same_framebuffer);
+ 	{
