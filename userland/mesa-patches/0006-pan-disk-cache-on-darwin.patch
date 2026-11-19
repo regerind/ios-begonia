@@ -1,0 +1,32 @@
+--- a/src/gallium/drivers/panfrost/pan_disk_cache.c
++++ b/src/gallium/drivers/panfrost/pan_disk_cache.c
+@@ -163,6 +163,21 @@
+ #ifdef ENABLE_SHADER_CACHE
+    const char *renderer = screen->base.get_name(&screen->base);
+
++#ifdef __APPLE__
++   /*
++    * begonia: a Mach-O library has no ELF build-id; the cache is keyed by the library's own file (its path and
++    * modification time, disk_cache_get_function_identifier()), so a new build never reads an old build's shaders.
++    */
++   struct mesa_sha1 ctx;
++   unsigned char id_sha1[20];
++   char timestamp[41];
++
++   _mesa_sha1_init(&ctx);
++   if (!disk_cache_get_function_identifier(panfrost_disk_cache_init, &ctx))
++      return;
++   _mesa_sha1_final(&ctx, id_sha1);
++   _mesa_sha1_format(timestamp, id_sha1);
++#else
+    const struct build_id_note *note =
+       build_id_find_nhdr_for_addr(panfrost_disk_cache_init);
+    assert(note && build_id_length(note) == 20); /* sha1 */
+@@ -172,6 +187,7 @@
+
+    char timestamp[41];
+    _mesa_sha1_format(timestamp, id_sha1);
++#endif
+
+    /* Consider any flags affecting the compile when caching */
+    uint64_t driver_flags = screen->dev.debug;
