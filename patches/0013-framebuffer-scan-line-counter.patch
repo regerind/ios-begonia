@@ -12,12 +12,12 @@
 + * come back to its start at least three times in a fifth of a second, climb to about the panel's height, and a scan has
 + * to take between 5 and 40 ms; otherwise frames stay on their beat, as without it.
 + */
-+static TUNABLE(uint64_t, gLinePhysical, "fb_line", 0);
++static TUNABLE(uint64_t, gLinePhysical, "fb_line", 0x1400b12c);       /* (x51: the default; fb_line=0: frames on their beat) */
 +/*
 + * begonia, boot-arg fb_beam_wait=MS: how long after the driver starts the scan is looked at (60000 as it was:
 + * a test session of a minute was over before the frames were written behind the scan).
 + */
-+static TUNABLE(uint32_t, gBeamWait, "fb_beam_wait", 60000);
++static TUNABLE(uint32_t, gBeamWait, "fb_beam_wait", 20000);    /* (x51: 20 s; it was a minute) */
 +extern "C" void begonia_perf_note(const char * format, ...) __printflike(1, 2);
  
  static vm_offset_t
