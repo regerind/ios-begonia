@@ -18,10 +18,14 @@ if a.metal_client:
  # plug-in Metal loads and the list of programs that are shown the device. Built by tools/build_panvk_linux.sh,
  # tools/build_metal2vulkan_linux.sh and tools/build_metal_frontend_ios.py --cc. init puts ext/ over the system
  # volume's Extensions (userland patch 0035), where Metal looks for the plug-in.
- shutil.copy2(root/'out/panvk-ios/libvulkan_panfrost.dylib',dest/'lib/libvulkan_panfrost.dylib')
- shutil.copy2(root/'out/metal2vulkan-target-ios/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib',dest/'lib/libmetal2vulkan.dylib')
+ # (stripped, and the runtime built for size if there is such a build: the boot partition's 64 MB hold this image, the
+ # kernel and the fallback's ramdisk, and y21 did not fit)
+ small=root/'out/metal2vulkan-target-ios-small/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib'
+ runtime=small if small.exists() else root/'out/metal2vulkan-target-ios/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib'
+ for source,name in ((root/'out/panvk-ios/libvulkan_panfrost.dylib','libvulkan_panfrost.dylib'),(runtime,'libmetal2vulkan.dylib')):
+  subprocess.run(['llvm-strip','-S','-x','-o',str(dest/'lib'/name),str(source)],check=True)
  clients=''.join(n+'\n' for n in dict.fromkeys(['metal_frontend_test','metal_test',*a.metal_client]))
- for bundle in (dest/'lib/HakiosMetal.bundle',dest/'ext/HakiosMetal.bundle'):
+ for bundle in (dest/'ext/HakiosMetal.bundle',):
   bundle.mkdir(parents=True,exist_ok=True)
   shutil.copy2(root/'out/metal-frontend-ios/HakiosMetal',bundle/'HakiosMetal')
   shutil.copy2(root/'upstream/hakios-xnu-kernel/userland/src/HakiosMetal.plist',bundle/'Info.plist')
