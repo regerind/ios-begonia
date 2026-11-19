@@ -99,8 +99,10 @@ buttons_thread(__unused void *arg, __unused wait_result_t result)
     uint32_t kpd_val = rd(kpd, 0x04);
     bool state_vol_up = !((kpd_val >> 0) & 1);
     bool state_vol_down = !((kpd_val >> 1) & 1);
-    bool state_power = false;
+    bool state_power = false, power_ignored = false;
+    uint32_t watch_seconds = 0;
 
+    (void)PE_parse_boot_argn("begonia_watch", &watch_seconds, sizeof(watch_seconds));
     uint32_t pmic_val = 0;
     if (pmic_read_reg(pwrap, PMIC_TOPSTATUS, &pmic_val) == 0) {
         state_power = !((pmic_val >> 1) & 1);
@@ -126,6 +128,25 @@ buttons_thread(__unused void *arg, __unused wait_result_t result)
             printf("BEGONIA BUTTONS: Volume Down %s\n", cur_vol_down ? "DOWN" : "UP");
         }
 
+        /*
+         * x52: not once a test session's supervisor is about to reset the phone (boot-arg begonia_watch=SECONDS,
+         * boot/watcher.c). Its reset shows in the PMIC as the power key going down, with no release, and the session
+         * runs on some 25 s with the lock button held as far as Darwin can tell (x39: "BEGONIA WATCHER: reset after
+         * log capture", then "Power / Lock DOWN" on the next line): the "buttons do not work" of the 60 s sessions.
+         */
+        if (watch_seconds != 0) {
+            uint64_t up;
+
+            absolutetime_to_nanoseconds(mach_absolute_time(), &up);
+            if (up + 6 * NSEC_PER_SEC >= (uint64_t)watch_seconds * NSEC_PER_SEC) {
+                if (!power_ignored) {
+                    power_ignored = true;
+                    printf("BEGONIA BUTTONS: the power key is not looked at from here on (the session's supervisor is due)\n");
+                }
+                delay_for_interval(20, NSEC_PER_MSEC);
+                continue;
+            }
+        }
         /* 2. Poll Power / Lock Key from MT6359 PMIC */
         if (pmic_read_reg(pwrap, PMIC_TOPSTATUS, &pmic_val) == 0) {
             bool cur_power = !((pmic_val >> 1) & 1);
