@@ -62,6 +62,12 @@ else:
  for t in a.metal_test:
   if (root/'out/native-gpu-tests'/t).exists():
    shutil.copy2(root/'out/native-gpu-tests'/t,dest/'bin'/t);metal_tests+='/redwood/bin/'+t+'\n'
+# The Wi-Fi driver's firmware and NVRAM (kernel/bsd/dev/begonia_wifi.c, WIFI_FW_DIR /redwood/fw/wifi/): the phone's own
+# vendor firmware (WIFI_RAM_CODE_soc1_0_2a_1.bin) and its nvdata APCFG/APRDEB/WIFI, read from the backup. Never in Git.
+wifi=Path('/mnt/c/begonia-private/firmware')
+for name,source in (('WIFI_RAM_CODE_soc1_0_2a_1.bin',wifi/'vendor-firmware/WIFI_RAM_CODE_soc1_0_2a_1.bin'),('WIFI',wifi/'wifi/WIFI')):
+ if source.exists():
+  (dest/'fw/wifi').mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest/'fw/wifi'/name)
 shutil.copy2(stage/'libOSMesa.8.dylib',dest/'lib/libOSMesa.8.dylib')
 shutil.copy2(stage/'gles_render_test',dest/'bin/gles_render_test')
 if a.ui:

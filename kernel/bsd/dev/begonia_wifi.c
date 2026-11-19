@@ -127,7 +127,7 @@ static int begonia_pwrap_write_regulator(uint32_t addr, uint32_t mask, uint32_t 
     return begonia_pwrap_write(addr, next);
 }
 
-#define WIFI_FW_DIR             "/usr/share/firmware/wifi/viva/"
+#define WIFI_FW_DIR             "/redwood/fw/wifi/"        /* begonia: the support image (tools/make_gles_support.py), from C:\begonia-private\firmware */
 #define EMI_SIZE                0x400000
 #define EMI_CONN_BASE           0xf0000000u
 
@@ -908,7 +908,7 @@ wifi_wmt(char *out, size_t len, size_t o)
 #define OFF_RX(n)               ((n) == 0 ? 0x0400u : 0x0500u)
 #define OFF_TXBUF               0x01000u        /* ring 3 then ring 15 buffers: 16 x 4 KiB each */
 #define OFF_RXBUF(n)            ((n) == 1 ? 0x21000u : 0x31000u)
-#define WIFI_RAM_CODE           "WIFI_RAM_CODE_soc2_2_2_1.bin"
+#define WIFI_RAM_CODE           "WIFI_RAM_CODE_soc1_0_2a_1.bin"  /* begonia: MT6785 CONNSYS is soc1_0 (the phone's vendor firmware) */
 #define PDA_CHUNK               2048
 
 static struct {
