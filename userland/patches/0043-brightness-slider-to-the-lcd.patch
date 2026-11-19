@@ -1,0 +1,85 @@
+--- a/userland/src/inject_sb.c
++++ b/userland/src/inject_sb.c
+@@ -2152,6 +2152,74 @@
+ }
+ 
+ /*
++ * begonia: the brightness slider (Control Centre, Settings, auto-brightness) to the LCD. iOS keeps the brightness in
++ * backboardd's BrightnessSystem and sends it to Apple's backlight service, which is not here, so it reached nothing
++ * (patch 0019 logs every property set on the framebuffer: none came). UIScreen's brightness follows it; read here on
++ * UIScreenBrightnessDidChangeNotification and every 2 s, and given to the kernel's kern.begonia_backlight (the
++ * LM36273's brightness, 0..255; never under 4 here, so the screen never goes dark from the slider).
++ */
++static int brightness_sent = -1;
++
++static void
++brightness_follow(void)
++{
++	id screen = SEND(id, objc_getClass("UIScreen"), "mainScreen");
++	double b;
++	int level;
++
++	if (screen == nil) {
++		return;
++	}
++	b = ((double (*)(id, SEL))objc_msgSend)(screen, sel_registerName("brightness"));
++	if (b < 0.0 || b > 1.0) {
++		return;
++	}
++	level = (int)(b * 255.0 + 0.5);
++	if (level < 4) {
++		level = 4;
++	}
++	if (level != brightness_sent) {
++		int e = sysctlbyname("kern.begonia_backlight", NULL, NULL, &level, sizeof(level));
++		static int said;
++		if (said++ < 20) {
++			say("hakios: brightness %.3f -> %d: %s\n", b, level, e == 0 ? "set" : "NOT set");
++		}
++		brightness_sent = level;
++	}
++}
++
++static void
++brightness_to_the_lcd(void)
++{
++	int token;
++	int probe = 0;
++	size_t size = sizeof(probe);
++
++	if (sysctlbyname("kern.begonia_backlight", &probe, &size, NULL, 0) != 0) {
++		say("hakios: brightness: no kern.begonia_backlight\n");
++		return;
++	}
++	(void)token;
++	id center = SEND(id, objc_getClass("NSNotificationCenter"), "defaultCenter");
++	if (center != nil) {
++		void (^block)(id) = ^(__unused id note) {
++			brightness_follow();
++		};
++		id name = SEND1(id, objc_getClass("NSString"), "stringWithUTF8String:", const char *, "UIScreenBrightnessDidChangeNotification");
++		((id (*)(id, SEL, id, id, id, id))objc_msgSend)(center,
++		    sel_registerName("addObserverForName:object:queue:usingBlock:"), name, nil,
++		    SEND(id, objc_getClass("NSOperationQueue"), "mainQueue"), (id)block);
++	}
++	dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
++	dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), 2 * NSEC_PER_SEC, NSEC_PER_SEC / 4);
++	dispatch_source_set_event_handler(timer, ^{
++		brightness_follow();
++	});
++	dispatch_resume(timer);
++	say("hakios: brightness: UIScreen's brightness goes to the LCD (kern.begonia_backlight)\n");
++}
++
++/*
+  * Open the tweak loader of the package manager's prefix, when there is one. Nothing here depends on
+  * it: without a prefix (or without ElleKit in it) the file is not there and this does nothing.
+  */
+@@ -2708,6 +2776,7 @@
+ 	main_thread_cpu();
+ 	display_link_rates();
+ 	torch_for_control_centre();
++	brightness_to_the_lcd();
+ 	accessibility_settings();
+ 	/*
+ 	 * The tweaks of the package manager's prefix, if one is installed: ElleKit's loader
