@@ -212,8 +212,7 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
  uint64_t sleeps=__atomic_exchange_n(&stat_sleeps,0,__ATOMIC_RELAXED),slept;
  absolutetime_to_nanoseconds(__atomic_exchange_n(&stat_slept,0,__ATOMIC_RELAXED),&slept);
  { uint64_t pixels;absolutetime_to_nanoseconds(stat_busy_fragment,&pixels);
-   printf("BEGONIA GPU JOBS: fragment %llu, %llu us each; the others (vertex and tiler) %llu, %llu us each
-",stat_fragment,
+   printf("BEGONIA GPU JOBS: fragment %llu, %llu us each; the others (vertex and tiler) %llu, %llu us each\n",stat_fragment,
     stat_fragment?pixels/1000/stat_fragment:0,stat_jobs-stat_fragment,
     stat_jobs>stat_fragment?(busy-pixels)/1000/(stat_jobs-stat_fragment):0);stat_busy_fragment=0; }
  printf("BEGONIA GPU WAITS: callers slept for a job %llu times, %llu ms in all (of %llu ms); jobs run on processor %d "
