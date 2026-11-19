@@ -80,6 +80,10 @@ main(int argc, char **argv)
 			snprintf(summary + strlen(summary), sizeof(summary) - strlen(summary), " %s %.0f%%;", b[j].name, pct);
 		}
 	}
-	printf("THREADS SUMMARY %s:%s\n", want, summary);
+	/* again every 3 s until the session ends: the log ring keeps only its last seconds, and video logs a lot */
+	for (int k = 0; k < 40; k++) {
+		printf("THREADS SUMMARY %s:%s\n", want, summary);
+		sleep(3);
+	}
 	return 0;
 }
