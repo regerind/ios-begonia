@@ -51,6 +51,8 @@ static uint64_t stat_sleeps,stat_slept;
 static int32_t job_cpu=4;               /* x34: begonia_gpu_cpu (job_thread()) */
 static uint64_t stat_busy_fragment;
 static uint64_t stat_sizes[6],stat_size_us[6];
+static unsigned fail_count,fail_slot;static uint32_t fail_irq,fail_mmu,fail_status;
+static uint64_t fail_seq,fail_head,fail_tail,fail_fault,fail_chain,fail_at,fail_took;
 static int job_bound=-1;
 static uint32_t rd(unsigned o) {return *(volatile uint32_t *)(gpu+o);}
 static void wr(unsigned o,uint32_t v) {*(volatile uint32_t *)(gpu+o)=v;__asm__ volatile("dsb sy":::"memory");}
@@ -218,6 +220,10 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
  absolutetime_to_nanoseconds(stat_waited,&waited);
  { extern void HakiosMaliCacheSecond(void); HakiosMaliCacheSecond(); }   /* x35: with mcp=1, begonia.mali.cpp's own counts */
  { extern void begonia_dram_said(void); begonia_dram_said(); }           /* x49: with begonia_dram_probe=1 */
+ if(fail_count)printf("BEGONIA GPU FAILURES: %u so far; the last: job %llu (%s) %llu ms after boot, after %llu us: JS_STATUS %#x, "
+  "job irq %x, mmu irq %x at %llx, chain %llx, head %llx, tail %llx\n",fail_count,fail_seq,fail_slot?"vertex/tiler":"fragment",
+  fail_at/1000000,fail_took/1000,fail_status,fail_irq,fail_mmu,fail_fault,fail_chain,fail_head,fail_tail);
+ { extern int begonia_notes_urgent; extern void begonia_perf_notes_say(void); if(begonia_notes_urgent)begonia_perf_notes_say(); }
  uint64_t sleeps=__atomic_exchange_n(&stat_sleeps,0,__ATOMIC_RELAXED),slept;
  absolutetime_to_nanoseconds(__atomic_exchange_n(&stat_slept,0,__ATOMIC_RELAXED),&slept);
  { uint64_t pixels;absolutetime_to_nanoseconds(stat_busy_fragment,&pixels);
@@ -255,6 +261,13 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
   success=1;
  } else {
   static unsigned failures;
+  /* x62: the slot's own account of it (JS_STATUS: 0x58 a data fault, 0x42/0x43 a read or write the bus refused, 0x60
+   * out of tiler memory, ...; nothing there and no interrupt: the job did not end in the 100 ms it is waited for),
+   * kept for the 5 s report: the window server starts anew after one (x46, x52, x61) and the log loses the moment. */
+  fail_count=failures+1;fail_seq=seq;fail_slot=slot;fail_irq=rd(0x1000);fail_mmu=rd(0x241c);fail_status=rd(base+0x24);
+  fail_head=rd(base)|((uint64_t)rd(base+4)<<32);fail_tail=rd(base+8)|((uint64_t)rd(base+12)<<32);
+  fail_fault=rd(0x2420)|((uint64_t)rd(0x2424)<<32);fail_chain=chain;
+  absolutetime_to_nanoseconds(mach_absolute_time(),&fail_at);absolutetime_to_nanoseconds(mach_absolute_time()-began,&fail_took);
   if(failures++<4)begonia_perf_note("BEGONIA GPU SERVICE: job%llu slot%u irq=%x mmu=%x FAILED (%u)",seq,slot,rd(0x1000),rd(0x241c),failures);
   printf("BEGONIA GPU SERVICE: job%llu slot%u irq=%x mmu=%x FAILED; recovering\n",seq,slot,rd(0x1000),rd(0x241c));
   if(reset() || init_gpu_hardware()) {

@@ -170,12 +170,15 @@ static void clock_correct(vm_offset_t pll, vm_offset_t div)
 /* What the clock and rail work said, kept: the console's ring in RAM holds a few minutes, and these
  * lines are from the first seconds. begonia_mali_service.c says them again with its statistics. */
 char begonia_perf_notes[4096];
+int begonia_notes_urgent;
 void begonia_perf_note(const char *format,...) __printflike(1,2);
 void begonia_perf_note(const char *format,...)
 {
     char line[256];va_list arguments;
     va_start(arguments,format);vsnprintf(line,sizeof(line),format,arguments);va_end(arguments);
     printf("%s\n",line);
+    /* x62: a note of a program that died (kernel patch 0016) is said again with every 5 s report of the GPU's */
+    if(!strncmp(line,"usertrap",8) || !strncmp(line,"userabort",9))begonia_notes_urgent=1;
     strlcat(begonia_perf_notes,line,sizeof(begonia_perf_notes));
     strlcat(begonia_perf_notes," | ",sizeof(begonia_perf_notes));
 }

@@ -62,3 +62,34 @@
  	printf("usertrap: %s[%d] exception %d code 0x%llx 0x%llx: pc 0x%llx lr 0x%llx sp 0x%llx, shared cache slide 0x%x\n",
  	    proc ? proc_name_address(proc) : "?", proc ? proc_pid(proc) : -1, exception,
  	    count > 0 ? (unsigned long long)code[0] : 0, count > 1 ? (unsigned long long)code[1] : 0,
+@@ -128,6 +167,30 @@
+ 		slide = region->sr_slide;
+ 		vm_shared_region_deallocate(region);
+ 	}
++	{
++		extern void begonia_perf_note(const char *format, ...);
++		static unsigned kept;
++		const char *name = proc ? proc_name_address(proc) : "?";
++
++		if (kept < 3 && (strncmp(name, "backboardd", 10) == 0 || strncmp(name, "SpringBoard", 11) == 0)) {
++			char callers[8 * 20] = "";
++			size_t at = 0;
++			uint64_t link[2], next = (uint64_t)get_saved_state_fp(state);
++
++			for (int depth = 0; depth < 8 && plausible_user_address(next) && (next & 7) == 0; depth++) {
++				if (copyin((user_addr_t)next, link, sizeof(link)) != 0) {
++					break;
++				}
++				at += (size_t)snprintf(callers + at, sizeof(callers) - at, " %llx", (unsigned long long)link[1]);
++				if (link[0] <= next || at + 20 >= sizeof(callers)) {
++					break;
++				}
++				next = link[0];
++			}
++			kept++;
++			begonia_perf_note("userabort %s[%d] slide %x from%s", name, proc ? proc_pid(proc) : -1, slide, callers);
++		}
++	}
+ 	printf("userabort: %s[%d] aborts, shared cache slide 0x%x; called from:", proc ? proc_name_address(proc) : "?",
+ 	    proc ? proc_pid(proc) : -1, slide);
+ 	fp = (uint64_t)get_saved_state_fp(state);
