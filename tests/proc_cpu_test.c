@@ -12,7 +12,7 @@
 #include <pthread.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
-#include <mach/mach_vm.h>
+kern_return_t mach_vm_read_overwrite(vm_map_t, mach_vm_address_t, mach_vm_size_t, mach_vm_address_t, mach_vm_size_t *);
 
 /*
  * A sampling profiler (y103): every 10 ms, the running threads of a few processes are stopped for a moment
