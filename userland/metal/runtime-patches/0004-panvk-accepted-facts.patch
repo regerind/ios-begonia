@@ -1,0 +1,53 @@
+--- a/crates/metal2vulkan/src/device/driver_facts.rs
++++ b/crates/metal2vulkan/src/device/driver_facts.rs
+@@ -389,6 +389,31 @@
+ /// its rows, or on another vendor's GPU (or another GPU than a row's), is unmeasured: the profile
+ /// then takes each one's conservative route (`derive.rs`).
+ pub(crate) const DEVIATIONS: &[Measured<DriverDeviation>] = &[
++    // begonia: PanVK (Mali Bifrost v7, the Redmi Note 8 Pro). None of these is MEASURED on PanVK: they are
++    // accepted. Without them the translator computes Metal's exact rounding, NaN and denormal answers in every
++    // shader (a color write alone is ~22 instructions a channel), and the window server's fragment shaders came
++    // out four times the size (3516 bytes of SPIR-V against 880 for the same function on a device that has the
++    // facts; y219: 3.2 KB of Bifrost code on average, a full-screen pixel job 30 ms where OpenGL ES takes 3).
++    // The difference accepted is the device's own conversion at a tie or a NaN -- what every OpenGL ES and
++    // Vulkan program on this GPU has.
++    begonia_panvk(DriverDeviation::MetalColorWrites),
++    begonia_panvk(DriverDeviation::MetalFloatColorNans),
++    begonia_panvk(DriverDeviation::MetalHalfColorNans),
++    begonia_panvk(DriverDeviation::MetalSmallFloatColorWrites),
++    begonia_panvk(DriverDeviation::MetalNorm16ColorWrites),
++    begonia_panvk(DriverDeviation::MetalNormStorageWrites),
++    begonia_panvk(DriverDeviation::MetalHalfStorageWrites),
++    begonia_panvk(DriverDeviation::MetalHalfStorageNans),
++    begonia_panvk(DriverDeviation::MetalFloatStorageNans),
++    begonia_panvk(DriverDeviation::MetalHalfTexelWrites),
++    begonia_panvk(DriverDeviation::MetalFloatDenormals),
++    begonia_panvk(DriverDeviation::MetalMinMax),
++    begonia_panvk(DriverDeviation::MetalCanonicalNans),
++    begonia_panvk(DriverDeviation::MetalHalfQuantize),
++    begonia_panvk(DriverDeviation::MetalHalfConversion),
++    begonia_panvk(DriverDeviation::MetalHalfArithmetic),
++    begonia_panvk(DriverDeviation::MetalHalfFma),
++    begonia_panvk(DriverDeviation::MetalCenterVaryings),
+     moltenvk_141(DriverDeviation::SimdgroupLockstep),
+     moltenvk_141(DriverDeviation::MetalFloatFunctions),
+     moltenvk_141(DriverDeviation::MetalCanonicalNans),
+@@ -749,6 +774,18 @@
+ pub(crate) const APPLE_M4: u32 = 0x1B00_0209;
+ 
+ /// The row of `fact` measured on MoltenVK 1.4.1 on Apple's GPUs.
++/// begonia: a fact accepted of PanVK at every release, on every GPU (see `DEVIATIONS`).
++const fn begonia_panvk(fact: DriverDeviation) -> Measured<DriverDeviation> {
++    Measured {
++        fact,
++        driver: DriverId::MESA_PANVK,
++        vendor: None,
++        device: None,
++        first: 0,
++        last: u32::MAX,
++    }
++}
++
+ const fn moltenvk_141(fact: DriverDeviation) -> Measured<DriverDeviation> {
+     Measured {
+         fact,
