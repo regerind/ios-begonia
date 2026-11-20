@@ -313,3 +313,10 @@ Aşağısı araştırmanın kaydı.
     SpringBoard ~128 MB; toplam ~1.6 GB (cihazda ~2.8 GB sayfa). En büyük tek tüketici YouTube/Safari WebContent (~800 MB); backboardd'in ~480 MB'ı
     pencere sunucusu için büyük (gerçek iOS'ta yüzlerce MB değil, ~100-150 MB). Jetsam backboardd'i öldürüyor (WebContent'i değil). Sonraki:
     backboardd'in 480 MB'ının dökümü (yüzeyler, aynalar 37 MB, PanVK havuzları), uçuştaki kare sayısı (fb_queue), WebContent için limit.
+
+### p13 sonucu (2026-11-20 akşam, kullanıcı; log yok)
+- **Bölüm 12 (hız):** p13 (PanVK 0019: uniform yüklemeleri 16 hizalı) görüntüyü bozmadı ama hız hissedilir biçimde artmadı ("hâlâ çok yavaş"). Host'taki 1.6-2.2x
+  derleyici döngü kazancı cihazda karşılık bulmadı. Çıkarım (ölçülmedi): darboğaz shader ALU/yükleme döngüsü değil; ANALIZ bölüm 13'teki hesapla uyumlu
+  (ölçülen pass süresi döngü modelinin 5-10 katı). Şüphe: bellek/doku tarafı (LINEAR ekran ve uygulama yüzeyleri), pass başına sabit maliyet. Durum: AÇIK.
+- **Bölüm 2b (jetsam):** p13'te de sürüyor; yeniden üretme: video izlerken ekrana dokunup ileri sarmak -> backboardd jetsam. Bellek tarafında bu turda hiçbir
+  değişiklik yapılmadı. Durum: AÇIK.
