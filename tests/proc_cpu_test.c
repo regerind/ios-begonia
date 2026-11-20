@@ -13,6 +13,31 @@
 #include <pthread.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
+#include <sys/socket.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+
+/* (y173) what came in and went out over the network interfaces (not loopback) so far: bytes and packets */
+static void
+net_totals(uint64_t *ib, uint64_t *ip, uint64_t *ob)
+{
+	struct ifaddrs *list = NULL, *i;
+
+	*ib = *ip = *ob = 0;
+	if (getifaddrs(&list) != 0) {
+		return;
+	}
+	for (i = list; i != NULL; i = i->ifa_next) {
+		if (i->ifa_addr != NULL && i->ifa_addr->sa_family == AF_LINK && i->ifa_data != NULL &&
+		    strncmp(i->ifa_name, "lo", 2) != 0) {
+			const struct if_data *d = i->ifa_data;
+			*ib += d->ifi_ibytes;
+			*ip += d->ifi_ipackets;
+			*ob += d->ifi_obytes;
+		}
+	}
+	freeifaddrs(list);
+}
 kern_return_t task_read_for_pid(mach_port_name_t target_tport, int pid, mach_port_name_t *t);
 kern_return_t mach_vm_read_overwrite(vm_map_t, mach_vm_address_t, mach_vm_size_t, mach_vm_address_t, mach_vm_size_t *);
 
@@ -428,6 +453,8 @@ main(int argc, char **argv)
 	}
 
 	int na = take(a);
+	uint64_t nib0, nip0, nob0;
+	net_totals(&nib0, &nip0, &nob0);
 	static char shist[NS][4000];
 	pthread_t sampler_thread;
 	pthread_create(&sampler_thread, NULL, sampler, NULL);
@@ -517,7 +544,7 @@ main(int argc, char **argv)
 				}
 			}
 		}
-		char line[400];
+		char line[520];
 		/* (y146: the VM compressor's mode and what it holds, MB) */
 		int vmmode = -1;
 		uint64_t vmbytes = 0;
@@ -525,8 +552,12 @@ main(int argc, char **argv)
 		sysctlbyname("vm.compressor_mode", &vmmode, &vz, NULL, 0);
 		vz = sizeof(vmbytes);
 		sysctlbyname("vm.compressor_bytes_used", &vmbytes, &vz, NULL, 0);
-		int o = snprintf(line, sizeof(line), "t=%d all %.0f%% vmc %d/%lluMB:", w * 3, all, vmmode,
-		    (unsigned long long)(vmbytes >> 20));
+		uint64_t nib, nip, nob;
+		net_totals(&nib, &nip, &nob);
+		int o = snprintf(line, sizeof(line), "t=%d all %.0f%% vmc %d/%lluMB net %lluKB/s %llupk/s out %lluKB/s:", w * 3, all,
+		    vmmode, (unsigned long long)(vmbytes >> 20), (unsigned long long)((nib - nib0) / 3072),
+		    (unsigned long long)((nip - nip0) / 3), (unsigned long long)((nob - nob0) / 3072));
+		nib0 = nib, nip0 = nip, nob0 = nob;
 		for (int s = 0; s < 5 && top[s] >= 0; s++) {
 			if (pct[top[s]] >= 2.0) {
 				/* (y172: and how much of it in the kernel, "kN": WebKit.Networking at 86-111% in y171) */
