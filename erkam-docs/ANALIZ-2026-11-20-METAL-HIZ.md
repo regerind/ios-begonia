@@ -122,3 +122,12 @@ tip hizasına göre ayırıyorsa (ör. 4 baytlık `lod_bias`'tan sonra 8 mod 16)
 Doğru çözüm: çevirici (metal2vulkan) ofset maskesini argümanın bildirilen hizasından üretsin (`& ~(hiza-1)`), PanVK hizayı maskeden okusun; hiza 8 ile blur'da
 yüklemeler ikişer birleşir (tahmin: Tn27 ldst 21 -> ~11). Çevirici normal buffer'larda hizayı hiç kullanmıyor; bu değişiklik YAZILMADI.
 Bu yüzden iki kalıcı imaj hazırlandı: `p13` (0019 açık) ve `p13n` (aynı imaj, `ca_env=PANVK_NO_UBO_ALIGN16` ile 0019 kapalı = p12 davranışı).
+
+## 13. Beklentiyi sınırlayan hesap (host sayılarından)
+- En yaygın katman shader'ı (`fixed_frag` Timg, Bsov): 85 komut, **3 döngü/piksel** (varsayılan sampler sabitleriyle). 14 örnekli blur: 21 döngü.
+- Kaba model: 2.5 Mpiksel / 4 (quad) x 21 döngü = ~13 M döngü; MP4 x 3 motor x 806 MHz ile bu ~1.5 ms eder. Ölçülen ağır pass 12-19 ms, ortalama tam ekran 7.5 ms.
+  Yani ölçülen süre saf ALU modelinin 5-10 katı: darboğazın önemli kısmı bellek/doku tarafında olmalı (LINEAR yüzeyler, bölüm 10; uniform yüklemelerinin her
+  pikselde belleğe gitmesi de buna dahil). 0019 yükleme sayısını azaltır ama kazanç derleyici tahminindeki 2x'ten küçük çıkabilir. Cihazda ölçülmeden iddia edilemez.
+- Çeviricinin tasarımı (metal2vulkan `memory/views.rs`, `bind/instantiate.rs`): descriptor tabanı 16'ya hizalanır, push-constant'taki kelime ofsetin 16'ya göre
+  KALANI. Yani 0019'un koşulu "Metal ofseti 16'nın katı" ile aynıdır; çevirici AIR hizası >= 16 olan 16 baytlık yaprakları zaten tek `uvec4` okur, hiza 8 olan
+  blur yapısını okumaz.
