@@ -176,7 +176,7 @@ Aşağısı araştırmanın kaydı.
 - **Hoparlör koruması:** TFA9874 DSP'siz çalışıyor, yani hoparlör koruması yok. Hoparlör -6 dB'de sınırlı.
 
 ## 12. backboardd Metal'de (tek GPU yolu): görüntü doğru, hız yetersiz
-- **Durum (y219, 2026-11-20):** Deneysel; varsayılan hâlâ GL yolu. p12 derlenmedi (hız ölçütü tutmuyor).
+- **Durum (y227, 2026-11-20):** Deneysel; varsayılan hâlâ GL yolu. p12 derlenmedi (hız ölçütü tutmuyor).
 - **Çalışan:** ana ekran, Denetim Merkezi, Bugün paneli, Ayarlar Metal üzerinden doğru çiziliyor (çekimler y205, y211,
   y212, y215, y218); backboardd 60 sn'lik oturumlarda hiç çökmedi; çökme döngüsü yok. Kurulum ve çözümler:
   NASIL-COZDUK "backboardd'yi Metal'e taşıma".
@@ -185,11 +185,26 @@ Aşağısı araştırmanın kaydı.
   her biri ~30 ms (1080x2340) / ~16 ms (1041x1180) — içerikten bağımsız, piksel sayısıyla orantılı (Ayarlar'ın
   koyu ekranında da aynı). GL yolunda en uzun fragment işi ~3 ms. Vertex/tiler zincirleri karede ~23 ms: PanVK JM
   her çizimde tanımlayıcıları GPU'da kopyalayan 2 ek compute işi çıkarıyor (çizim başına 4 iş; GL'de 2).
-- **Şüphe:** (a) CoreAnimation'ın Metal gölgelendiricileri (programlanabilir karıştırma, 2 renk ekli — ikincisi
-  belleksiz) Mali'de piksel başına pahalı; (b) karo arabelleğinden okuma (framebuffer fetch) her çizimde; (c) PanVK'nın
-  çizim başı tanımlayıcı kopyalama işleri. AFBC/ön-kare gölgelendiricisi elendi (y218).
-- **Sonraki adım:** fragment gölgelendirici boyutlarını ölç (y219); tek bir tam ekran çizimin süresini ayır; PanVK'da
-  tanımlayıcı kopyalamayı CPU'ya al; gerekirse CA gölgelendiricisinin çevrilmiş SPIR-V'sini makinede incele.
+- **Neden (y218–y225 ile daraltıldı):** fragment tarafı CoreAnimation'ın Metal gölgelendiricilerinin kendisi.
+  - Çizimsiz tam ekran geçiş 0,9–1,8 ms (y222) → geçiş/ön-kare/saklama maliyeti değil; AFBC de değil (y218);
+    çeviricinin kapsama denetimleri de değil (y220).
+  - backboardd'nin fragment gölgelendiricileri ortalama ~3 KB Bifrost kodu (y219). Makinede gerçek sabitlerle çeviri
+    (`C:\begonia-private\sh\qc_from_key.py`): sıradan bir görüntü çizimi 278–337 gövde komutu; Metal'e eş cihaz
+    profilinde bile 292. İçinde: hedefi okuyup gölgelendiricide karıştırma (framebuffer fetch, 2 renk eki), 32x32 gürültü
+    dokusuyla titreme, yarım duyarlık dönüşümleri, doku koordinatını 1/256'ya yuvarlama. GL yolunun ES2 düzeyi
+    gölgelendiricileri bunların hiçbirini yapmıyor; fark buradan (piksel başına ~12 ns, 270 MHz'lik G76'da).
+  - Çeviricinin "Metal'le bit-kesin" öykünmesi bunun yalnızca ~%17'si; çalışma zamanı yaması 0004 ile kaldırıldı
+    (y225: en uzun iş 31 → 24–28 ms).
+- **Sonraki adımlar (etki sırasıyla, hiçbiri yapılmadı):**
+  1. CoreAnimation'a hedefi okumayan (sabit işlevli karıştırma) boru hatlarını seçtirmek: `fc_framebuffer_fetch=0`
+     yolu kitaplıkta var; CA'nın bunu aygıtın hangi yanıtına göre seçtiği bilinmiyor (QuartzCore'da tersine mühendislik
+     gerek). En büyük kazanç burada olabilir: gölgelendirici küçülür, Mali'nin erken piksel eleme yolu açılır.
+  2. PanVK JM'de çizim başı tanımlayıcı kopyalamayı GPU işi yerine CPU'da yapmak (karede ~23 ms'lik vertex/tiler
+     süresinin çoğu; `bifrost/panvk_vX_meta_desc_copy.c`).
+  3. Çeviricide kalan öykünmeler (koordinat yuvarlama, yarım duyarlık) için hızlı yol.
+  4. GPU saati (270 MHz) — kullanıcının onayı gerekir, bu oturumda dokunulmadı.
+  Tahminim: 2–3 birlikte en fazla ~2 kat (15–20 kare/sn); GL yolunun hızına ancak 1 ile yaklaşılır. Bu bir tahmin,
+  ölçüm değil.
 - **Yan bulgular:** çekimlerde zaman zaman renkli pikselli ince yatay çizgi (y212, y218) — çekim aktarımı mı, yerinde
   yüzeylerde önbellek tutarlılığı mı belirsiz; kullanıcının gözle bakması gerek. `metal=3` mediaserverd'ı Metal'e alıp
   çökertiyor (MTLResourceOptions 0x80020 ve eksik `newFunctionWithName:constantValues:pipelineLibrary:error:`):

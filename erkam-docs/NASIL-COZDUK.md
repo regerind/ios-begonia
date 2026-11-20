@@ -137,7 +137,18 @@ siyah ekran ve 0–1 kare/sn vardı. Sırayla bulunan nedenler ve çözümler:
 Doğrulama (çekimler): ana ekran (y205), Denetim Merkezi (y211, y218), Ayarlar (y212), Bugün paneli (y215) doğru
 çiziliyor; backboardd hiçbir oturumda çökmedi, çökme döngüsü yok.
 
-**Açık kalan: hız.** 5–10 kare/sn (GL yolunda animasyonlarda 45–60). Darboğaz artık GPU: her tam ekran geçiş, içerikten
-bağımsız ~30 ms sürüyor (GL yolunda ≤3 ms), ayrıca PanVK her çizim için 2 ek "tanımlayıcı kopyalama" işi çıkarıyor
-(karede ~23 ms). Elenenler: boru hattı yeniden derleme (yok), işleyicilerde kopya (yok), AFBC ve ön-kare
-gölgelendiricisi (`panvk_debug=noafbc` ile kalkıyor ama süre değişmiyor). Ayrıntı: ACIK-HATALAR 12.
+6. **Çeviricinin "Metal'le bit-kesin" öykünmesi.** metal2vulkan, ölçülmemiş her sürücüde Metal'in yuvarlama/NaN
+   davranışını her gölgelendiricide hesaplıyor. Çalışma zamanı yaması 0004 PanVK için cihazın kendi dönüşümlerini kabul
+   ediyor (18 "sürücü olgusu"). Kazanç küçük (%10–20); bedeli yuvarlama eşiklerinde cihazın kendi sonucu.
+
+**Açık kalan: hız.** 5–10 kare/sn (GL yolunda animasyonlarda 45–60). Darboğaz GPU ve asıl neden CoreAnimation'ın Metal
+gölgelendiricilerinin ağırlığı (hedefi okuyarak gölgelendiricide karıştırma, gürültüyle titreme, yarım duyarlık): tam
+ekran geçiş ~25–30 ms (GL yolunda ≤3 ms); ayrıca PanVK her çizim için 2 ek "tanımlayıcı kopyalama" işi çıkarıyor (karede
+~23 ms). Elenenler: boru hattı yeniden derleme, işleyicilerde kopya, AFBC/ön-kare gölgelendiricisi, geçişin kendi
+maliyeti (çizimsiz geçiş 1–2 ms), kapsama denetimleri. Ayrıntı ve sonraki adımlar: ACIK-HATALAR 12.
+
+**Deney anahtarları (önyükleme argümanları):** `metal_tele=1` (5 sn'de bir sayaçlar), `metal_swapwait=0`,
+`metal_surfaces=0/1/2`, `metal_mirror=0`, `metal_contain=0`, `metal_nodraw=1`, `panvk_debug=<PANVK_DEBUG>`.
+**Araçlar:** `C:\begonia-private\sh\tele.sh TAG` (sayaçlar), `tele_keys.py` (boru hattı anahtarları), `qc_from_key.py`
+(CA boru hattını makinede çevirip komut sayar; `out/metal2vulkan-target-host/release/metal2vulkan`). Çekirdek, her 5 sn'nin
+en yavaş fragment işinin çerçeve arabelleği tanımlayıcısını `BEGONIA GPU FBD` satırlarıyla yazdırır.
