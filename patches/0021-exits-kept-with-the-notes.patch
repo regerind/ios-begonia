@@ -1,0 +1,34 @@
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -2098,6 +2098,31 @@
+ 
+ 	uth = current_uthread();
+ 
++	/*
++	 * begonia (y145): the window server, SpringBoard, the media server and WebKit's processes, when they end, kept with
++	 * the start-up notes (begonia_perf.c, said again every half minute): with a video sought in Safari, backboardd and
++	 * SpringBoard started anew and the log's ring, flooded by WebKit's warnings, kept nothing of why (y144). The exit
++	 * status and the reason (namespace/code: a signal, jetsam, a watchdog...), at most 16 of them.
++	 */
++	{
++		extern void begonia_perf_note(const char *format, ...) __printflike(1, 2);
++		extern int begonia_notes_urgent;
++		static const char *const watched[] = { "backboardd", "SpringBoard", "mediaserverd", "com.apple.WebKi", "MobileSafari" };
++		static int noted;
++
++		for (unsigned i = 0; i < sizeof(watched) / sizeof(watched[0]) && noted < 16; i++) {
++			if (strncmp(p->p_comm, watched[i], strlen(watched[i])) == 0) {
++				os_reason_t reason = p->p_exit_reason;
++				noted++;
++				begonia_perf_note("exit: %s[%d] status %#x reason %u/%#llx", p->p_comm, proc_getpid(p), p->p_xstat,
++				    reason != OS_REASON_NULL ? reason->osr_namespace : 0,
++				    reason != OS_REASON_NULL ? (unsigned long long)reason->osr_code : 0ULL);
++				begonia_notes_urgent = 1;
++				break;
++			}
++		}
++	}
++
+ 	proc_lock(p);
+ 	proc_transstart(p, 1, 0);
+ 	if (!(p->p_lflag & P_LEXIT)) {
