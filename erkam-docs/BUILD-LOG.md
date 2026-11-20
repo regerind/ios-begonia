@@ -200,3 +200,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y277 | 18:53 | PanVK 0018 + YouTube resim ve kare hızı (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0 fb_shot=80 fb_shot_n=1 fb_shot_step=12`) | |
 | y278 | 18:56 | PanVK 0018 + Today resim doğrulaması (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0 fb_shot_step=12`) | |
 | y279 | 19:00 | y277 tekrarı (y277'de shot çıkmadı): PanVK 0018 + YouTube resmi (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0 fb_shot=70 fb_shot_n=1 fb_shot_step=12`) | |
+| y280 | 19:04 | YouTube resmi: betik sonunda notify com.hakios.shot (kernel-zamanlı shot y277/y279'da çıkmadı), PanVK 0018 (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0 fb_shot_step=12`) | |
