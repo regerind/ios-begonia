@@ -239,3 +239,14 @@ Aşağısı araştırmanın kaydı.
   Kısa 64x64 geçişlerde bile vertex/tiler beklemesi 5-9 ms: uyku beklemesinin uyanma gecikmesi; boru hattı akarken değil, seri beklemede görünüyor.
   Tek seferde müdahale adayları: (1) tam ekran geçişlerin sayısını azaltmak (CA'nın backdrop/grup geçişleri), (2) tam ekran çizimlerin
   fragment maliyetini düşürmek (yarım duyarlık OpFConvert'leri, blend yolu), (3) rt1'in (temiz, saklanmayan) bırakılması.
+
+  y239-y246 (geçiş süreleri sonrası denemeler):
+  - Tile boyutu: tüm geçişlerde 16x16 (256 px), v7 için donanım üst sınırı; büyütülemez (y239/y240).
+  - Yarım duyarlık (PanVK 0016: shaderFloat16 v7'de açık, supportsNativeHardwareFP16=1): fragment süreleri ~aynı (yalnız j122 9.4 -> 5.2 ms).
+    Görüntü doğruluğu ekran görüntüsüyle doğrulanmadı; ürün yoluna almadan önce doğrulanmalı.
+  - Her sunulan kare için ~52 render pass (~120 GPU işi gönderimi) ve ~80 ms GPU işi var; GPU %50-55 meşgul, işler kuyrukta ~30 ms bekliyor.
+    Yani GPU'nun yarısı boş: iş başına ~0.5 ms'lik gönderim/uyanma boşluğu şüphesi (kernel begonia_mali_service.c bekleme/uyanma).
+    `begonia_gpu_spin=2000` (uyku yerine dönme) iş başına GPU süresini 580 -> 380-500 us'ye indirdi, ama koşular aynı iş yükünde olmadığı için
+    (dokunuş sayısı değişti, bir koşuda backboardd yeniden başladı) kare hızına etkisi ölçülemedi. Sıradaki: aynı betikle temiz A/B.
+  - Küçük geçişler (64x64, 406x34 vb.) çok sayıda: kare başına ~50; her biri en az bir gönderim. Geçiş sayısını azaltmak (CA'nın küçük
+    bitmap/glyph geçişlerini birleştirmek) asıl kazanç olabilir.
