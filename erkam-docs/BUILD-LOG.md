@@ -166,3 +166,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y243 | 15:17 | PanVK 0016 (v7'de shaderFloat16 açık): `panvk_debug=passtime` (geçiş süreleri) | |
 | y244 | 15:21 | GPU işi beklemesi 20 ms'ye kadar dönerek (uyku yok): iş başına ~0.55 ms boşluk uyanma gecikmesi mi? DENEY, ısı artar (`begonia_gpu_spin=2000`) | |
 | y245 | 15:25 | y244 tekrarı (y244'te dokunuş sayısı 749: sahibi dokunmuş, iş yükü farklı) (`begonia_gpu_spin=2000`) | |
+| y246 | 15:29 | taban (varsayılan spin) aynı betikle, y245 ile karşılaştırma (`begonia_gpu_spin=10`) | |
