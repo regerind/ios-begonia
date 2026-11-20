@@ -320,13 +320,21 @@ static void prf_sample(void) {
  absolutetime_to_nanoseconds(now-prf_last,&ns);
  if(prf_last && ns<200000000ull)return;
  prf_last=now;
- if((rd(0x68)&15)!=1){prf_program();return;}     /* after a reset of the GPU */
+ if((rd(0x68)&15)!=1) {                          /* after a reset of the GPU */
+  static unsigned again;
+  if(++again>3){prf_state=-1;begonia_perf_note("BEGONIA GPU PRFCNT: the GPU was reset %u times; off",again);return;}
+  prf_program();return;
+ }
  FlushPoC_DcacheRegion(prf_page,4096);
  wr(0x24,1u<<16);
  wr(0x30,4);
  unsigned i;
  for(i=0;i<2000;i++){if(rd(0x20)&(1u<<16))break;delay(5);}
  wr(0x24,1u<<16);
+ if(rd(0x241c)) {                                /* the sample itself faulted: never again */
+  prf_state=-1;begonia_perf_note("BEGONIA GPU PRFCNT: sample faulted, mmu irq %x at %x; off",rd(0x241c),rd(0x2420));
+  wr(0x68,0);wr(0x2004,0xffffffff);return;
+ }
  if(i==2000) {
   if(++prf_bad>=3){prf_state=-1;wr(0x68,0);begonia_perf_note("BEGONIA GPU PRFCNT: a sample never completed; off");}
   return;
@@ -345,6 +353,13 @@ static void prf_say(void) {
   printf("BEGONIA PRF %c%02u n%u: %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",names[b],c,prf_samples,
    v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10],v[11]);
  }
+ { const uint64_t *j=prf_sum[0],*m=prf_sum[2],*c=prf_sum[3];static unsigned n;
+   /* kept with the notes, in millions (the read-response classes in thousands): GPU active, JS0/JS1 active, cache flushes(k);
+    * fragment active, quads, core active, instructions, texture filter ops, load/store reads; beats read fetch-ext,
+    * load/store-ext, texture, texture-ext, written tile buffer; L2 ext read beats, AR stall, responses by latency, write beats, W stall */
+   begonia_perf_note("P%u g%llu j%llu/%llu c%llu f%llu q%llu x%llu i%llu t%llu l%llu F%llu L%llu T%llu/%llu W%llu R%llu a%llu h%llu/%llu/%llu/%llu/%llu w%llu s%llu",
+    n++,j[6]>>20,j[10]>>20,j[18]>>20,j[63]>>10,c[4]>>20,c[11]>>20,c[26]>>20,c[28]>>20,c[43]>>20,(c[44]+c[45])>>20,c[55]>>20,c[57]>>20,
+    c[58]>>20,c[59]>>20,c[62]>>20,m[32]>>20,m[33]>>20,m[37]>>10,m[38]>>10,m[39]>>10,m[40]>>10,m[41]>>10,m[47]>>20,m[48]>>20); }
  printf("BEGONIA PRF EN: J %llx T %llx M %llx S %llx\n",prf_sum[0][2],prf_sum[1][2],prf_sum[2][2],prf_sum[3][2]);
  for(unsigned b=0;b<4;b++)for(unsigned c=0;c<64;c++)prf_sum[b][c]=0;
  prf_samples=0;
