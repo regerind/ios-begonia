@@ -57,6 +57,7 @@ static uint64_t s1_kind_jobs[3],s1_kind_us[3];
 /* y262: where the time outside a job goes: before it (the tables' flush, the locks) and between one job's end and the
  * next one's entry while more jobs were queued behind it (the thread's loop: the queue's lock, the wake-ups). */
 static uint64_t gap_pre,gap_pre_n,gap_between,gap_between_n,gap_last_end;
+static char s1_sample[4][72];static unsigned s1_samples;   /* y268: the job types of some chains, in order */
 static uint64_t s1_types[16],s1_chain_len_sum;   /* y261: every job of slot 1's chains by type (4 compute, 5 vertex, 7 tiler, ...) */
 static unsigned fail_count,fail_slot;static uint32_t fail_irq,fail_mmu,fail_status;
 static uint64_t fail_seq,fail_head,fail_tail,fail_fault,fail_chain,fail_at,fail_took;
@@ -300,6 +301,7 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
    printf("BEGONIA GPU GAPS: before a job (tables, locks) %llu us each over %llu jobs; between jobs with a queue behind "
     "%llu us each over %llu\n",gap_pre_n?pre/1000/gap_pre_n:0,gap_pre_n,gap_between_n?between/1000/gap_between_n:0,gap_between_n);
    gap_pre=gap_pre_n=gap_between=gap_between_n=0; }
+ printf("BEGONIA GPU SLOT1 SAMPLES: [%s] [%s] [%s] [%s]\n",s1_sample[0],s1_sample[1],s1_sample[2],s1_sample[3]);
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
@@ -330,19 +332,20 @@ static void note_slow(uint64_t chain,uint64_t took) {
 /* y260: 0 a compute job (type 4) in the chain, 1 vertex/tiler jobs alone (5, 6, 7, 8) and writes/flushes (2, 3), 2 else.
  * Job header: word 4 bits 1..7 the type, words 6 and 7 the next job. */
 static unsigned chain_kind(uint64_t chain) {
- unsigned kind=1;
+ unsigned kind=1;char pat[72];unsigned pn=0;
  lck_mtx_lock(vm_lock);
  for(unsigned n=0;chain && n<64;n++) {
   uint64_t at=beg_gpu_vm_translate(&space,chain);
   if(!at){kind=2;break;}
   unsigned type=(ml_phys_read_word_64(at+16)>>1)&0x7f;
   uint64_t next=ml_phys_read_word_64(at+24)|((uint64_t)ml_phys_read_word_64(at+28)<<32);
-  s1_types[type&15]++;s1_chain_len_sum++;
+  s1_types[type&15]++;s1_chain_len_sum++;if(pn<68){pat[pn++]=(char)(type<10?48+type:65+type-10);pat[pn++]=' ';}
   if(type==4)kind=0;
   if(type!=2 && type!=3 && type!=4 && type!=5 && type!=6 && type!=7 && type!=8 && kind!=0)kind=2;
   chain=next;
  }
  lck_mtx_unlock(vm_lock);
+ { static unsigned seen; if(pn && (++seen%701)==0){pat[pn]=0;memcpy(s1_sample[s1_samples%4],pat,pn+1);s1_samples++;} }
  return kind;
 }
 static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,unsigned depth) {
