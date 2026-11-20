@@ -59,4 +59,5 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y142 | 04:0x | Videosuz Bugün paneli betiği, 72. sn çekim | Kaydırmalar Bugün paneline götürmedi (ikinci ana ekran sayfası). Görüntü doğru, bozulma yok |
 | y143 | 04:1x | Önceki kareden bulanıklık 8 doku biriminde (4 değil); YouTube betiği | Belirgin fark yok (yarısı 19–20 ms). Kalan: ~5 adet 1622×1525 yakalama ve ana ekranın kendi ağır çizimi |
 | p7 | 04:2x | Kalıcı imaj adayı (gecenin varsayılanları + ses + Wi-Fi + `!MediaRemoteUI`), **flaşlanmadı** | SHA256 20f79679…ecac |
-| y144 | 04:3x | Video ileri/geri sarma testi: YouTube, 58. sn oynat, 66–82. sn sağa/sola çift dokunma (betik `y_script_seek.txt`) | (sonuç bekleniyor) |
+| y144 | 04:3x | Video ileri/geri sarma testi: YouTube, 58. sn oynat, 66–82. sn sağa/sola çift dokunma (betik `y_script_seek.txt`) | **Çökme yeniden üretildi**: backboardd (13 → 209) ve SpringBoard (8 → 213) yeniden başladı; bir Safari süreci SIGABRT. Nedeni log tamponunda kalmadı (WebKit'in "changing property ... transform-only layer" uyarıları tamponu dolduruyor). Son pencerede kareler yarısı 36 ms |
+| y145 | 04:4x | Çekirdek: backboardd, SpringBoard, mediaserverd, WebKit ve Safari'nin çıkışları kalıcı notlara (0021); sarma testi tekrar | (sonuç bekleniyor) |
