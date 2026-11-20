@@ -30,15 +30,15 @@ Bu belge y249-y288 ölçümlerinin bütününe bakar. Telefon şarjdayken cihaza
 |---|-------|----------------|------|
 | A | Bifrost kodunun gerçek döngü sayısını ölçüp (offline derleyici) hangi komut gruplarının ağır olduğunu görmek; ardından çeviri tarafında güvenli sadeleştirme (gereksiz half<->float dönüşümleri, her piksel yeniden hesaplanan üniform bölmeler) | %10-30 | düşük-orta (resim farkı yok ya da çok küçük) |
 | B | CA'nın tam ekran pass sayısını azaltan davranışı bulmak (ör. aynı hedefe art arda yazan geçişleri tek geçişte birleştirmek, runtime seviyesinde) | %10-25 | orta |
-| C | GPU saati 806 -> ~900 MHz | ~%10 | **sahibinin onayı gerekir** (CLAUDE.md), ısı |
+| C | ~~GPU saati artırmak~~ | - | GEÇERSİZ: GPU zaten 806 MHz (MFGPLL 806000 kHz), bu SoC'nin üst frekansı; yükselecek yer yok |
 | D | Bellek baskısını azaltmak (jetsam): fb_queue, WebContent bellek sınırı, backboardd 480 MB dökümü | hız değil, kararlılık | düşük |
-| E | Stratejik: backboardd'i GL'de bırakıp Metal'i yalnızca uygulamalar/oyunlar için kullanmak (asıl hedef "oyunlar için Metal") | UI 45-60 fps korunur | sahibinin kararı |
+| E | ~~backboardd'i GL'de bırakmak~~ | - | **İPTAL (sahibinin kararı, 2026-11-20): tek Metal hattı kalır.** Gerekçe: çift hat (GL köprüsü + metal2vulkan) CPU/senkronizasyon yükü ve iki kod tabanı getiriyor. Not: çift hattın CPU maliyeti bu oturumda ÖLÇÜLMEDİ, karar sahibinin |
 
 ## 5. Önerilen sıra
 1. (A) ölçüm: shader başına gerçek Bifrost döngüleri.
 2. (D) kararlılık: jetsam'i azaltmadan kalıcı imaj güvenilmez.
 3. (B) pass birleştirme araştırması.
-4. (C) ve (E) sahibine bırakılan kararlar.
+4. C geçersiz, E iptal: tek Metal hattı, yol haritası A -> D -> B (sahibi onayladı).
 
 ## 6. Ek bulgular (offline, y254-y275 loglarından)
 - **Pass yapısı:** her komut buffer'ı tipik olarak iki pass ile başlıyor: (1) 1082x2244 "own" (CA'nın kendi dokusu) Clear+Store, (2) 1080x2340 ekran yüzeyi
@@ -59,4 +59,4 @@ Bu belge y249-y288 ölçümlerinin bütününe bakar. Telefon şarjdayken cihaza
 1. `y289` imajı hazır (flaşlanmadı): `bifrost_debug=shaderdb` ile Control Center betiği. Çıktı: her shader için komut/tuple/clause/döngü. Amaç: A kaldıracını sayılarla başlatmak.
 2. Sonuca göre: en ağır CA shader'larında (instr/cycle) çeviri sadeleştirmesi; ya da pass birleştirme.
 3. Jetsam: `fb_queue=1` ve yüzey sayısı denemesi; backboardd belleğinin dökümü.
-4. Sahibine bırakılan: GPU saati (C), backboardd'i GL'de bırakıp Metal'i uygulamalara ayırmak (E).
+4. C ve E kapandı (bkz. tablo): tek Metal hattı, sıra A -> D -> B.
