@@ -39,3 +39,24 @@ Bu belge y249-y288 ölçümlerinin bütününe bakar. Telefon şarjdayken cihaza
 2. (D) kararlılık: jetsam'i azaltmadan kalıcı imaj güvenilmez.
 3. (B) pass birleştirme araştırması.
 4. (C) ve (E) sahibine bırakılan kararlar.
+
+## 6. Ek bulgular (offline, y254-y275 loglarından)
+- **Pass yapısı:** her komut buffer'ı tipik olarak iki pass ile başlıyor: (1) 1082x2244 "own" (CA'nın kendi dokusu) Clear+Store, (2) 1080x2340 ekran yüzeyi
+  Clear+Store; bazılarında 64x64 küçük pass ve ekranı Load ile yeniden gezen üçüncü bir geçiş var. Commit başına ~7-9 render encoder (y275: 5 sn'de 72-121 commit,
+  +503/+1059 encoder), draw ~100/commit. Yani kare başına ~1 commit, ~8 pass, ~100 draw.
+- **Zaman nerede:** y258 pass süresi koşusunda (>=3 ms olanlar) toplam 5625 ms'nin 5017 ms'si (%89) 1080x2340 hedeflerinde; ortalama 7.5 ms/geçiş. 1622x1525 ara geçiş
+  327 ms (4.7 ms). Küçük pass'ler zaman olarak önemsiz, iş sayısı olarak önemli (iş başına 34-63 us boşluk, kare başına ~%3-6).
+- **c1 (ikinci renk eki):** her pass'te memoryless, DontCare yüklü, saklanmayan, pipeline anahtarlarında yok (yalnız `c0=` var). Hiçbir pipeline yazmıyor/okumuyor.
+  Tile 16x16 zaten üst sınır; kaldırmanın kazancı düşük beklenir (denenmedi).
+- **Pipeline blend durumu:** anahtarların ~%40'ı (`...Bsov...`, `Badd`) donanım blend'i açık (`c0=80:1:1:5:1:5` = ONE, ONE_MINUS_SRC_ALPHA), %25'i kapalı (`80:0:1:0:1:0`),
+  hepsinde `fc_blend_function=0x36` ve `fc_framebuffer_fetch=1`. Bsov shader'ı çevirisinde `OpImageRead` YOK (155 gövde komutu): yani fetch=1 olması bu varyantta
+  dst okumuyor; `fc_blend_function` shader'ın asıl renk yolunu seçiyor (0 yapınca çıktı sabit 0).
+- **Jetsam:** `jetsamproperties.D22` ve cihaz ağacı `target-type D22`, `compatible D22AP`: öncelikler doğru kurulu (backboardd 170, SpringBoard 160, mediaserverd 140,
+  WebContent/GPU 90). Yani backboardd ancak bellek gerçekten tükenince öldürülüyor. Wired (GPU/yüzey) ~1.4 GB kullanıcı alanına ait ve killable değil; asıl çare
+  bellek kullanımını azaltmak. Süreç footprint: WebContent ~800 MB (büyüyor), backboardd ~480 MB.
+
+## 7. Telefon döndüğünde yapılacaklar (sırayla, hazır)
+1. `y289` imajı hazır (flaşlanmadı): `bifrost_debug=shaderdb` ile Control Center betiği. Çıktı: her shader için komut/tuple/clause/döngü. Amaç: A kaldıracını sayılarla başlatmak.
+2. Sonuca göre: en ağır CA shader'larında (instr/cycle) çeviri sadeleştirmesi; ya da pass birleştirme.
+3. Jetsam: `fb_queue=1` ve yüzey sayısı denemesi; backboardd belleğinin dökümü.
+4. Sahibine bırakılan: GPU saati (C), backboardd'i GL'de bırakıp Metal'i uygulamalara ayırmak (E).
