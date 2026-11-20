@@ -57,6 +57,7 @@ static uint64_t s1_kind_jobs[3],s1_kind_us[3];
 /* y262: where the time outside a job goes: before it (the tables' flush, the locks) and between one job's end and the
  * next one's entry while more jobs were queued behind it (the thread's loop: the queue's lock, the wake-ups). */
 static uint64_t gap_pre,gap_pre_n,gap_between,gap_between_n,gap_last_end;
+static unsigned mem_min_free=~0u;   /* y282: the fewest free pages seen at any job's end since the last report */
 static char s1_sample[4][72];static unsigned s1_samples;   /* y268: the job types of some chains, in order */
 static uint64_t s1_types[16],s1_chain_len_sum;   /* y261: every job of slot 1's chains by type (4 compute, 5 vertex, 7 tiler, ...) */
 static unsigned fail_count,fail_slot;static uint32_t fail_irq,fail_mmu,fail_status;
@@ -304,8 +305,12 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
  printf("BEGONIA GPU SLOT1 SAMPLES: [%s] [%s] [%s] [%s]\n",s1_sample[0],s1_sample[1],s1_sample[2],s1_sample[3]);
  { /* y281: the memory the window server's kills are about (pages of 16 KB: free, active, inactive, wired, speculative, purgeable) */
    extern unsigned int vm_page_free_count,vm_page_active_count,vm_page_inactive_count,vm_page_wire_count,vm_page_speculative_count,vm_page_purgeable_count;
-   printf("BEGONIA MEM: pages free %u active %u inactive %u wired %u speculative %u purgeable %u\n",vm_page_free_count,vm_page_active_count,
-    vm_page_inactive_count,vm_page_wire_count,vm_page_speculative_count,vm_page_purgeable_count); }
+   printf("BEGONIA MEM: pages free %u (lowest %u) active %u inactive %u wired %u speculative %u purgeable %u\n",vm_page_free_count,mem_min_free,
+    vm_page_active_count,vm_page_inactive_count,vm_page_wire_count,vm_page_speculative_count,vm_page_purgeable_count);
+   /* kept with the notes (they outlive the 25 s of the log) when the memory got low: under 30000 pages (~470 MB) free */
+   if(mem_min_free<30000)begonia_perf_note("MEM LOW: lowest free %u pages, now free %u active %u inactive %u wired %u",mem_min_free,
+    vm_page_free_count,vm_page_active_count,vm_page_inactive_count,vm_page_wire_count);
+   mem_min_free=~0u; }
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
@@ -384,7 +389,7 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
    printf("BEGONIA GPU SERVICE: hardware recovery failed\n");
   }
  }
- { uint64_t ended=mach_absolute_time();gap_last_end=ended;if(fragment && success)note_slow(chain,ended-began);
+ { uint64_t ended=mach_absolute_time();gap_last_end=ended;{extern unsigned int vm_page_free_count;unsigned f=vm_page_free_count;if(f<mem_min_free)mem_min_free=f;}if(fragment && success)note_slow(chain,ended-began);
    if(!fragment && success){unsigned k=chain_kind(chain);uint64_t us;absolutetime_to_nanoseconds(ended-began,&us);s1_kind_jobs[k]++;s1_kind_us[k]+=us/1000;}
    job_stats(began,ended,fragment,queued,depth); }
  return success;
