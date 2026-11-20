@@ -206,3 +206,7 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y283 | 19:17 | kernel: en düşük serbest sayfa (MEM LOW notu), seek betiği; jetsam öldürmesi avı (ACIK-HATALAR 2b) tekrar 283 (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | Çökme yok. Serbest sayfa en düşük 124-543, wired ~124 bin. 5 sn de 55-65 kare (11-12 fps). |
 | y284 | 19:20 | kernel: en düşük serbest sayfa (MEM LOW notu), seek betiği; jetsam öldürmesi avı (ACIK-HATALAR 2b) tekrar 284 (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | Çökme yok. En düşük serbest 127-389, wired ~122-126 bin. 54-65 kare/5 sn. |
 | y285 | 19:25 | kernel: BEGONIA MEM PROCS (süreç başına wired/footprint, proc_iterate) — wired belleği kim tutuyor? (ACIK-HATALAR 2b) (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
+| y285 | 19:3x | kernel: BEGONIA MEM PROCS (proc_iterate); derleme hatası (proc_pid zaten bildirilmiş) | İmaj oluşmadı, koşu yok. |
+| y286 | 19:4x | y285 tekrarı | Derleme hatası (conflicting types for proc_pid), imaj oluşmadı. |
+| y287 | 19:4x | proc_pid bildirimi kaldırıldı | Derleme hatası (conflicting types for proc_task), imaj oluşmadı. |
+| y288 | 19:31 | kernel: proc_task/proc_name başlıklardan; süreç başına footprint (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | Footprint: com.apple.WebKit[177] ~800 MB (797→840 MB 10 sn de), WebKit[164] ~195 MB, backboardd[13] ~483 MB, SpringBoard[8] ~128 MB (toplam ~1.6 GB). Çökme yok, 63 kare/5 sn (12 fps). (task wired değeri 0 çıktı: ledger bu çekirdekte wired saymıyor.) |

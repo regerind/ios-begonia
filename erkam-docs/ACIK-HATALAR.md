@@ -309,3 +309,7 @@ Aşağısı araştırmanın kaydı.
     sıçrama jetsam'i (reason 1/0x4, 1/0x5) tetikliyor. Her kare yeni yüzeyde geliyor ("none twice"): 5 sn de ~55-140 yüzey yapılıyor, 52-68 büyük (10 MB).
     Sonraki: hangi sürecin kaç wired bellek tuttuğunu görmek (süreç başına), PanVK BO/tiler heap boyutu, uçuştaki kare sayısını sınırlamak.
   - Bu akşam async swap ile (fb_gpuseq=1 metal_swapwait=0) ~20 koşuda 3 yeniden başlama (y272, y274, y281); y282-y284 ve y275 temiz. Oran eski "10 da 1" ile aynı mertebede.
+  - **Süreç başına bellek (y288, footprint):** com.apple.WebKit[177] ~800 MB (10 sn'de +40 MB: büyüyor), WebKit[164] ~195 MB, backboardd ~483 MB,
+    SpringBoard ~128 MB; toplam ~1.6 GB (cihazda ~2.8 GB sayfa). En büyük tek tüketici YouTube/Safari WebContent (~800 MB); backboardd'in ~480 MB'ı
+    pencere sunucusu için büyük (gerçek iOS'ta yüzlerce MB değil, ~100-150 MB). Jetsam backboardd'i öldürüyor (WebContent'i değil). Sonraki:
+    backboardd'in 480 MB'ının dökümü (yüzeyler, aynalar 37 MB, PanVK havuzları), uçuştaki kare sayısı (fb_queue), WebContent için limit.
