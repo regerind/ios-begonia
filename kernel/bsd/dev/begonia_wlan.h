@@ -74,6 +74,7 @@ void begonia_wlan_assoc_done(int result);                  /* APPLE80211 ASSOCIA
 void begonia_wlan_link(bool up, uint32_t reason);
 void begonia_wlan_power(bool on);
 void begonia_wlan_input(mbuf_t m);                         /* a received 802.3 frame */
+void begonia_wlan_input_chain(mbuf_t m);                   /* received 802.3 frames linked by nextpkt (y174) */
 size_t begonia_wlan_stats(char *out, size_t len);
 
 /* BegoniaWLAN.cpp */

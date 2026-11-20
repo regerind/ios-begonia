@@ -3109,6 +3109,16 @@ vw_unlock(void)
 	if (bits & NOTE_ASSOC) {
 		begonia_wlan_assoc_done(assoc);
 	}
+	/* (y174: all of them in one call; boot-arg begonia_wifi_chain=0: a call a packet, as before) */
+	static int chain = -1;
+	if (chain < 0) {
+		int v = 1;
+		chain = PE_parse_boot_argn("begonia_wifi_chain", &v, sizeof(v)) ? (v != 0) : 1;
+	}
+	if (chain) {
+		begonia_wlan_input_chain(rx);
+		rx = NULL;
+	}
 	while (rx != NULL) {
 		mbuf_t next = mbuf_nextpkt(rx);
 		mbuf_setnextpkt(rx, NULL);

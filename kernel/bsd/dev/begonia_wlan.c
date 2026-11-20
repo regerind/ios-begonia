@@ -191,6 +191,47 @@ begonia_wlan_input(mbuf_t m)
 	ifnet_input(ifp, m, &stats);
 }
 
+/*
+ * begonia (y174): what one look at the rings brought in, handed up in one call (a chain linked by nextpkt) rather than
+ * a call a packet. With a video at ~3 MB/s (~2900 packets a second, ~3 a look at the rings) WebKit.Networking took
+ * ~110% of a core, ~40% of it in the kernel (y171-y173): the input thread and the reader were woken a packet at a time.
+ */
+void
+begonia_wlan_input_chain(mbuf_t m)
+{
+	ifnet_t ifp = wn.ifp;
+	mbuf_t head = NULL, tail = NULL;
+	struct ifnet_stat_increment_param stats = {};
+
+	while (m != NULL) {
+		mbuf_t next = mbuf_nextpkt(m);
+		mbuf_setnextpkt(m, NULL);
+		if (ifp == NULL || mbuf_pkthdr_len(m) < ETHER_HDR_LEN || mbuf_len(m) < ETHER_HDR_LEN) {
+			mbuf_freem(m);
+			m = next;
+			continue;
+		}
+		stats.packets_in++;
+		stats.bytes_in += mbuf_pkthdr_len(m);
+		mbuf_pkthdr_setrcvif(m, ifp);
+		bpf_tap_in(ifp, DLT_EN10MB, m, NULL, 0);
+		void *frame_header = mbuf_data(m);
+		mbuf_pkthdr_setheader(m, frame_header);
+		mbuf_pkthdr_adjustlen(m, -ETHER_HDR_LEN);
+		(void)mbuf_setdata(m, (char *)mbuf_data(m) + ETHER_HDR_LEN, mbuf_len(m) - ETHER_HDR_LEN);
+		if (tail != NULL) {
+			mbuf_setnextpkt(tail, m);
+		} else {
+			head = m;
+		}
+		tail = m;
+		m = next;
+	}
+	if (head != NULL) {
+		ifnet_input(ifp, head, &stats);
+	}
+}
+
 /* ---- events from the station ---- */
 
 void
