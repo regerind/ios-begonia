@@ -270,3 +270,12 @@ Aşağısı araştırmanın kaydı.
   - Şerit sürümü (y252) pass sayısını ARTIRDI (sağ+alt şerit ayrı pass); bırakıldı.
   - Hâlâ açık: encoder başına ~13 tam ekran geçiş (CA'nın kendisi), geçişler arası Barrier::everything() ölü zamanı, DontCare clear'ı
     (tiles) yolu. Resim doğrulaması: Control Center doğru (y253); Today/YouTube y255/y256.
+  - **rt1 neymiş (y254 telemetrisi, 2026-11-20 akşam):** CA'nın her tam ekran geçişinde `c1` var: aynı boyut, `L0 S0 sm3` = DontCare yükü,
+    hiç saklanmayan, MEMORYLESS. Pipeline anahtarlarında (tele_keys, 8 anahtar) yalnızca `c0=` var, `c1=` yok; `fc_color_inputs1:0`,
+    `fc_attachment_count:2` yalnız geçişin ek sayısını söylüyor. Yani c1'i hiçbir pipeline yazmıyor/okumuyor; runtime onu her geçişte
+    sıfıra temizliyor (clear_reach.rs, memoryless DontCare -> Clear). Tile tamponu yükü küçük (2x32 bit/piksel, 16x16 zaten üst sınır):
+    kaldırmanın kazancı düşük beklenir, tek başına denemeye değmez (DENENMEDİ, varsayım).
+  - Asıl maliyet: tam ekran blur/backdrop fragment geçişleri (12-19 ms, y258). GL yolu bunları ucuza yapıyor çünkü GL köprüsünde
+    "backdrop önceki kareden" (0051) ve geç temizleme (0054) gibi kısayollar var; Metal yolunda CA bunları gerçekten çiziyor.
+    Sonraki gerçek kaldıraç = Metal tarafında aynı kısayolun karşılığı (görüntüyü etkiler, sahibinin kararı) ya da blur geçişinin
+    daha düşük çözünürlükte çizilmesi (CA'nın kendi kararı, yamalamak zor).
