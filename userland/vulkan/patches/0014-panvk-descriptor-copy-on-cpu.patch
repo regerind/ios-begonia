@@ -40,7 +40,7 @@
  #include <stddef.h>
  #include <stdint.h>
  
-@@ -384,6 +387,144 @@
+@@ -384,6 +387,142 @@
     return panvk_priv_mem_dev_addr(shader->rsd);
  }
  
@@ -169,15 +169,13 @@
 +      goto report_ok;
 +   return true;
 +report_ok:
-+   fprintf(stderr, "panvk cpu desc copy: done %u, no handles %u, no cpu table %u, bad set %u, set without host %u
-+",
++   fprintf(stderr, "panvk cpu desc copy: done %u, no handles %u, no cpu table %u, bad set %u, set without host %u\n",
 +           stat[0], stat[1], stat[2], stat[3], stat[4]);
 +   return true;
 +report:
 +   calls++;
 +   if ((calls & 1023) == 0 || stat[1] + stat[2] + stat[3] + stat[4] == 1)
-+      fprintf(stderr, "panvk cpu desc copy: done %u, no handles %u, no cpu table %u, bad set %u, set without host %u
-+",
++      fprintf(stderr, "panvk cpu desc copy: done %u, no handles %u, no cpu table %u, bad set %u, set without host %u\n",
 +              stat[0], stat[1], stat[2], stat[3], stat[4]);
 +   return false;
 +}
@@ -185,7 +183,7 @@
  VkResult
  panvk_per_arch(meta_get_copy_desc_job)(
     struct panvk_cmd_buffer *cmdbuf,
-@@ -433,6 +574,13 @@
+@@ -433,6 +572,13 @@
        copy_info.tables[i] = shader_desc_state->tables[i];
     }
  
