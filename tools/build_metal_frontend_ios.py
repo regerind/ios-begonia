@@ -588,6 +588,7 @@ static void nbTeleTick() {
   if(!strchr("STGJNVLWFP",line[0]) || strlen(line)<5 || (line[0]=='S' && line[1]=='R'))continue;
   nbConsole([NSString stringWithFormat:@"tele %s",line]);
  }
+ {char warning[700];if(nmb_last_warning(warning,sizeof warning))nbConsole([NSString stringWithFormat:@"tele WW %s",warning]);}
  unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeLock);kinds=(unsigned)gTelePipes.size();}
  nbConsole([NSString stringWithFormat:@"tele X pipes asked %llu kinds %u not-ok %llu warns %llu libs %llu | handlers scheduled n=%llu %lluus max %llu, completed n=%llu %lluus max %llu",
   gTelePipeAsked.load(),kinds,gTelePipeStubs.load(),gTeleWarns.load(),gTeleLibraries.load(),

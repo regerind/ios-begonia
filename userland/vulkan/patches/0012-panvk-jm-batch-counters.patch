@@ -1,0 +1,96 @@
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
+@@ -33,6 +33,7 @@
+ 
+ #include "vk_descriptor_update_template.h"
+ #include "vk_format.h"
++#include "util/u_atomic.h"
+ 
+ static VkResult
+ panvk_cmd_prepare_fragment_job(struct panvk_cmd_buffer *cmdbuf, uint64_t fbd)
+@@ -65,6 +66,41 @@
+    return VK_SUCCESS;
+ }
+ 
++/* begonia: what closes batches, counted (the window server on Metal, y205: ~40 fragment jobs
++ * a frame for 7 render passes). In backboardd a line on the console every 512 batches that
++ * held jobs: batches, those with a framebuffer (a fragment job each), barriers that closed a
++ * batch holding draws, BeginRendering calls that were not resuming, EndCommandBuffer calls.
++ * Counters only. */
++#include <fcntl.h>
++#include <stdlib.h>
++#include <unistd.h>
++uint32_t panvk_per_arch(begonia_stats)[8];
++
++static void
++begonia_note_batch(const struct panvk_batch *batch)
++{
++   uint32_t *s = panvk_per_arch(begonia_stats);
++   static int fd = -2;
++
++   if (!batch->fb.desc.gpu && !batch->vtc_jc.first_job)
++      return;
++   if (batch->fb.desc.gpu)
++      p_atomic_inc(&s[1]);
++   if ((p_atomic_inc_return(&s[0]) & 511) != 0)
++      return;
++   if (fd == -2)
++      fd = strcmp(getprogname(), "backboardd") == 0 ? open("/dev/console", O_WRONLY | O_NOCTTY) : -1;
++   if (fd >= 0) {
++      char line[240];
++      int n = snprintf(line, sizeof(line),
++                       "panvk: batches %u, with a framebuffer %u; barriers closing a batch with draws %u, "
++                       "without %u; BeginRendering %u, resuming %u; EndCommandBuffer %u\n",
++                       s[0], s[1], s[2], s[3], s[4], s[5], s[6]);
++      if (n > 0)
++         (void)!write(fd, line, n);
++   }
++}
++
+ void
+ panvk_per_arch(cmd_close_batch)(struct panvk_cmd_buffer *cmdbuf)
+ {
+@@ -73,6 +109,8 @@
+    if (!batch)
+       return;
+ 
++   begonia_note_batch(batch);
++
+    assert(batch);
+ 
+    if (!batch->fb.desc.gpu && !batch->vtc_jc.first_job) {
+@@ -334,6 +372,7 @@
+ {
+    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+ 
++   p_atomic_inc(&panvk_per_arch(begonia_stats)[6]);
+    panvk_per_arch(cmd_close_batch)(cmdbuf);
+ 
+    panvk_pool_flush_maps(&cmdbuf->desc_pool);
+@@ -354,6 +393,7 @@
+     * barrier flag set to true.
+     */
+    if (cmdbuf->cur_batch) {
++      p_atomic_inc(&panvk_per_arch(begonia_stats)[cmdbuf->cur_batch->vtc_jc.first_job ? 2 : 3]);
+       panvk_per_arch(cmd_close_batch)(cmdbuf);
+       panvk_per_arch(cmd_open_batch)(cmdbuf);
+    }
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
+@@ -38,6 +38,7 @@
+ #include "pan_shader.h"
+ 
+ #include "vk_format.h"
++#include "util/u_atomic.h"
+ #include "vk_meta.h"
+ #include "vk_pipeline_layout.h"
+ 
+@@ -1884,6 +1885,8 @@
+    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+    struct panvk_cmd_graphics_state *state = &cmdbuf->state.gfx;
+    bool resuming = pRenderingInfo->flags & VK_RENDERING_RESUMING_BIT;
++   extern uint32_t panvk_per_arch(begonia_stats)[8];
++   p_atomic_inc(&panvk_per_arch(begonia_stats)[resuming ? 5 : 4]);
+ 
+    /* When resuming from a suspended pass, the state should be unchanged. */
+    if (resuming && cmdbuf->cur_batch) {
