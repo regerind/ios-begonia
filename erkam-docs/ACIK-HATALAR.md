@@ -111,7 +111,9 @@ ya da onay gerekiyor). En üstteki en önemlisi.
 - **Şüphe:** Önce köprü 0054'ten (geç temizlik) sanıldı: y157'de 0054 kapalıyken kaydırıcı vardı. Ama y159'da 0054
   açıkken de var. 0055'in sayaçları da (hedef çizilmeden önce başka yolla kullanıldı mı) hiç artmadı. Büyük olasılıkla
   ses durumunun geç gelmesine bağlı bir zamanlama hatası (ses sunucusunun ne zaman hazır olduğu); 0054 tamamen aklanmış değil.
-- **Durum:** gözleniyor. Kullanıcı elle bakarsa açık/kapalı hangisi olduğunu söyleyebilir.
+- **Ek (y163):** y155–y159 yanlış kurulumla (Metal istemcileri yok, SpringBoard GL'de) koşmuştu. Doğru kurulumla
+  (y163, 0054 açık) kaydırıcı var. Kayıp büyük olasılıkla o kuruluma özgü.
+- **Durum:** gözleniyor (doğru kurulumda görülmedi). Kullanıcı elle görürse yeniden açılır.
 
 ## 11. Diğerleri
 - **Bluetooth:** Denetleyici canlı (WMT açık, HCI reset OK); iOS tarafı yok. Kullanıcı tarafından hiç denenmedi;

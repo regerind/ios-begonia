@@ -1,0 +1,84 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -2225,6 +2225,63 @@
+ 	EAGL_LEAVE(e, 0x30);
+ }
+ 
++/*
++ * begonia (y167): CoreAnimation keeps a pool of textures and draws into one bigger than it needs (up to 1622 x 2342,
++ * seen with YouTube), only in its viewport; but it clears the whole texture. Mesa (panfrost) makes a whole-texture
++ * clear a batch over the whole texture: with YouTube ~6 a frame of 1622 x 1525 with 1 draw each (y166). Boot-arg
++ * glclearbox=1: a clear of a texture of a million pixels or more, with no scissor and a viewport under 40% of it, is
++ * boxed to the viewport and 2 pixels around it (the edge a linear filter may read). Counted in any case.
++ */
++static int clear_box_on;
++static unsigned box_looked, box_small, box_done, box_said;
++static uint64_t box_view_area, box_tex_area;
++
++static void
++clear_boxed(struct eagl *e)
++{
++	GLint view[4] = { 0, 0, 0, 0 }, bound = 0, width = 0, height = 0;
++	uint64_t view_area, tex_area;
++
++	if (image_of(e, e->colour) != NULL) {
++		return;                 /* (IOSurfaces: the display's picture and its kind are cleared whole on purpose) */
++	}
++	glGetIntegerv(0x0ba2 /* GL_VIEWPORT */, view);
++	glGetIntegerv(GL_TEXTURE_BINDING_2D, &bound);
++	glBindTexture(GL_TEXTURE_2D, e->colour);
++	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1000 /* GL_TEXTURE_WIDTH */, &width);
++	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1001 /* GL_TEXTURE_HEIGHT */, &height);
++	glBindTexture(GL_TEXTURE_2D, (GLuint)bound);
++	tex_area = (uint64_t)(width > 0 ? width : 0) * (uint64_t)(height > 0 ? height : 0);
++	if (tex_area < 1000000) {
++		return;
++	}
++	view_area = (uint64_t)(view[2] > 0 ? view[2] : 0) * (uint64_t)(view[3] > 0 ? view[3] : 0);
++	box_looked++;
++	box_view_area += view_area;
++	box_tex_area += tex_area;
++	if (view_area * 100 < tex_area * 40) {
++		box_small++;
++		if (clear_box_on) {
++			GLint x0 = view[0] - 2 < 0 ? 0 : view[0] - 2, y0 = view[1] - 2 < 0 ? 0 : view[1] - 2;
++			GLint x1 = view[0] + view[2] + 2 > width ? width : view[0] + view[2] + 2;
++			GLint y1 = view[1] + view[3] + 2 > height ? height : view[1] + view[3] + 2;
++
++			e->unclear_boxed = GL_TRUE;
++			e->unclear_box[0] = x0;
++			e->unclear_box[1] = y0;
++			e->unclear_box[2] = x1 - x0;
++			e->unclear_box[3] = y1 - y0;
++			box_done++;
++		}
++	}
++	if (box_said < 6 || box_looked % 2000 == 0) {
++		box_said++;
++		say("hakios-gl: whole clears of big textures: %u, viewport %llu%% of the texture on average; %u under 40%%, %u boxed"
++		    " (this one %d x %d of %d x %d)\n", box_looked, (unsigned long long)(box_view_area * 100 / box_tex_area),
++		    box_small, box_done, view[2], view[3], width, height);
++	}
++}
++
+ static void
+ my_glClear(void *context, GLbitfield mask)
+ {
+@@ -2250,6 +2307,9 @@
+ 		e->unclear_boxed = glIsEnabled(GL_SCISSOR_TEST);
+ 		glGetIntegerv(GL_SCISSOR_BOX, e->unclear_box);
+ 		glGetFloatv(GL_COLOR_CLEAR_VALUE, e->unclear_colour);
++		if (!e->unclear_boxed && (mask & GL_COLOR_BUFFER_BIT)) {
++			clear_boxed(e);
++		}
+ 	} else {
+ 		glClear(mask);
+ 	}
+@@ -5623,6 +5683,7 @@
+ 		hash_wrapped = strstr(arguments, "glwraphash=1") != NULL;
+ 		fill_fresh = strstr(arguments, "glfill=1") != NULL;
+ 		clear_late = strstr(arguments, "glclearlate=0") == NULL;
++		clear_box_on = strstr(arguments, "glclearbox=1") != NULL;
+ 		if (strstr(arguments, "glwait=0") != NULL || (strstr(arguments, "glwait=1") == NULL && display_waits())) {
+ 			wait_for_frames = 0;
+ 		}
