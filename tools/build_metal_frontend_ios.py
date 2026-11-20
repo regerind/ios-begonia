@@ -610,6 +610,17 @@ static void nbTeleTick() {
   ' NmbLibrary *handle=nmb_library_new(gDevice,bytes.bytes,bytes.length,false);gTimeLibrary.add(libraryBegan);\n'
   ' if(gTeleLibraries++<12)nbConsole([NSString stringWithFormat:@"tele library %@ (%lu bytes): %s",path,(unsigned long)bytes.length,handle?"opened":nmb_last_error()]);\n'),
 ]
+# begonia (y205): the window server swaps a frame's surface to the display right after waitUntilScheduled -- on Apple's
+# GPUs the kernel holds the swap until the GPU has drawn the surface; here nothing does, and the framebuffer driver
+# copied surfaces the GPU had not reached yet (y204: every frame black, each in a new surface, 265 ms commit to
+# completion). In backboardd a command buffer that drew is waited for to its completion there. metal_swapwait=0: not.
+tele_hooks.append(('static void completed(void *context);\nstatic void scheduled(void *context);\n',
+ 'static void completed(void *context);\nstatic void scheduled(void *context);\n'
+ 'static bool nbServerWaits() {\n static int waits=-1;\n if(waits<0){char args[1024]="";size_t size=sizeof(args)-1;\n'
+ '  waits=strcmp(getprogname(),"backboardd")==0 && !(sysctlbyname("kern.bootargs",args,&size,NULL,0)==0 && strstr(args,"metal_swapwait=0")!=NULL);}\n return waits;\n}\n'))
+tele_hooks.append((' dispatch_group_wait(_schedulingHandlers,DISPATCH_TIME_FOREVER);\n',
+ ' dispatch_group_wait(_schedulingHandlers,DISPATCH_TIME_FOREVER);\n'
+ ' if(nbServerWaits() && encodedWork.passes>0 && !self.failedLocally)nmb_command_buffer_wait(_handle,0);\n'))
 for old,new in tele_hooks:
  assert mtext.count(old)==1,'telemetry hook does not fit: '+old[:90]
  mtext=mtext.replace(old,new)
