@@ -39,7 +39,7 @@
           cmdbuf, &render->fb.layout, fbd_info.load,
 --- a/src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c
 +++ b/src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c
-@@ -29,6 +29,59 @@
+@@ -29,6 +29,58 @@
  
  #include "drm-uapi/panfrost_drm.h"
  
@@ -86,8 +86,7 @@
 +   if (fd < 0)
 +      return;
 +   char line[120];
-+   int n = snprintf(line, sizeof(line), "pt v%.1f f%.1f %ux%u r%u %.9s/%.9s L%c%c S%c%c j%u
-+",
++   int n = snprintf(line, sizeof(line), "pt v%.1f f%.1f %ux%u r%u %.9s/%.9s L%c%c S%c%c j%u\n",
 +                    v_us / 1000.0, f_us / 1000.0, b->begonia.w, b->begonia.h, b->begonia.rt_count,
 +                    util_format_short_name(b->begonia.fmt[0]), util_format_short_name(b->begonia.fmt[1]),
 +                    b->begonia.load[0], b->begonia.load[1], b->begonia.store[0], b->begonia.store[1],
@@ -99,7 +98,7 @@
  static void
  panvk_queue_submit_batch(struct panvk_gpu_queue *queue,
                           struct panvk_cmd_buffer *cmdbuf,
-@@ -40,6 +93,7 @@
+@@ -40,6 +92,7 @@
     struct panvk_physical_device *phys_dev =
        to_panvk_physical_device(dev->vk.physical);
     ASSERTED int ret;
@@ -107,7 +106,7 @@
  
     /* Reset the batch if it's already been issued */
     if (batch->issued) {
-@@ -76,8 +130,13 @@
+@@ -76,8 +129,13 @@
           .jc = batch->vtc_jc.first_job,
        };
  
@@ -121,7 +120,7 @@
  
        if (PANVK_DEBUG(TRACE) || PANVK_DEBUG(SYNC)) {
           ret = drmSyncobjWait(dev->drm_fd, &submit.out_sync, 1, INT64_MAX, 0,
-@@ -120,8 +179,13 @@
+@@ -120,8 +178,13 @@
           submit.in_sync_count = nr_in_fences;
        }
  
@@ -135,7 +134,7 @@
        if (PANVK_DEBUG(TRACE) || PANVK_DEBUG(SYNC)) {
           ret = drmSyncobjWait(dev->drm_fd, &submit.out_sync, 1, INT64_MAX, 0,
                                NULL);
-@@ -148,6 +212,9 @@
+@@ -148,6 +211,9 @@
     if (PANVK_DEBUG(TRACE))
        pandecode_next_frame(dev->debug.decode_ctx);
  
