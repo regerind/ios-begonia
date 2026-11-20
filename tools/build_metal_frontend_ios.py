@@ -991,6 +991,45 @@ if not a.quartzcore:
  assert mtext.count(old_refusal)==1
  mtext=mtext.replace(old_refusal,' {static std::atomic<unsigned> said{0};if(said++<4)nbConsole([NSString stringWithFormat:@"tele pipeline library refused: %@",path]);}\n'+old_refusal)
 
+# begonia (y305): two things the window server's drawing thread did at every commit (y304's profile of the home screen swiped,
+# 2494 samples; boot-arg beg_thin=1: both thinned; beg_thin=2: in the odd 5-second slices of the time since boot, a measurement):
+# 1. The surface it draws into was imported anew for every frame: the import is kept only weakly, by its texture, and the
+#    texture ends with the frame (1363 surface textures for 1361 commits; in the kernel 540 surface calls and 270 closes in 5 s,
+#    405 ms of them, 800000 pages entered into the GPU's tables and taken out; a file made, sized and unlinked for each). The
+#    last six imports are now held.
+# 2. Every mirrored bitmap a command buffer uses was hashed at its commit, 66 of them a commit, 42 us each (their bytes are in
+#    write-combined memory, slow to read): 8.3% of the thread's samples. A bitmap already uploaded is now looked at at every
+#    second commit (a change shows one commit later at most).
+old='static NSMapTable<NSValue *,NBBuffer *> *gSurfaceImports;\n'
+assert mtext.count(old)==1
+mtext=mtext.replace(old,old+'''static NSMutableArray<NBBuffer *> *gBegSurfaceKept;
+static int begThin(void) {
+ static int mode=-1;
+ if(mode<0){char args[1024]="";size_t size=sizeof(args)-1;
+  mode=sysctlbyname("kern.bootargs",args,&size,NULL,0)==0?(strstr(args,"beg_thin=2")?2:strstr(args,"beg_thin=1")?1:0):0;}
+ if(mode!=2)return mode;
+ struct timespec ts;clock_gettime(CLOCK_UPTIME_RAW,&ts);return (int)((ts.tv_sec/5)&1);
+}
+// gSurfaceImportLock held
+static void begKeepSurface(NBBuffer *buffer) {
+ if(!begThin()){[gBegSurfaceKept removeAllObjects];return;}
+ if(!gBegSurfaceKept)gBegSurfaceKept=[NSMutableArray new];
+ [gBegSurfaceKept removeObjectIdenticalTo:buffer];[gBegSurfaceKept insertObject:buffer atIndex:0];
+ while(gBegSurfaceKept.count>6)[gBegSurfaceKept removeLastObject];
+}
+''')
+old=' if(buffer)return buffer;\n // The surface keeps its CPU mapping (the imported pages) until the import is freed.\n'
+assert mtext.count(old)==1
+mtext=mtext.replace(old,' if(buffer){begKeepSurface(buffer);return buffer;}\n // The surface keeps its CPU mapping (the imported pages) until the import is freed.\n')
+old='  [gSurfaceImports setObject:buffer forKey:key];\n }\n return buffer;\n}\n'
+assert mtext.count(old)==1
+mtext=mtext.replace(old,'  [gSurfaceImports setObject:buffer forKey:key];\n  begKeepSurface(buffer);\n }\n return buffer;\n}\n')
+old='static void nbMirrorSync(NBTexture *t) {\n @synchronized(t) {\n'
+assert mtext.count(old)==1
+mtext=mtext.replace(old,'static int begThin(void);\nstatic void nbMirrorSync(NBTexture *t) {\n @synchronized(t) {\n'
+ '  if(t.mirrorFilled && begThin() && ((gCommits.load()+((uintptr_t)t>>6))&1))return;\n')
+if '#include <time.h>' not in mtext:mtext=mtext.replace('#include <atomic>\n','#include <atomic>\n#include <time.h>\n',1)
+
 frontend = mtext
 if a.quartzcore:
     implementation = '@implementation NBDeviceMethods\n'
