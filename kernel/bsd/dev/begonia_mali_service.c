@@ -461,6 +461,8 @@ uint64_t hakios_mali_enqueue(uint64_t chain,bool fragment) {
  return seq;
 }
 uint32_t hakios_mali_submit(uint64_t chain,bool fragment) {return (uint32_t)hakios_mali_enqueue(chain,fragment);}
+/* y264: the number of the last job handed to the service (the display driver waits for it: boot-arg fb_gpuseq=1). */
+uint64_t hakios_mali_submitted_seq(void) {return __atomic_load_n(&submitted,__ATOMIC_ACQUIRE);}
 /* Job `seq` done, and well, within `timeout` nanoseconds (0: is it done now). */
 bool hakios_mali_wait(uint64_t seq,uint64_t timeout) {
  if(!seq)return true;

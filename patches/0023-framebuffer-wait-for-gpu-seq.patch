@@ -1,0 +1,53 @@
+--- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp
++++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+@@ -215,6 +215,14 @@
+ 
+ #define SWAP_QUEUE              2                       /* frames that may wait for the panel at most (fb_queue) */
+ static TUNABLE(uint32_t, gQueue, "fb_queue", 2);
++/*
++ * begonia (y264), boot-arg fb_gpuseq=1: a swap is shown once the GPU has done every job that had been handed to it when
++ * SwapEnd came (the Mali service's own job numbers), not by a surface's own mark: a window server on Metal marks none, and
++ * waits for each frame itself (metal_swapwait) instead, which holds the next frame back until this one is drawn.
++ */
++static TUNABLE(uint32_t, gGPUSeq, "fb_gpuseq", 0);
++extern "C" uint64_t hakios_mali_submitted_seq(void);
++extern "C" bool hakios_mali_wait(uint64_t seq, uint64_t timeout);
+ static inline unsigned
+ swapQueue(void)
+ {
+@@ -465,6 +473,8 @@
+ 	uint8_t         fSwap[SWAP_QUEUE][SWAP_SIZE];   /* the swaps on their way to the panel (fb_queue), from fSwapFirst on */
+ 	MiniIOSurface * fSwapSurfaces[SWAP_QUEUE][SWAP_LAYERS]; /* ... their surfaces, held from SwapEnd on: their maker may let go of them */
+ 	unsigned        fSwapFirst, fSwapsWaiting;
++	uint64_t        fSwapSeq[SWAP_QUEUE];   /* begonia: the Mali service's last job number when each swap came (fb_gpuseq) */
++	uint64_t        fShowSeq;               /* ... of the swap show() is showing */
+ 	/*
+ 	 * ... and not whenever the GPU happens to be done, but on a beat of the refresh rate
+ 	 * (boot-arg fb_beat=0: at once): frames then follow each other at an even pace whatever
+@@ -1415,6 +1425,7 @@
+ 	unsigned slot = (fSwapFirst + fSwapsWaiting) % SWAP_QUEUE;
+ 
+ 	memcpy(fSwap[slot], swap, SWAP_SIZE);
++	fSwapSeq[slot] = gGPUSeq ? hakios_mali_submitted_seq() : 0;
+ 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+ 		uint32_t sid = swapWord(swap, SWAP_SURFACE(layer));
+ 
+@@ -1498,6 +1509,7 @@
+ 		}
+ 		IOLockLock(fSwapLock);
+ 		memcpy(swap, fSwap[fSwapFirst], SWAP_SIZE);
++		fShowSeq = fSwapSeq[fSwapFirst];
+ 		memcpy(surfaces, fSwapSurfaces[fSwapFirst], sizeof(surfaces));
+ 		IOLockUnlock(fSwapLock);
+ 		{
+@@ -1565,6 +1577,10 @@
+ 	MiniIOSurface * recorded = NULL;
+ 	bool report;
+ 
++	if (fShowSeq != 0 && !hakios_mali_wait(fShowSeq, (uint64_t) SWAP_GPU_MS * NSEC_PER_MSEC)) {
++		IOLog("MiniIOMobileFramebuffer: swap %u: the GPU jobs up to %llu are not done after %u ms; shown as it is\n",
++		    swapWord(swap, SWAP_ID), fShowSeq, SWAP_GPU_MS);
++	}
+ 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+ 		if (surfaces[layer] != NULL && !MiniIOSurfaceDrawn(surfaces[layer], SWAP_GPU_MS)) {
+ 			IOLog("MiniIOMobileFramebuffer: swap %u: the GPU is not done with surface %u after %u ms; shown as it is\n",
