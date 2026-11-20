@@ -184,3 +184,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y261 | 17:39 | kernel GPU servisi: SLOT1 TYPES (slot 1 zincirlerindeki işlerin tür dağılımı: compute/vertex/tiler), salt-okunur (`metal_tele=1`) | |
 | y262 | 17:43 | kernel GPU servisi: GAPS tanılaması (iş öncesi hazırlık ve işler arası döngü boşluğu), salt-okunur (`metal_tele=1`) | |
 | y263 | 17:47 | y262 tekrarı (y262'de imaj yazılmadı: 'test already executed'): kernel GAPS tanılaması (`metal_tele=1`) | |
+| y264 | 17:53 | KERNEL: framebuffer 0023 (swap, SwapEnd'deki son GPU iş numarasına kadar bekler) + frontend CPU beklemesi kapalı (metal_swapwait=0): CPU bir sonraki kareyi GPU çalışırken kodlar (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
