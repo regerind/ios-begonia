@@ -156,3 +156,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y234 | 14:27 | Adım 1: `metal_caps_off=supportsFamily:1001,supportsFamily:1002,supportsFamily:1003` (Apple1-3 ailesi kapalı); metal_tele=1 | |
 | y234 | 14:29 | Adım 1: `ca_env=CA_DISABLE_INPLACE_SHADERS` (in-place shader kapalı); metal_tele=1 | |
 | y235 | 14:33 | Adım 1: `ca_env=CA_FORCE_GENERIC_SHADERS` (generic shader zorla); metal_tele=1 | |
+| y236 | 14:37 | Adım 1: `ca_env=CA_DISABLE_TILE_SHADERS` (tile shader kapalı); metal_tele=1 | |
