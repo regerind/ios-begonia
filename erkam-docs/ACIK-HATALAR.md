@@ -192,7 +192,7 @@ Aşağısı araştırmanın kaydı.
     (`C:\begonia-private\sh\qc_from_key.py`): sıradan bir görüntü çizimi 278–337 gövde komutu; Metal'e eş cihaz
     profilinde bile 292. İçinde: hedefi okuyup gölgelendiricide karıştırma (framebuffer fetch, 2 renk eki), 32x32 gürültü
     dokusuyla titreme, yarım duyarlık dönüşümleri, doku koordinatını 1/256'ya yuvarlama. GL yolunun ES2 düzeyi
-    gölgelendiricileri bunların hiçbirini yapmıyor; fark buradan (piksel başına ~12 ns, 270 MHz'lik G76'da).
+    gölgelendiricileri bunların hiçbirini yapmıyor; fark buradan (piksel başına ~12 ns, 806 MHz'lik G76'da; GPU zaten 806 MHz, y225 logu).
   - Çeviricinin "Metal'le bit-kesin" öykünmesi bunun yalnızca ~%17'si; çalışma zamanı yaması 0004 ile kaldırıldı
     (y225: en uzun iş 31 → 24–28 ms).
 - **Sonraki adımlar (etki sırasıyla, hiçbiri yapılmadı):**
@@ -202,7 +202,7 @@ Aşağısı araştırmanın kaydı.
   2. PanVK JM'de çizim başı tanımlayıcı kopyalamayı GPU işi yerine CPU'da yapmak (karede ~23 ms'lik vertex/tiler
      süresinin çoğu; `bifrost/panvk_vX_meta_desc_copy.c`).
   3. Çeviricide kalan öykünmeler (koordinat yuvarlama, yarım duyarlık) için hızlı yol.
-  4. GPU saati (270 MHz) — kullanıcının onayı gerekir, bu oturumda dokunulmadı.
+  4. GPU saati: ZATEN 806 MHz (y225: MFGPLL 806000 kHz); 270 MHz notu eskiydi, yapılacak bir şey yok.
   Tahminim: 2–3 birlikte en fazla ~2 kat (15–20 kare/sn); GL yolunun hızına ancak 1 ile yaklaşılır. Bu bir tahmin,
   ölçüm değil.
 - **Yan bulgular:** çekimlerde zaman zaman renkli pikselli ince yatay çizgi (y212, y218) — çekim aktarımı mı, yerinde
@@ -210,3 +210,7 @@ Aşağısı araştırmanın kaydı.
   çökertiyor (MTLResourceOptions 0x80020 ve eksik `newFunctionWithName:constantValues:pipelineLibrary:error:`):
   `metal=1` + liste kullan. Boru hatları her açılışta yeniden derleniyor (önbellek isabeti 0): ilk açılan her yeni
   görünümde ~100 ms'lik takılmalar.
+
+  Güncelleme (y228-y229): adım 2 (descriptor kopyasını CPU'ya almak, PanVK 0014) denendi. Kopya çalışıyor (y229:
+  66 binden fazla, geri dönüş 0) ama hız değişmedi (6-7 kare / 5 sn). Descriptor kopya işleri darboğaz değil.
+  Kalan tek yol: CoreAnimation'ın framebuffer-fetch'siz boru hatlarını seçmesi (QuartzCore RE, adım 1).
