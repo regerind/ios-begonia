@@ -8,26 +8,38 @@ Experimental iOS 16.5 / XNU port for Xiaomi Redmi Note 8 Pro, MediaTek MT6785 (M
 
 ---
 
-## What works
+## Feature checklist
 
-- **Boot**: LK -> loader (`boot/`) -> XNU 8796 (HakiOS fork). The iOS 16.5 (20F66) system is mounted read-only from raw `userdata`, with a 16 GiB HFS+ data volume. Only `boot` and `misc` are ever flashed; the IMEI partitions are never written. The phone's own TWRP kernel is chained as the fallback.
-- **Display and GPU**: Mali-G76 MC4 through Mesa Panfrost (GLES path) and PanVK + metal2vulkan (Metal path, used by backboardd). Tear-free output (panel scan-line counter), no black boxes on text or emoji. backboardd's drawing thread runs on an A76 core.
-- **Input and panel**: touch (Novatek NT36672A), buttons, brightness (LM36273), flashlight.
-- **Sound**: earpiece (MT6359) and bottom speaker (TFA9874).
-- **Wi-Fi**: ported to MT6785 and connects to networks. Bluetooth only initializes (synthetic HCI responses).
-- **Apps**: Safari and YouTube run; YouTube is held near 30 fps by GPU load.
-- **Persistent boot**: a restart comes back to iOS. Power + Volume-Down at power-on reaches fastboot; Volume-Up at the logo chains the serial fallback.
+Detailed and current open problems: [docs/regerind-docs/ACIK-HATALAR.md](docs/regerind-docs/ACIK-HATALAR.md) (Turkish).
 
-## What does not work, or only partly
+### System
+- [x] XNU 8796 (HakiOS fork) boots on the MT6785 through the LK -> loader chain (`boot/`)
+- [x] iOS 16.5 (20F66) system mounted read-only from raw `userdata`, plus a 16 GiB HFS+ data volume
+- [x] Persistent boot: a restart comes back to iOS (`begonia_persist=1`); the phone's TWRP kernel is the fallback
+- [x] IMEI partitions untouched: only `boot` and `misc` are ever flashed
+- [ ] Stable window server: backboardd is sometimes killed by jetsam under memory pressure and restarts
 
-The current, detailed list is [docs/regerind-docs/ACIK-HATALAR.md](docs/regerind-docs/ACIK-HATALAR.md) (Turkish). In short:
+### Display and GPU
+- [x] Mali-G76 MC4 through Mesa Panfrost (GLES) and PanVK + metal2vulkan (Metal)
+- [x] backboardd draws through Metal; its drawing thread runs on an A76 core
+- [x] Tear-free output (panel scan-line counter), no black boxes on text or emoji
+- [x] Home-screen swipes about 46-48 fps (51-53 with SpringBoard's wallpaper hidden, as in p18)
+- [ ] Steady 50-60 fps everywhere (blurs and the emoji keyboard are GPU-bound; YouTube is held near 30 fps)
+- [ ] Hardware video decode (video is decoded in software)
 
-- **Modem, SIM, calls, mobile data**: no support (a CCCI/MD1 bridge to CommCenter is a large project). **Camera**: none.
-- **Apple services** (App Store etc.): the device identity is invented and not activated.
-- **Video** is decoded in software (hardware decode is not wired up).
-- **Smoothness**: the goal is 50-60 fps; heavy scenes (blurs, emoji keyboard) are GPU-bound.
-- **Stability**: backboardd is sometimes killed by jetsam under memory pressure, which restarts the window server; the Today and App Library panels have freezes; Freeform, wallpaper settings and the Safari history service have known problems.
-- **Jailbreaking** (Procursus, Sileo) does not work.
+### Input, sound, radios
+- [x] Touch (Novatek NT36672A), buttons, brightness (LM36273), flashlight
+- [x] Sound: earpiece (MT6359) and bottom speaker (TFA9874)
+- [x] Wi-Fi connects to networks (MT6785 port)
+- [ ] Bluetooth (the stack initializes with synthetic HCI responses only)
+- [ ] Modem, SIM, calls, mobile data (a CCCI/MD1 bridge to CommCenter is a large project)
+- [ ] Camera
+
+### Apps and services
+- [x] SpringBoard, Settings, Safari, YouTube
+- [ ] Apple services such as the App Store (the device identity is invented and not activated)
+- [ ] Today and App Library panels without freezes; Freeform, wallpaper settings, Safari history service
+- [ ] Jailbreaking (Procursus, Sileo)
 
 ---
 
