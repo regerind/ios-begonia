@@ -64,4 +64,5 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y146 | 05:0x | y145 + `vm_compressor=2` (bellekte sıkıştırıcı, takas yok: gerçek iPhone'ların modu); sarma testi | **Hiç "exit" notu yok: sarmalar boyunca backboardd, SpringBoard ve Safari hayatta kaldı** (y144/y145'te jetsam öldürüyordu). Kareler yarısı 24 ms (sarma yükü). Sıkıştırıcının ne kadar çalıştığı görülmedi |
 | y147 | 05:1x | y146 + profiler (her 3 sn sıkıştırıcı modu ve tuttuğu MB) | Sıkıştırıcı mod 2'de çalışıyor: YouTube başlayınca 33 → 169 MB sıkıştırılmış tutuldu; hiç "exit" yok. Kalıcı yapıldı: cihaz ağacında `/defaults kern.vm_compressor = 2` |
 | y148 | 05:2x | Boot argümanı olmadan (cihaz ağacından) sıkıştırıcı; sarma testi + profiler | Cihaz ağacından çalışıyor (mod 2), panik yok, hiç "exit" yok. Kareler yarısı 20–22 ms |
-| p8 | 05:3x | Kalıcı imaj adayı: p7 + sıkıştırıcı (cihaz ağacı). **Flaşlanmadı**; p7'nin yerine | SHA256 fd831ed1…1d3e |
+| p8 | 03:27 | Kalıcı imaj adayı: p7 + sıkıştırıcı (cihaz ağacı). **Flaşlanmadı**; p7'nin yerine | SHA256 fd831ed1…1d3e |
+| y149 | 03:3x | Bugün paneli: 76. sn ortadan sağa kaydırma (0,3 → 0,9, 350 ms), 80. sn çekim; sıkıştırıcı açık | (sonuç bekleniyor) |
