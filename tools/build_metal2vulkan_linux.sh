@@ -12,6 +12,13 @@ R=$(cd "$(dirname "$0")/.." && pwd); H=$R/upstream/hakios-xnu-kernel
 source "$H/xnu-env.sh"
 SDK=$THEOS/sdks/iPhoneOS16.5.sdk; CC=$H/xnu-deps/host/bin/xnu-clang
 export RUSTUP_HOME=$R/.tools/rust/rustup CARGO_HOME=$R/.tools/rust/cargo
+# (begonia's runtime patches come off first, last one first: the reference patch's own "already applied" check below
+# fails on a tree that has them on top, and the build stopped there on every build after the first)
+for p in $(ls -r "$R"/userland/metal/runtime-patches/*.patch 2>/dev/null); do
+	if git -C "$R/upstream/metal2vulkan" apply --reverse --check "$p" 2>/dev/null; then
+		git -C "$R/upstream/metal2vulkan" apply --reverse "$p"
+	fi
+done
 python3 "$R/tools/prepare_vulkan_userland.py" | tail -1
 # begonia's changes to the runtime itself (userland/metal/runtime-patches), on top of the pinned reference patch: each
 # applied once (already applied: left alone; neither: the build stops)
