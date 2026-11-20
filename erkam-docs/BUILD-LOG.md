@@ -177,3 +177,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y254 | 16:38 | 0008 (margin atlanır) seek betiğiyle kare hızı: y249/y250 ile aynı iş yükü (`metal_tele=1`) | Aynı seek betiği, y249'a karşı: 5 sn'de kare 38-55 → 52-63; GPU işi 1170 → 560-610 /5 sn; kuyruk derinliği 116 → ≤15; kuyrukta bekleme 52 → 15-27 ms; iş başına GPU 1.9-2.8 → 4.3-7.3 ms (daha az, daha uzun iş), GPU %52-59 meşgul. BeginRendering 2291 / encoder (R) 2133 ≈ 1.07. Çökme yalnız Safari.History. Kazanç ~%20-30, 45-60 kareye (GL yolu) uzak. |
 | y255 | 16:42 | 0008: Today görünümü resim doğrulaması (`metal_tele=1 fb_shot_step=12`) | |
 | y256 | 16:46 | 0008: YouTube resim + kare hızı doğrulaması (`metal_tele=1 fb_shot=80 fb_shot_n=1 fb_shot_step=12`) | |
+| y257 | 16:50 | 0008: Today görünümü resim doğrulaması tekrar (y255'te shot sayfa 2'yi yakaladı) (`metal_tele=1 fb_shot_step=12`) | |
