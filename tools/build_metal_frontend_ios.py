@@ -45,6 +45,10 @@ text=text.replace('tried = true;','tried = true;\n\t\tsetenv("PAN_I_WANT_A_BROKE
  '\t\t\tconst char *at = sysctlbyname("kern.bootargs", bootArgs, &bootSize, NULL, 0) == 0 ? strstr(bootArgs, "panvk_debug=") : NULL;\n'
  '\t\t\tif (at != NULL) {\n\t\t\t\tchar value[128]; size_t n = strcspn(at + 12, " ");\n'
  '\t\t\t\tif (n < sizeof(value)) { memcpy(value, at + 12, n); value[n] = 0; setenv("PANVK_DEBUG", value, 1); }\n\t\t\t}\n'
+ # (y289: boot-arg bifrost_debug=<options> -- the Bifrost compiler's own BIFROST_MESA_DEBUG, e.g. shaderdb: one statistics line
+ #  (instructions, tuples, clauses, cycles) per shader compiled, to say which of CoreAnimation's shaders the GPU time goes into)
+ '\t\t\t{ const char *bd = strstr(bootArgs, "bifrost_debug=");\n\t\t\t\tif (bd != NULL) { char value[64]; size_t n = strcspn(bd + 14, " ");\n'
+ '\t\t\t\t\tif (n < sizeof(value)) { memcpy(value, bd + 14, n); value[n] = 0; setenv("BIFROST_MESA_DEBUG", value, 1); } } }\n'
  # (y220: metal_contain=0 -- the translator emits no containment checks into shaders: bridge patch 0004)
  '\t\t\tif (strstr(bootArgs, "metal_contain=0") != NULL) setenv("NMB_UNCONTAINED", "1", 1);\n'
  # (y234: ca_env=NAME,NAME -- each CoreAnimation switch (CA_DISABLE_INPLACE_SHADERS ...) set to 1 in every process shown the device)
