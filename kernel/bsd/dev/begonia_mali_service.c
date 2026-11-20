@@ -57,6 +57,19 @@ static uint64_t s1_kind_jobs[3],s1_kind_us[3];
 /* y262: where the time outside a job goes: before it (the tables' flush, the locks) and between one job's end and the
  * next one's entry while more jobs were queued behind it (the thread's loop: the queue's lock, the wake-ups). */
 static uint64_t gap_pre,gap_pre_n,gap_between,gap_between_n,gap_last_end;
+/* y285: which process holds the wired memory (callback of proc_iterate: processes with 8 MB wired or 64 MB footprint) */
+extern void proc_iterate(unsigned int flags,int (*callout)(void *,void *),void *arg,int (*filterfn)(void *,void *),void *filterarg);
+extern void *proc_task(void *);extern int proc_pid(void *);extern char *proc_name_address(void *);
+extern uint64_t get_task_wired_mem(void *);extern uint64_t get_task_phys_footprint(void *);
+static char memp[360];static unsigned memn;
+static int mem_proc_cb(void *p,void *arg) {
+ (void)arg;
+ void *t=proc_task(p);
+ if(!t)return 0;
+ uint64_t w=get_task_wired_mem(t)>>20,f=get_task_phys_footprint(t)>>20;
+ if((w>=8||f>=64) && memn<sizeof memp-48)memn+=(unsigned)snprintf(memp+memn,sizeof memp-memn," %s[%d] w%lluM f%lluM",proc_name_address(p),proc_pid(p),w,f);
+ return 0;
+}
 static unsigned mem_min_free=~0u;   /* y282: the fewest free pages seen at any job's end since the last report */
 static char s1_sample[4][72];static unsigned s1_samples;   /* y268: the job types of some chains, in order */
 static uint64_t s1_types[16],s1_chain_len_sum;   /* y261: every job of slot 1's chains by type (4 compute, 5 vertex, 7 tiler, ...) */
@@ -310,7 +323,9 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
    /* kept with the notes (they outlive the 25 s of the log) when the memory got low: under 30000 pages (~470 MB) free */
    if(mem_min_free<30000)begonia_perf_note("MEM LOW: lowest free %u pages, now free %u active %u inactive %u wired %u",mem_min_free,
     vm_page_free_count,vm_page_active_count,vm_page_inactive_count,vm_page_wire_count);
-   mem_min_free=~0u; }
+   mem_min_free=~0u;
+   memn=0;memp[0]=0;proc_iterate(1,mem_proc_cb,NULL,NULL,NULL);
+   printf("BEGONIA MEM PROCS:%s\n",memp); }
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
