@@ -816,6 +816,41 @@ static NmbBuffer *pinnedNoCopyBuffer('''))
 tele_hooks.append((' nbConsole([NSString stringWithFormat:@"tele M mirror made',
  ' {uint64_t sd[3]={};nmb_surface_descriptor_counts(sd);nbConsole([NSString stringWithFormat:@"tele D surface descriptors made %llu refused %llu not-first-page %llu",(unsigned long long)sd[0],(unsigned long long)sd[1],(unsigned long long)sd[2]]);}\n'
  ' nbConsole([NSString stringWithFormat:@"tele M mirror made'))
+# begonia (y230): device capability experiments. metal_caps_log=1 prints (once each) every device query the runtime answers,
+# with its argument and answer; metal_caps_off=a,b:5 answers 0/NO for the selector a, and for b with the argument 5. Which query
+# makes CoreAnimation choose framebuffer-fetch pipelines (fc_framebuffer_fetch) is found with these two.
+tele_hooks.append(('static std::unordered_map<SEL,uint64_t> gAnswers;\n',
+ r"""static std::unordered_map<SEL,uint64_t> gAnswers;
+static bool nbBootArg(const char *key,std::string &value) {
+ char args[1024]="";size_t size=sizeof(args)-1;
+ if(sysctlbyname("kern.bootargs",args,&size,NULL,0)!=0)return false;
+ const char *at=strstr(args,key);if(!at)return false;
+ at+=strlen(key);value.assign(at,strcspn(at," "));return true;
+}
+static bool nbCapsLogOn() {static int on=-1;if(on<0){std::string v;on=nbBootArg("metal_caps_log=",v)&&v=="1";}return on;}
+static bool nbCapOff(const char *name,NSUInteger arg,bool hasArg) {
+ static std::string list;static int got=0;
+ if(!got){std::string v;if(nbBootArg("metal_caps_off=",v))list=","+v+",";got=1;}
+ if(list.empty())return false;
+ if(list.find(std::string(",")+name+",")!=std::string::npos)return true;
+ return hasArg && list.find(std::string(",")+name+":"+std::to_string((unsigned long)arg)+",")!=std::string::npos;
+}
+static void nbCapLog(const char *name,NSUInteger arg,bool hasArg,uint64_t value) {
+ if(!nbCapsLogOn())return;
+ static std::mutex hold;static std::unordered_map<std::string,int> seen;
+ std::string key=std::string(name)+":"+std::to_string((unsigned long)arg);
+ std::lock_guard<std::mutex> guard(hold);
+ if(!seen.emplace(key,1).second)return;
+ nbConsole([NSString stringWithFormat:@"caps %s%s%lu=%llu %s",name,hasArg?" ":" /",(unsigned long)arg,(unsigned long long)value,getprogname()]);
+}
+"""))
+tele_hooks.append(('static NSUInteger countAnswer(id,SEL cmd) {return (NSUInteger)gAnswers.at(cmd);}\nstatic BOOL flagAnswer(id,SEL cmd) {return gAnswers.at(cmd)!=0;}\n',
+ 'static NSUInteger countAnswer(id,SEL cmd) {nbCapLog(sel_getName(cmd),0,false,gAnswers.at(cmd));return (NSUInteger)gAnswers.at(cmd);}\n'
+ 'static BOOL flagAnswer(id,SEL cmd) {nbCapLog(sel_getName(cmd),0,false,gAnswers.at(cmd));return gAnswers.at(cmd)!=0;}\n'))
+tele_hooks.append((' kept[cmd][arg]=value;\n return value;\n',
+ ' if(nbCapOff(sel_getName(cmd),arg,true))value=0;\n nbCapLog(sel_getName(cmd),arg,true,value);\n kept[cmd][arg]=value;\n return value;\n'))
+tele_hooks.append(('   if(!strcmp(name,"supportsExtendedXR10Formats"))value=0;\n',
+ '   if(!strcmp(name,"supportsExtendedXR10Formats"))value=0;\n   if(nbCapOff(name,0,false))value=0;\n   if(nbCapsLogOn())nbConsole([NSString stringWithFormat:@"caps installed %s=%llu",name,(unsigned long long)value]);\n'))
 for old,new in tele_hooks:
  assert mtext.count(old)==1,'telemetry hook does not fit: '+old[:90]
  mtext=mtext.replace(old,new)
