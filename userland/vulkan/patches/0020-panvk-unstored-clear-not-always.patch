@@ -1,0 +1,54 @@
+--- a/src/panfrost/vulkan/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#include <time.h>
+ #include "panvk_buffer.h"
+ #include "panvk_cmd_buffer.h"
+ #include "panvk_device_memory.h"
+@@ -93,6 +94,33 @@
+    return res;
+ }
+ 
++/* begonia: a colour attachment that is cleared but not stored (CoreAnimation hangs a second, memoryless one on every
++ * pass and no pipeline writes it) asked for its clear on every tile ("always"), and with that the pass's whole frame
++ * shader ran on every tile: the first attachment's load -- a read of the whole 1080x2340 surface -- even where no
++ * triangle falls. Nobody reads what is not stored, so such an attachment no longer asks; the load then runs on the
++ * tiles the pass draws in (INTERSECT), the others are neither read nor written.
++ * PANVK_INTERSECT: on. PANVK_INTERSECT_SLICES: on in the odd 5-second slices of the time since boot (a measurement). */
++static bool
++begonia_clear_always(const VkRenderingAttachmentInfo *att)
++{
++   static int mode = -1;
++   if (mode < 0)
++      mode = getenv("PANVK_INTERSECT_SLICES") ? 2 : getenv("PANVK_INTERSECT") ? 1 : 0;
++   if (mode == 2) {
++      struct timespec ts;
++#ifdef __APPLE__
++      clock_gettime(CLOCK_UPTIME_RAW, &ts);
++#else
++      clock_gettime(CLOCK_MONOTONIC, &ts);
++#endif
++      if (!((ts.tv_sec / 5) & 1))
++         return true;
++   } else if (!mode) {
++      return true;
++   }
++   return att->storeOp == VK_ATTACHMENT_STORE_OP_STORE;
++}
++
+ static bool
+ avoid_direct_resolve_to(const struct pan_image *img)
+ {
+@@ -165,7 +193,8 @@
+    render->fb.load.rts[index] = (struct pan_fb_load_target) {
+       .in_bounds_load = get_att_fb_load_op(att),
+       .border_load = PAN_FB_LOAD_IMAGE,
+-      .always = att->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR,
++      .always = att->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR &&
++                begonia_clear_always(att),
+       .msaa = ms2ss ? PAN_FB_MSAA_COPY_SINGLE
+                     : PAN_FB_MSAA_COPY_ALL,
+       .iview = ms2ss ? &iview_ss->pview : &iview->pview,

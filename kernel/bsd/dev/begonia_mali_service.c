@@ -101,17 +101,22 @@ static int wait(unsigned o,uint32_t mask,uint32_t value) {
  * nap's wake-up may cost more than such a job. Boot-arg begonia_gpu_spin=N: N quick looks (10 us apart) before the
  * naps (10 as before), to measure what the naps cost the queue.
  */
+/* y293: boot-arg begonia_slices=1: the 5-second statistics follow slices of the time since boot (5 s each, numbered), and
+ * experiments switch by the slice's number -- here bit 1: the nap of the wait for a job 20 us instead of 50. The
+ * programs' own experiments read the same clock (PanVK: bit 0). */
+static uint32_t slices_on;
+static unsigned slice_now(void) {uint64_t ns;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return (unsigned)(ns/5000000000ull);}
 static uint32_t spin_looks=10;
 static int wait_job(unsigned o,uint32_t mask,uint32_t value) {
  static int asked;
- if(!asked){asked=1;(void)PE_parse_boot_argn("begonia_gpu_spin",&spin_looks,sizeof spin_looks);if(spin_looks>2000)spin_looks=2000;}
+ if(!asked){asked=1;(void)PE_parse_boot_argn("begonia_slices",&slices_on,sizeof slices_on);(void)PE_parse_boot_argn("begonia_gpu_spin",&spin_looks,sizeof spin_looks);if(spin_looks>2000)spin_looks=2000;}
  for(unsigned i=0;i<spin_looks;i++) {if((rd(o)&mask)==value)return 0;delay(10);}
  uint64_t deadline;
  nanoseconds_to_absolutetime(100*NSEC_PER_MSEC,&deadline);
  deadline+=mach_absolute_time();
  while(mach_absolute_time()<deadline) {
   if((rd(o)&mask)==value)return 0;
-  assert_wait_timeout((event_t)&wait_job,THREAD_UNINT,50,NSEC_PER_USEC);
+  assert_wait_timeout((event_t)&wait_job,THREAD_UNINT,(slices_on && (slice_now()&2))?20:50,NSEC_PER_USEC);
   thread_block(THREAD_CONTINUE_NULL);
  }
  return (rd(o)&mask)==value?0:-1;
@@ -280,15 +285,28 @@ void hakios_mali_tag(uint64_t address,uint32_t kind,uint32_t width,uint32_t heig
  (void)address;(void)kind;(void)width;(void)height;(void)row;(void)format;(void)offset;
 }
 /*
- * y292: the GPU's own counters (PRFCNT), boot-arg begonia_prfcnt=1. Where a pixel job's time goes is not seen from
- * outside: cycles its cores execute, quads, texture stalls, beats read from and written to memory outside the GPU's
- * caches. A page of the kernel is mapped for the GPU; between jobs (the GPU idle, this thread alone at its registers),
- * at most five times a second, the counters are sampled into it, added up here and cleared. Said with the 5-second
- * statistics: blocks J (job manager), T (tiler), M (MMU and L2), S (the shader cores, summed), 64 words each, the first
- * four a header. Three samples that never complete turn it off.
+ * y292, y293: the GPU's own counters (PRFCNT), boot-arg begonia_prfcnt=1. Where a pixel job's time goes is not seen
+ * from outside: cycles its cores execute, quads, texture operations, beats read from and written to memory outside
+ * the GPU's caches. Pages of the kernel are mapped for the GPU; between jobs (the GPU idle, this thread alone at its
+ * registers), at most five times a second, the counters are sampled into them, added up here and cleared. y292 mapped
+ * 4 KB and its first sample faulted one page further (a translation fault on a write, the job after it timed out):
+ * 16 KB now, every block of 64 words kept apart (0 job manager, 1 tiler, 2 MMU and L2, the rest shader cores, summed
+ * as S), and a sample that faults resets the GPU at once and is the last.
+ * What must outlive the log's last seconds is kept in a text of its own and said whole with every report.
  */
+#define PRF_BLOCKS 20
 static uint32_t prf_on;static vm_offset_t prf_page;static uint64_t prf_phys,prf_va,prf_last;static int prf_state;
-static uint64_t prf_sum[4][64];static uint32_t prf_samples,prf_bad;
+static uint64_t prf_sum[PRF_BLOCKS][64];static uint32_t prf_samples,prf_bad,prf_fault_status,prf_fault_at;
+static char keep_text[8000];static unsigned keep_frames,stat_slice;
+static void keep(const char *format,...) __printflike(1,2);
+static void keep(const char *format,...) {
+ char line[420];va_list args;va_start(args,format);vsnprintf(line,sizeof line,format,args);va_end(args);
+ strlcat(keep_text,line,sizeof keep_text);strlcat(keep_text," | ",sizeof keep_text);
+}
+static void keep_say(void) {
+ size_t length=strlen(keep_text);
+ for(size_t at=0;at<length;at+=200)printf("BEGONIA KEEP %u: %.200s\n",(unsigned)(at/200),keep_text+at);
+}
 static void prf_program(void) {
  wr(0x68,0);
  wr(0x60,(uint32_t)prf_va);wr(0x64,(uint32_t)(prf_va>>32));
@@ -301,17 +319,18 @@ static void prf_start(void) {
  if(!PE_parse_boot_argn("begonia_prfcnt",&prf_on,sizeof prf_on) || !prf_on)return;
  if(kmem_alloc(kernel_map,&prf_page,PAGE_SIZE,KMA_KOBJECT|KMA_ZERO|KMA_DATA,VM_KERN_MEMORY_DIAG)!=KERN_SUCCESS)return;
  prf_phys=kvtophys(prf_page);
- if(prf_phys<0x100000000ull || prf_phys>=0x1b7e00000ull){begonia_perf_note("BEGONIA GPU PRFCNT: page at %llx, not used",prf_phys);return;}
- prf_va=mali_va_alloc(&addresses,4096,false);
- if(!prf_va)return;
+ if(PAGE_SIZE<16384 || prf_phys<0x100000000ull || prf_phys>=0x1b7e00000ull-16384){keep("PRF page at %llx, not used",prf_phys);return;}
+ prf_va=mali_va_alloc(&addresses,16384,false);
+ if(!prf_va){keep("PRF no address");return;}
+ int err=0;
  lck_mtx_lock(vm_lock);
- int err=beg_gpu_vm_map(&space,prf_va,prf_phys);
+ for(unsigned k=0;k<4 && !err;k++)err=beg_gpu_vm_map(&space,prf_va+4096*k,prf_phys+4096*k);
  flush_tables();
  lck_mtx_unlock(vm_lock);
- if(err){begonia_perf_note("BEGONIA GPU PRFCNT: map failed %d",err);return;}
+ if(err){keep("PRF map failed %d",err);return;}
  prf_program();
  prf_state=1;
- begonia_perf_note("BEGONIA GPU PRFCNT: on, va %llx pa %llx",prf_va,prf_phys);
+ keep("PRF on va %llx pa %llx",prf_va,prf_phys);
 }
 static void prf_sample(void) {
  if(!prf_state)prf_start();
@@ -322,51 +341,90 @@ static void prf_sample(void) {
  prf_last=now;
  if((rd(0x68)&15)!=1) {                          /* after a reset of the GPU */
   static unsigned again;
-  if(++again>3){prf_state=-1;begonia_perf_note("BEGONIA GPU PRFCNT: the GPU was reset %u times; off",again);return;}
+  if(++again>3){prf_state=-3;keep("PRF off: the GPU was reset %u times",again);return;}
   prf_program();return;
  }
- FlushPoC_DcacheRegion(prf_page,4096);
+ FlushPoC_DcacheRegion(prf_page,16384);
  wr(0x24,1u<<16);
  wr(0x30,4);
  unsigned i;
- for(i=0;i<2000;i++){if(rd(0x20)&(1u<<16))break;delay(5);}
+ for(i=0;i<2000;i++){if((rd(0x20)&(1u<<16)) || rd(0x241c))break;delay(5);}
  wr(0x24,1u<<16);
- if(rd(0x241c)) {                                /* the sample itself faulted: never again */
-  prf_state=-1;begonia_perf_note("BEGONIA GPU PRFCNT: sample faulted, mmu irq %x at %x; off",rd(0x241c),rd(0x2420));
-  wr(0x68,0);wr(0x2004,0xffffffff);return;
- }
- if(i==2000) {
-  if(++prf_bad>=3){prf_state=-1;wr(0x68,0);begonia_perf_note("BEGONIA GPU PRFCNT: a sample never completed; off");}
+ if(rd(0x241c)) {                                /* the sample itself faulted: the GPU anew, and never again */
+  prf_fault_status=rd(0x241c);prf_fault_at=rd(0x2420);prf_state=-2;
+  keep("PRF off: sample faulted %x at %x (va %llx)",prf_fault_status,prf_fault_at,prf_va);
+  wr(0x68,0);
+  if(reset() || init_gpu_hardware())printf("BEGONIA GPU SERVICE: hardware recovery failed\n");
   return;
  }
- FlushPoC_DcacheRegion(prf_page,4096);
+ if(i==2000) {
+  if(++prf_bad>=3){prf_state=-4;wr(0x68,0);keep("PRF off: a sample never completed");}
+  return;
+ }
+ FlushPoC_DcacheRegion(prf_page,16384);
  const volatile uint32_t *w=(const volatile uint32_t *)prf_page;
- for(unsigned b=0;b<7;b++)for(unsigned c=0;c<64;c++)prf_sum[b<3?b:3][c]+=w[b*64+c];
+ for(unsigned b=0;b<PRF_BLOCKS;b++)for(unsigned c=0;c<64;c++)prf_sum[b][c]+=w[b*64+c];
  prf_samples++;
  wr(0x30,3);
 }
-static void prf_say(void) {
+static void prf_say(unsigned slice) {
+ printf("BEGONIA PRF STATE: %d, samples %u, bad %u, fault %x at %x, va %llx\n",prf_state,prf_samples,prf_bad,prf_fault_status,
+  prf_fault_at,prf_va);
  if(prf_state!=1 || !prf_samples)return;
+ static uint64_t s[64];uint64_t present=0;
+ for(unsigned c=0;c<64;c++)s[c]=0;
+ for(unsigned b=0;b<PRF_BLOCKS;b++) {
+  if(prf_sum[b][2])present|=1ull<<b;
+  if(b>=3)for(unsigned c=0;c<64;c++)s[c]+=prf_sum[b][c];
+ }
+ const uint64_t *j=prf_sum[0],*t=prf_sum[1],*m=prf_sum[2];
+ /* kept, in millions (>>20) but the read-response classes and the cache flushes in thousands (>>10): GPU active, JS0/JS1
+  * active, cache flushes; tiler active; fragment active, quads, core active, instructions, texture filter operations,
+  * load/store reads; beats read fetch-external, load/store-external, texture, texture-external, written tile buffer; L2
+  * external read beats, AR stalls, responses by latency class, write beats, W stalls */
+ keep("P s%u n%u blk%llx g%llu j%llu/%llu c%llu ta%llu f%llu q%llu x%llu i%llu t%llu l%llu F%llu L%llu T%llu/%llu W%llu R%llu a%llu h%llu/%llu/%llu/%llu/%llu w%llu ws%llu",
+  slice,prf_samples,present,j[6]>>20,j[10]>>20,j[18]>>20,j[63]>>10,t[4]>>20,s[4]>>20,s[11]>>20,s[26]>>20,s[28]>>20,s[43]>>20,
+  (s[44]+s[45])>>20,s[55]>>20,s[57]>>20,s[58]>>20,s[59]>>20,s[62]>>20,m[32]>>20,m[33]>>20,m[37]>>10,m[38]>>10,m[39]>>10,
+  m[40]>>10,m[41]>>10,m[47]>>20,m[48]>>20);
  static const char names[4]={'J','T','M','S'};
  for(unsigned b=0;b<4;b++)for(unsigned c=4;c<64;c+=12) {
-  const uint64_t *v=prf_sum[b]+c;
-  printf("BEGONIA PRF %c%02u n%u: %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",names[b],c,prf_samples,
+  const uint64_t *v=(b<3?prf_sum[b]:s)+c;
+  printf("BEGONIA PRF %c%02u s%u: %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",names[b],c,slice,
    v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10],v[11]);
  }
- { const uint64_t *j=prf_sum[0],*m=prf_sum[2],*c=prf_sum[3];static unsigned n;
-   /* kept with the notes, in millions (the read-response classes in thousands): GPU active, JS0/JS1 active, cache flushes(k);
-    * fragment active, quads, core active, instructions, texture filter ops, load/store reads; beats read fetch-ext,
-    * load/store-ext, texture, texture-ext, written tile buffer; L2 ext read beats, AR stall, responses by latency, write beats, W stall */
-   begonia_perf_note("P%u g%llu j%llu/%llu c%llu f%llu q%llu x%llu i%llu t%llu l%llu F%llu L%llu T%llu/%llu W%llu R%llu a%llu h%llu/%llu/%llu/%llu/%llu w%llu s%llu",
-    n++,j[6]>>20,j[10]>>20,j[18]>>20,j[63]>>10,c[4]>>20,c[11]>>20,c[26]>>20,c[28]>>20,c[43]>>20,(c[44]+c[45])>>20,c[55]>>20,c[57]>>20,
-    c[58]>>20,c[59]>>20,c[62]>>20,m[32]>>20,m[33]>>20,m[37]>>10,m[38]>>10,m[39]>>10,m[40]>>10,m[41]>>10,m[47]>>20,m[48]>>20); }
- { /* kept too: GPU address space live and the window server's (MB), pages free and wired */
-   extern unsigned int vm_page_free_count,vm_page_wire_count;long long bb=0;
-   for(int i=0;i<8;i++)if(!strncmp(va_proc[i].name,"backboardd",10))bb=va_proc[i].net>>20;
-   begonia_perf_note("V%lld b%lld f%u w%u",(long long)(va_live>>20),bb,vm_page_free_count,vm_page_wire_count); }
- printf("BEGONIA PRF EN: J %llx T %llx M %llx S %llx\n",prf_sum[0][2],prf_sum[1][2],prf_sum[2][2],prf_sum[3][2]);
- for(unsigned b=0;b<4;b++)for(unsigned c=0;c<64;c++)prf_sum[b][c]=0;
+ for(unsigned b=0;b<PRF_BLOCKS;b++)for(unsigned c=0;c<64;c++)prf_sum[b][c]=0;
  prf_samples=0;
+}
+/* y293: the pixel jobs by what they are: the target's size (F the screen, O the window server's own 1082x2244, M other
+ * big ones, S small), the pass's load (n none, a a shader on every tile, i on the tiles its triangles touch) and the
+ * target's layout (u tiled, l linear), from the job's framebuffer descriptor; count and milliseconds. Kept. */
+static struct {uint32_t n;uint64_t us;} fclass[24];
+static void frag_class(uint64_t chain,uint64_t took) {
+ uint32_t w0=0,w8=0,w33=0;uint64_t p;
+ lck_mtx_lock(vm_lock);
+ uint64_t at=beg_gpu_vm_translate(&space,chain+40);
+ uint64_t fbd=at?(ml_phys_read_word_64(at)|((uint64_t)ml_phys_read_word_64(at+4)<<32)):0;
+ fbd&=~63ull;
+ if(fbd) {
+  if((p=beg_gpu_vm_translate(&space,fbd)))w0=ml_phys_read_word_64(p);
+  if((p=beg_gpu_vm_translate(&space,fbd+32)))w8=ml_phys_read_word_64(p);
+  if((p=beg_gpu_vm_translate(&space,fbd+132)))w33=ml_phys_read_word_64(p);
+ }
+ lck_mtx_unlock(vm_lock);
+ if(!w8)return;
+ unsigned w=(w8&0xffff)+1,h=(w8>>16)+1;
+ unsigned size=(w>=1080 && h>=2300)?0:(w>=1080 && h>=2200)?1:(w*h>=400000)?2:3;
+ unsigned pre=(w0&7)==1?1:(w0&7)==2?2:0,fmt=((w33>>8)&15)==2?1:0;
+ uint64_t us;absolutetime_to_nanoseconds(took,&us);us/=1000;
+ fclass[size*6+pre*2+fmt].n++;fclass[size*6+pre*2+fmt].us+=us;
+}
+static void frag_say(unsigned slice) {
+ char line[400];int o=snprintf(line,sizeof line,"F s%u",slice);
+ for(unsigned k=0;k<24;k++)if(fclass[k].n && o<(int)sizeof(line)-30) {
+  o+=snprintf(line+o,sizeof(line)-o," %c%c%c:%u/%llu","FOMS"[k/6],"nai"[(k%6)/2],"ul"[k%2],fclass[k].n,fclass[k].us/1000);
+  fclass[k].n=0;fclass[k].us=0;
+ }
+ keep("%s",line);
 }
 static void say_submitters(void);
 static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queued,unsigned depth) {
@@ -384,7 +442,8 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
  if(depth>stat_deepest)stat_deepest=depth;
  if(!stat_since)stat_since=began;
  absolutetime_to_nanoseconds(ended-stat_since,&ns);
- if(ns<5000000000ull)return;
+ if(!slices_on){if(ns<5000000000ull)return;}
+ else {static unsigned last;unsigned now=slice_now();if(!last)last=now;if(now==last)return;stat_slice=last;last=now;}
  uint64_t busy,longest,waited;
  absolutetime_to_nanoseconds(stat_busy,&busy);absolutetime_to_nanoseconds(stat_longest,&longest);
  absolutetime_to_nanoseconds(stat_waited,&waited);
@@ -441,7 +500,12 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
    extern unsigned int vm_page_pageable_internal_count,vm_page_pageable_external_count;extern int32_t c_segment_pages_compressed;
    printf("BEGONIA MEM KINDS: pageable anonymous %u, file-backed %u, held compressed %d (pages of 16 KB)\n",
     vm_page_pageable_internal_count,vm_page_pageable_external_count,c_segment_pages_compressed); }
- prf_say();
+ { extern unsigned int vm_page_free_count,vm_page_wire_count;long long bb=0;
+   for(int i=0;i<8;i++)if(!strncmp(va_proc[i].name,"backboardd",10))bb=va_proc[i].net>>20;
+   keep("R s%u %llums fr%u j%llu f%llu busy%llu V%lld b%lld free%u wired%u",stat_slice,ns/1000000,keep_frames,stat_jobs,
+    stat_fragment,busy*100/ns,(long long)(va_live>>20),bb,vm_page_free_count,vm_page_wire_count);
+   keep_frames=0; }
+ frag_say(stat_slice);prf_say(stat_slice);keep_say();
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
@@ -520,7 +584,7 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
    printf("BEGONIA GPU SERVICE: hardware recovery failed\n");
   }
  }
- { uint64_t ended=mach_absolute_time();gap_last_end=ended;{extern unsigned int vm_page_free_count;unsigned f=vm_page_free_count;if(f<mem_min_free)mem_min_free=f;}if(fragment && success)note_slow(chain,ended-began);
+ { uint64_t ended=mach_absolute_time();gap_last_end=ended;{extern unsigned int vm_page_free_count;unsigned f=vm_page_free_count;if(f<mem_min_free)mem_min_free=f;}if(fragment && success){note_slow(chain,ended-began);frag_class(chain,ended-began);}
    if(!fragment && success){unsigned k=chain_kind(chain);uint64_t us;absolutetime_to_nanoseconds(ended-began,&us);s1_kind_jobs[k]++;s1_kind_us[k]+=us/1000;}
    job_stats(began,ended,fragment,queued,depth); }
  prf_sample();
@@ -610,6 +674,7 @@ uint64_t hakios_mali_submitted_seq(void) {return __atomic_load_n(&submitted,__AT
 /* Job `seq` done, and well, within `timeout` nanoseconds (0: is it done now). */
 bool hakios_mali_wait(uint64_t seq,uint64_t timeout) {
  if(!seq)return true;
+ if(!proc_selfpid())keep_frames++;   /* y293: the display driver waits here: a frame shown */
  if(!hakios_mali_ready())return false;
  if(async_jobs && timeout && seq>__atomic_load_n(&completed,__ATOMIC_ACQUIRE)) {
   uint64_t interval,deadline;
