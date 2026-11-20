@@ -297,7 +297,7 @@ void hakios_mali_tag(uint64_t address,uint32_t kind,uint32_t width,uint32_t heig
 #define PRF_BLOCKS 20
 static uint32_t prf_on;static vm_offset_t prf_page;static uint64_t prf_phys,prf_va,prf_last;static int prf_state;
 static uint64_t prf_sum[PRF_BLOCKS][64];static uint32_t prf_samples,prf_bad,prf_fault_status,prf_fault_at;
-static char keep_text[8000];static unsigned keep_frames,stat_slice;
+static char keep_text[16000];static unsigned keep_frames,stat_slice;
 static void keep(const char *format,...) __printflike(1,2);
 static void keep(const char *format,...) {
  char line[420];va_list args;va_start(args,format);vsnprintf(line,sizeof line,format,args);va_end(args);
