@@ -1,6 +1,6 @@
 # Why the UI ran at ~4 FPS, and the road to 60
 
-Analysis of 2026-11-18, from the previous owner's records (STATE.md, PROCESS.md, git history)
+Analysis of 2026-11-18, from the previous owner's records (history/STATE.md, PROCESS.md, git history)
 and the pinned HakiOS sources. Figures are theirs, from checksum-validated hardware captures
 unless marked otherwise.
 
@@ -47,5 +47,5 @@ render server in backboardd plus the EAGL bridge — running on slow cores at lo
 6. **Zero-copy scanout**: point OVL layer 1 at the presented IOSurface instead of copying 10 MB
    per frame on the CPU.
 
-Unverified claims in STATE.md v83–v100 (60 FPS, `anim_max`, `dl_max`, the lost `eagl.c` edits)
+Unverified claims in history/STATE.md v83–v100 (60 FPS, `anim_max`, `dl_max`, the lost `eagl.c` edits)
 are not relied on here.

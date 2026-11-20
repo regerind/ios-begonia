@@ -18,4 +18,4 @@ Redmi Note 8 Pro (begonia, MT6785) üzerinde iOS 16 portunun takip defteri. Kod 
 - **"Çözüldü" kesin değildir.** Belirtiyi gizleyip asıl sorunu bırakmış olabiliriz. Bu yüzden her çözülen hatada
   "nasıl doğrulandı" ve "şüphe" yazılır. Doğrulama yalnızca log olabilir, ya da senin elle denemen olabilir; hangisi
   olduğu yazılır. Bir hata geri dönerse `ACIK-HATALAR.md`'ye geri taşınır ve eski çözümün neden yetmediği not edilir.
-- Ajan (Claude) bu kuralları repodaki [CLAUDE.md](../CLAUDE.md) üzerinden de alır.
+- Ajan (Claude) bu kuralları repodaki [CLAUDE.md](../../CLAUDE.md) üzerinden de alır.

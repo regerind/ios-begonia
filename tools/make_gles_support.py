@@ -37,7 +37,7 @@ if a.metal_client:
  # The shader libraries of the applications shown the device: the system image has no .metallib at all
  # (select-system.py skips them), so they come along here, ext/metallib/<bundle identifier>/, where the plug-in looks
  # when a bundle has none (userland/metal/frontend_reflection.mm.inc). Taken from sysimage/metallibs/, every
- # .metallib of the firmware's root filesystem, extracted from the IPSW with 7z (docs/SESSION-2026-11-19d.md).
+ # .metallib of the firmware's root filesystem, extracted from the IPSW with 7z (docs/history/SESSION-2026-11-19d.md).
  import plistlib
  sysimage=root/'upstream/hakios-xnu-kernel/sysimage'
  for app in sorted((sysimage/'rootfs/private/var/staged_system_apps').glob('*.app'))+sorted((sysimage/'rootfs/Applications').glob('*.app')):

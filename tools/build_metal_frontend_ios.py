@@ -651,7 +651,7 @@ mtext=mtext.replace('#define NBLOG(','static std::atomic<unsigned long long> gTe
 # begonia (y204): boot-arg metal_tele=1 -- the window server's (backboardd's) own counters on the console every 5 s:
 # the telemetry table's rows (commits, pipelines, times, waits, surfaces, the runtime's VkPipelines and caches), how
 # many render pipelines were asked for and how many of them were different ones (CoreAnimation asking for the same
-# pipeline again and again is hypothesis A of handoff/FABLE2-BACKBOARDD-METAL.md), each new one's names, and the time
+# pipeline again and again is hypothesis A of docs/history/FABLE2-BACKBOARDD-METAL.md), each new one's names, and the time
 # spent inside the command buffers' scheduled and completed handlers (hypothesis B). Measurement only.
 tele_hooks=[
  ('static void completed(void *context);\nstatic void scheduled(void *context);',

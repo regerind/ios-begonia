@@ -1,5 +1,7 @@
 # iOS 16 on Redmi Note 8 Pro (begonia)
 
+> Fork of [tuxymuxy/ios-begonia](https://github.com/tuxymuxy/ios-begonia). The `android-userdata-port` branch carries this fork's work (Metal path, persistent images p1-p18).
+
 Experimental iOS 16.5 / XNU port for Xiaomi Redmi Note 8 Pro, MediaTek MT6785 (MT6359 PMIC).
 
 **Status**: This is research code demonstrating that Apple's iOS kernel can boot on this hardware. The physical phone reaches the SpringBoard home screen (confirmed by owner photographs), but the UI is extremely slow and most features are non-functional. **This is not a usable daily driver.**
@@ -78,7 +80,7 @@ cc -std=c11 -Wall -Wextra -Werror tests/extent_policy.c -o /tmp/test-extents
 /tmp/test-extents
 ```
 
-Build steps are documented in [docs/PROCESS.md](docs/PROCESS.md).
+To build and flash the latest persistent image (p18) from scratch, follow [docs/BUILD-FROM-SCRATCH.md](docs/BUILD-FROM-SCRATCH.md). The development log is [docs/PROCESS.md](docs/PROCESS.md); all documentation is indexed in [docs/README.md](docs/README.md).
 
 ---
 

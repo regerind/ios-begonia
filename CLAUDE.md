@@ -1,18 +1,18 @@
 # Instructions for agents working on this repo
 
-iOS 16 on the Redmi Note 8 Pro (begonia, MT6785). The owner keeps the project's notebook in `erkam-docs/` (Turkish).
+iOS 16 on the Redmi Note 8 Pro (begonia, MT6785). The owner keeps the project's notebook in `docs/erkam-docs/` (Turkish).
 
 ## Log every build, then the bugs
-1. **Before or as a build starts** (any tag: x, y, p...), add its row to `erkam-docs/BUILD-LOG.md`: tag, time, what
+1. **Before or as a build starts** (any tag: x, y, p...), add its row to `docs/erkam-docs/BUILD-LOG.md`: tag, time, what
    changed. When the session's log is read (or the user reports), fill in the result: what the log showed and what the
    user said, with numbers where there are some.
 2. **Then update the bugs:**
-   - A new or still-present problem goes to `erkam-docs/ACIK-HATALAR.md`: symptom, evidence, suspicion, status.
-   - A problem that is now gone moves to `erkam-docs/COZULEN-HATALAR.md`, with the build, how it was fixed, how it was
+   - A new or still-present problem goes to `docs/erkam-docs/ACIK-HATALAR.md`: symptom, evidence, suspicion, status.
+   - A problem that is now gone moves to `docs/erkam-docs/COZULEN-HATALAR.md`, with the build, how it was fixed, how it was
      verified (user / log / both) and what doubt remains. A "fix" may only hide the symptom, so say so when that is
      possible.
    - If a fixed bug comes back, move it back to the open list and note why the old fix was not enough.
-3. Big topics (root cause and fix) go in `erkam-docs/NASIL-COZDUK.md`; the work queue is `erkam-docs/YAPILACAKLAR.md`.
+3. Big topics (root cause and fix) go in `docs/erkam-docs/NASIL-COZDUK.md`; the work queue is `docs/erkam-docs/YAPILACAKLAR.md`.
 4. Write these files in Turkish, as the owner does.
 
 ## Safety rules (never relax without the owner's explicit OK)

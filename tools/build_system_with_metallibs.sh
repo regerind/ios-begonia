@@ -2,7 +2,7 @@
 # The system volume with the firmware's shader libraries: upstream/hakios-xnu-kernel/userland/system-metal.apfs.
 #
 # sysimage/select-system.py leaves every .metallib out of the system image (142 files, 192 MB): the port had no Metal.
-# With Metal for applications (docs/SESSION-2026-11-19d.md) every framework and application that draws with Metal
+# With Metal for applications (docs/history/SESSION-2026-11-19d.md) every framework and application that draws with Metal
 # needs its library: MetalPerformanceShaders, CoreImage, SceneKit, Photos' frameworks... They were extracted with 7z
 # from the IPSW's root image into sysimage/metallibs/ (same paths). This links each one into sysimage/rootfs where its
 # bundle is (a library whose bundle the image has not got is left out), then runs the system-image section of
