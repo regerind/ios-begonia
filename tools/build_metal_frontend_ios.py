@@ -631,8 +631,8 @@ tele_hooks.append((' dispatch_group_wait(_schedulingHandlers,DISPATCH_TIME_FOREV
 # bytes are hashed, and uploaded (replaceRegion) only when they changed. Kept to what cannot go wrong that way: 2D,
 # one level, one sample, a plain format, usage without RenderTarget/ShaderWrite, a buffer the CPU can read. Not seen:
 # a GPU write into the buffer's bytes (a blit) -- the mirror keeps the bytes the CPU last had. metal_mirror=0: off.
-tele_hooks.append(('@property(nonatomic) NSUInteger heapOffset;\n@end',
- '@property(nonatomic) NSUInteger heapOffset;\n@property(nonatomic) BOOL mirror,mirrorFilled;\n@property(nonatomic) uint64_t mirrorHash;\n@property(nonatomic) uint32_t mirrorTexel;\n@end'))
+tele_hooks.append(('@property(nonatomic) NSUInteger offset,rowBytes;\n',
+ '@property(nonatomic) NSUInteger offset,rowBytes;\n@property(nonatomic) BOOL mirror,mirrorFilled;\n@property(nonatomic) uint64_t mirrorHash;\n@property(nonatomic) uint32_t mirrorTexel;\n'))
 tele_hooks.append(('@implementation NBBuffer (Textures)\n- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d offset:(NSUInteger)offset bytesPerRow:(NSUInteger)row {\n',
  '''static std::atomic<unsigned long long> gMirrorMade,gMirrorNot,gMirrorUploads,gMirrorSkips,gMirrorBytes,gMirrorHashUs;
 static bool nbMirrorOn() {
