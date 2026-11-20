@@ -1,0 +1,176 @@
+--- a/crates/metal2vulkan-runtime/src/ycbcr.rs
++++ b/crates/metal2vulkan-runtime/src/ycbcr.rs
+@@ -144,6 +144,64 @@
+ use metal2vulkan::metal::PixelFormat;
+ use std::ops::Range;
+ 
++/// begonia: a switch read once from the environment: `name` set: on; `name` with `_S` after it set: on
++/// in the 5-second slices of the time since boot whose number modulo 4 has `bit` (a measurement
++/// on the device: the kernel's statistics follow the same slices).
++pub(crate) fn begonia_switch(cell: &std::sync::OnceLock<u8>, name: &str, bit: u64) -> bool {
++    let mode = *cell.get_or_init(|| {
++        if std::env::var(format!("{name}_S")).is_ok() {
++            2
++        } else if std::env::var(name).is_ok() {
++            1
++        } else {
++            0
++        }
++    });
++    if mode != 2 {
++        return mode == 1;
++    }
++    let mut ts = libc::timespec {
++        tv_sec: 0,
++        tv_nsec: 0,
++    };
++    #[cfg(target_vendor = "apple")]
++    let clock = libc::CLOCK_UPTIME_RAW;
++    #[cfg(not(target_vendor = "apple"))]
++    let clock = libc::CLOCK_MONOTONIC;
++    // SAFETY: `ts` is a timespec of this frame's.
++    unsafe {
++        libc::clock_gettime(clock, &mut ts);
++    }
++    ((ts.tv_sec as u64 / 5) & 3) & bit != 0
++}
++
++/// begonia: `M2V_YSKIP`: a conversion whose planes' bytes are as they were at the two conversions
++/// before it is not recorded (`YCbCrConversion::record`).
++fn begonia_skip_unchanged() -> bool {
++    static CELL: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
++    begonia_switch(&CELL, "M2V_YSKIP", 1)
++}
++
++/// begonia: every 64th byte's word of `len` bytes at `bytes`, hashed; never 0.
++///
++/// # Safety
++///
++/// `len` bytes at `bytes` are readable.
++unsafe fn begonia_sparse_hash(bytes: *const u8, len: usize) -> u64 {
++    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
++    let mut at = 0usize;
++    while at + 8 <= len {
++        // SAFETY: the caller's contract; the word lies within `len`.
++        let word = unsafe { std::ptr::read_unaligned(bytes.add(at).cast::<u64>()) };
++        hash = (hash ^ word).wrapping_mul(0x0000_0100_0000_01b3).rotate_left(23);
++        at += 64;
++    }
++    hash | 1
++}
++
++static BEGONIA_YCBCR: [std::sync::atomic::AtomicU64; 2] =
++    [const { std::sync::atomic::AtomicU64::new(0) }; 2];
++
+ /// The CoreVideo surfaces a texture is made over (the module docs): the OSType, the bits of its
+ /// codes and whether they are packed, which the format's must be, its range, and how its chroma
+ /// plane is subsampled. `420v` and `420f` are 8-bit 4:2:0, `422v` and `422f` 4:2:2, `444v` and
+@@ -420,6 +478,11 @@
+     kernel: OwnedKernel,
+     sets: OwnedSets,
+     groups: [u32; 2],
++    /// begonia: the buffer the planes lie in (its bytes are looked at before a conversion), the hash of
++    /// the bytes at the conversion before, and how many in a row had it (`record`).
++    watch: Option<super::buffer::WeakBuffer>,
++    last: std::sync::atomic::AtomicU64,
++    streak: std::sync::atomic::AtomicU32,
+ }
+ 
+ impl YCbCrConversion {
+@@ -482,9 +545,18 @@
+             kernel,
+             sets,
+             groups,
++            watch: None,
++            last: std::sync::atomic::AtomicU64::new(0),
++            streak: std::sync::atomic::AtomicU32::new(0),
+         })
+     }
+ 
++    /// begonia: with the buffer whose bytes `record` looks at.
++    pub(super) fn watching(mut self, buffer: super::buffer::WeakBuffer) -> Self {
++        self.watch = Some(buffer);
++        self
++    }
++
+     /// The planes it converts, and the bytes of their buffer they lie in.
+     pub(super) fn source(&self) -> (YCbCrPlanes, Range<u64>) {
+         (self.source.0, self.source.1.clone())
+@@ -544,6 +616,46 @@
+         command_buffer: vk::CommandBuffer,
+         source: vk::Buffer,
+     ) {
++        // begonia: the conversion ran before every encoder that uses the texture -- the planes' bytes copied and
++        // a compute thread a texel -- because the surface's bytes are the CPU's to write unseen. Measured on the
++        // home screen (y295): about three compute chains a frame, 5.8 ms each on all four cores of the GPU, a
++        // third of the frame's GPU time, for a surface that does not change. A sparse hash of the bytes tells:
++        // as at the two conversions recorded before (two: one of them may have been recorded into a command
++        // buffer that never ran), nothing is recorded and the image keeps its texels. Every 256th is converted
++        // whatever the hash says. Bytes written between this and the command buffer's commit are seen one use
++        // later.
++        if begonia_skip_unchanged() {
++            use std::sync::atomic::Ordering::Relaxed;
++            if let Some(buffer) = self.watch.as_ref().and_then(super::buffer::WeakBuffer::upgrade) {
++                if let Some(base) = buffer.contents() {
++                    let (start, end) = (self.source.1.start as usize, self.source.1.end as usize);
++                    // SAFETY: the planes' bytes lie in the buffer (checked when the texture was made), which
++                    // is held here.
++                    let hash = unsafe { begonia_sparse_hash(base.as_ptr().add(start), end.saturating_sub(start)) };
++                    let streak = if self.last.swap(hash, Relaxed) == hash {
++                        self.streak.fetch_add(1, Relaxed) + 1
++                    } else {
++                        self.streak.store(0, Relaxed);
++                        0
++                    };
++                    let skipped = BEGONIA_YCBCR[0].load(Relaxed);
++                    if streak >= 2 && skipped % 256 != 255 {
++                        BEGONIA_YCBCR[0].fetch_add(1, Relaxed);
++                        return;
++                    }
++                    if streak >= 2 {
++                        BEGONIA_YCBCR[0].fetch_add(1, Relaxed);
++                    }
++                }
++            }
++            let converted = BEGONIA_YCBCR[1].fetch_add(1, Relaxed) + 1;
++            if converted % 64 == 0 {
++                eprintln!(
++                    "m2v: begonia: ycbcr conversions recorded {converted}, not recorded (bytes unchanged) {}",
++                    BEGONIA_YCBCR[0].load(Relaxed)
++                );
++            }
++        }
+         let staging = self.staging.at(0).0;
+         // SAFETY: the caller's contract; the shape and the copy lie in the staging buffer and
+         // the copy in `source` (checked when the texture was made), and the set binds them.
+--- a/crates/metal2vulkan-runtime/src/texture/ycbcr_image.rs
++++ b/crates/metal2vulkan-runtime/src/texture/ycbcr_image.rs
+@@ -170,7 +170,8 @@
+             usage: ImageUsageFlags::STORAGE,
+         })?;
+         let (raw, at) = texels.buffer.at(span.start);
+-        let conversion = YCbCrConversion::new(self, (planes, span.clone()), at, view)?;
++        let conversion = YCbCrConversion::new(self, (planes, span.clone()), at, view)?
++            .watching(texels.buffer.downgrade());
+         let (bytes, tracked) = texels.buffer.tracked(span);
+         let copies = ShadowCopies {
+             source: ShadowSource::Converted {
+--- a/crates/metal2vulkan-runtime/src/mipmap_filter.rs
++++ b/crates/metal2vulkan-runtime/src/mipmap_filter.rs
+@@ -85,6 +85,16 @@
+         ) {
+             return Ok(false);
+         }
++        // begonia: `M2V_MIPBLIT`: the device's blit chain instead (a level a blit, a few small pixel jobs): this
++        // path copies the first level into a buffer, runs a compute thread for every texel of every level and
++        // copies the levels back, at every call -- CoreAnimation asks for the mipmaps of what lies behind a
++        // blur at every frame.
++        {
++            static CELL: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
++            if super::ycbcr::begonia_switch(&CELL, "M2V_MIPBLIT", 2) {
++                return Ok(false);
++            }
++        }
+         let transfers = ImageUsageFlags::TRANSFER_SRC | ImageUsageFlags::TRANSFER_DST;
+         let features = FormatFeatureFlags2::TRANSFER_SRC | FormatFeatureFlags2::TRANSFER_DST;
+         if !plan.usage.contains(transfers) || !facts.optimal(plan.format).contains(features) {
