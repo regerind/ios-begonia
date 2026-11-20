@@ -1,0 +1,30 @@
+--- a/iokit/Kernel/MiniIOSurface.cpp
++++ b/iokit/Kernel/MiniIOSurface.cpp
+@@ -1864,6 +1864,27 @@
+ 		}
+ 		ret = kIOReturnSuccess;
+ 	}
++	/*
++	 * begonia (y151): every display frame came in a new surface ("none twice"): CoreAnimation reuses a surface only
++	 * when it is no longer in use. Do the use counts come back down? Counted, and said every 2048 changes.
++	 */
++	{
++		static uint32_t ups[2], downs[2], ignored, said;
++		if (category <= 1) {
++			if (delta > 0) {
++				ups[category]++;
++			} else if (ret == kIOReturnSuccess) {
++				downs[category]++;
++			}
++		}
++		if (ret != kIOReturnSuccess) {
++			ignored++;
++		}
++		if (((ups[0] + ups[1] + downs[0] + downs[1]) & 2047) == 0 && said++ < 64) {
++			IOLog("MiniIOSurface: use counts up %u/%u, down %u/%u (category 0/1), %u for surfaces not found\n", ups[0],
++			    ups[1], downs[0], downs[1], ignored);
++		}
++	}
+ 	IOLockUnlock(gSurfaceLock);
+ 	return ret;
+ }
