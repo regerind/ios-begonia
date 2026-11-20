@@ -196,3 +196,21 @@ Today y278, YouTube y280 doğru). YouTube 5 sn'de 50-71 kare (y266: 55-67; GPU %
 **Kalan şüphe:** min/max KAYIT anında okunuyor; indeks verisi kayıttan sonra, GPU çalışmadan önce değişirse (Metal'de CPU commit'e kadar yazabilir)
 yanlış vertex aralığı olur (eksik/çöp köşe). Şu ana kadar resimde bozulma görülmedi. y272 ve y274'te backboardd SIGKILL (status 0x9) ile yeniden
 başladı (y245'te de olmuştu); tekrar koşuda (y273, y275) olmadı, yamayla ilişkisi KANITLANMADI ama dışlanmadı: ~16 koşuda 2 kez.
+
+## Metal yolunda kaydırma 27 -> 45 kare/sn: çizen iş parçacığı yavaş çekirdekteydi (2026-11-21, y306-y310)
+
+- **Belirti:** ana ekran kaydırması ~27 kare/sn; GPU %30 meşgul, backboardd'de tek iş parçacığı %80.
+- **Yanlış izler:** duvar kağıdı geçişi (y306: kaldırınca +%5), GPU süresi, "60 Hz tikine yuvarlanma" (y310 kare
+  aralıkları 18-26 ms'ye düşebildiğini gösterdi).
+- **Kök neden:** XNU bu aygıt ağacında çekirdek türlerini ayırmıyor; iş parçacıkları çoğunlukla A55'e düşüyor. GL köprüsü
+  bunu kendi çizim iş parçacığı için çözmüştü (`gl_cpu=6`, `kern.begonia_bind_cpu`), fakat backboardd Metal'e taşınınca
+  çizen iş parçacığı CoreAnimation'ın `disp` iş parçacığı oldu ve bağlanmadı.
+- **Çözüm:** ön yüz (`tools/build_metal_frontend_ios.py`, `begBindCpu`): backboardd'de commit eden iş parçacığı ilk
+  commit'te 6. işlemciye (A76) bağlanıyor. `beg_cpu=N` (-1: kapalı), `beg_cps=1` (tek 5 sn'lik dilimlerde: ölçüm).
+  Voltaj/saat değişikliği yok.
+- **Kanıt:** y309 (aynı koşu, dilimler): bağlı 461-469, serbest 291-305 (`fr`, 5 sn). y310 (hep bağlı): 441-456, 44-45
+  kare/sn, 18 ms altı %53.
+- **Yanında gelen küçükler:** ayna karması inceltmesi varsayılan (commit başına 2.8 -> 1.5 ms); yüzey tanıtıcı dosyaları
+  saklanıyor (taşıma 0003: her karede mkstemp/unlink/ftruncate yoktu artık; ayrıca ölçülmedi).
+- **Araç:** `proc_cpu_test` artık örnekleri katmana göre tam sayıyor (`LAYERS`, `LAYER pv/rt/fe/qc`) ve backboardd'nin iş
+  parçacıklarını yazıyor (`BBTHREADS`).

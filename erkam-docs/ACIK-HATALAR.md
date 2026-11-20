@@ -373,3 +373,23 @@ Aşağısı araştırmanın kaydı.
   yüklenmesi ~24 sn). AÇIK, nedeni bilinmiyor.
 - **Etkisiz / yanlış çıkanlar:** çekirdekte tampon yeniden kullanımı (`beg_park`: kare başına eşlenen 12.7 MB sürücünün tamponu değil, içe aktarılan
   yüzey); mip-blit (kaydırmada mip isteği yok).
+
+### Dördüncü tur (y306-y311, 2026-11-20/21 gece) ve p17: kaydırma ~27 -> ~44-45 kare/sn, hedef (50-60) henüz değil
+
+- **Durum:** AÇIK ama büyük ilerleme. Ana ekran kaydırması y310'da sabit 44-45 kare/sn (18 ms altı kareler %53; y307: %2).
+  p17 bu yapılandırma. Kullanıcının p17 değerlendirmesi bekleniyor.
+- **Kök neden (kanıtlı, y309 aynı koşuda A/B):** backboardd'nin çizen iş parçacığı (`com.apple.coreanimation.disp`) yavaş
+  A55 çekirdekte koşuyordu. XNU burada bütün çekirdekleri aynı tür sayıyor; GL köprüsü kendi iş parçacığını A76'ya
+  bağlıyordu ama backboardd Metal'e geçince çizen iş parçacığı değişti ve onu kimse bağlamadı. Bağlı dilimler 46-47,
+  serbest dilimler 30 kare/sn.
+- **Duvar kağıdı sınırlayıcı değil (y306):** pahalı 1041×1180 geçişi tamamen kalkınca kazanç yalnız ~%5.
+- **Kalan sınır (y310 profili):** kare ~22 ms. Bilinen kalemler: her karede yeni ekran yüzeyinin GPU'ya iki kez
+  haritalanması (kext `surface` 916 çağrı / 624 ms / 5 sn = ~2.7 ms/kare); çalışma zamanının kendi kodu (örneklerin ~%30'u,
+  dümdüz dağılmış; boyut için derleniyor); QuartzCore ~%17; tam ekran parça işi 8 ms ve kare başına ~1.33 tane (GPU ~%57).
+- **Ölçülemeyenler (y311 açılmadı):** kext yüzey tutma (revert edildi, kod `cdba4af` commit'inde duruyor) ve çalışma
+  zamanının hız için derlenmesi (`M2V_HOT=1`, 17.0 MB; tamamı `M2V_OPT=3` iken 18.2 MB boot'a sığmıyor). y311 imajı boot
+  bölümünün sonuna 45 KB kalacak kadar büyüktü; açılmamasının nedeni bu mu, kext mi, bilinmiyor.
+- **Kullanıcı onayı (2026-11-21):** tam hız metal2vulkan boot'a sığmazsa sistem bölümüne (system.apfs) konabilir; kalıcı
+  imaja eklenmesi isteniyor. Doğrulanmadığı için p17'de YOK; bir y koşusu gerekiyor.
+- **Hâlâ ölçülmeyen eski kalemler:** videoda ileri sarma (0.5-1 kare/sn), jetsam, Ayarlar > Duvar Kağıdı > özelleştir
+  ekranındaki mor bozuk görüntü (kullanıcı bildirdi, bakılmadı).

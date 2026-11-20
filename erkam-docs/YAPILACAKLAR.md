@@ -35,3 +35,7 @@
   voltaj, saat ve PMIC değişikliği yine onayla.
 - Test oturumu 60 sn (`WATCH=60`).
 - Wallpaper gizlenmez, çözünürlük düşürülmez, Hareketi Azalt/Şeffaflığı Azalt kullanılmaz.
+- 2026-11-21: kaydırma için sıradaki adaylar (her biri bir y koşusu ister): (1) `M2V_HOT=1` çalışma zamanı tek başına
+  (boot'a sığıyor mu / açılıyor mu; olmazsa kullanıcının onayladığı gibi sistem bölümüne), (2) kext yüzey tutma tek
+  başına (`cdba4af`), (3) kare başına ikinci tam ekran geçişinin (64×64 geçişinden sonra yeniden yükleme) birleştirilmesi.
+  y311'de (1) ve (2) birlikte denendi ve imaj açılmadı: ayrı ayrı denenmeli.
