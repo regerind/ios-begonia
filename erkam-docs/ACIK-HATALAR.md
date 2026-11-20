@@ -279,3 +279,9 @@ Aşağısı araştırmanın kaydı.
     "backdrop önceki kareden" (0051) ve geç temizleme (0054) gibi kısayollar var; Metal yolunda CA bunları gerçekten çiziyor.
     Sonraki gerçek kaldıraç = Metal tarafında aynı kısayolun karşılığı (görüntüyü etkiler, sahibinin kararı) ya da blur geçişinin
     daha düşük çözünürlükte çizilmesi (CA'nın kendi kararı, yamalamak zor).
+  - **Slot 1 ve ölü zaman (y260-y261, kernel tanılaması, salt-okunur):** 5 sn'de ~3750 GPU işi, 1516'sı fragment; slot 1'in ~2230 zinciri
+    ~26000 iş taşıyor: compute ~10550, vertex ~5280, tiler ~5240, write ~4910 (zincir başına ~4.7 compute + 2.4 vertex + 2.3 tiler + 2.2
+    write; draw başına ~2 compute). Zincirler KARIŞIK (yalnız vertex/tiler zinciri ~0), bu yüzden fragment ile slot 1'i üst üste
+    bindirmek (servis şu an her işi tek tek bitirip sonrakini veriyor) kör bir değişiklikle GÜVENLİ DEĞİL: compute işi önceki fragment
+    çıktısını okuyabilir. Slot 1 süresi ~810-850 ms/5 sn (%17), fragment ~1.7 sn (%35), GPU %50 meşgul. İş dışı zaman iş başına ~640 us.
+    y262 bu boşluğun iş öncesi hazırlıkta mı, işler arası döngüde mi olduğunu ölçüyor.
