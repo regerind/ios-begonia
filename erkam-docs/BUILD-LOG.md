@@ -66,4 +66,5 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y148 | 05:2x | Boot argümanı olmadan (cihaz ağacından) sıkıştırıcı; sarma testi + profiler | Cihaz ağacından çalışıyor (mod 2), panik yok, hiç "exit" yok. Kareler yarısı 20–22 ms |
 | p8 | 03:27 | Kalıcı imaj adayı: p7 + sıkıştırıcı (cihaz ağacı). **Flaşlanmadı**; p7'nin yerine | SHA256 fd831ed1…1d3e |
 | y149 | 03:3x | Bugün paneli: 76. sn ortadan sağa kaydırma (0,3 → 0,9, 350 ms), 80. sn çekim; sıkıştırıcı açık | Bugün paneli açılmadı (ilk sayfa); otomatik sağa kaydırma işlemiyor |
-| y150 | 03:4x | Bugün paneli: 76. sn yavaş sürükleme (0,1 → 0,95, 600 ms), 80. sn çekim | (sonuç bekleniyor) |
+| y150 | 03:4x | Bugün paneli: 76. sn yavaş sürükleme (0,1 → 0,95, 600 ms), 80. sn çekim | Yine açılmadı; panel otomasyonu bırakıldı (enjekte edilen sağa hareketler sayfa geçişi yapmıyor) |
+| y151 | 04:0x | Çekirdek: IOSurface kullanım sayaçlarının artış/azalışları sayılıyor (0022). Her ekran karesi yepyeni bir yüzeyde geliyor ("none twice"): kullanım sayacı hiç azalmıyor mu? YouTube betiği | (sonuç bekleniyor) |
