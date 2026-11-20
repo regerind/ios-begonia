@@ -38,7 +38,14 @@ stext=stext.replace('#include <dlfcn.h>','#include <dlfcn.h>\n#include <mach-o/d
 shown.write_text(stext)
 f=source/'HakiosMetalVK.mm';text=f.read_text();old='#define DEFAULT_ICD "/redwood/lib/libhakios.vk.dylib"'
 assert text.count(old)==1;text=text.replace(old,'#define DEFAULT_ICD "/redwood/lib/libvulkan_panfrost.dylib"')
-text=text.replace('tried = true;','tried = true;\n\t\tsetenv("PAN_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 1);')
+text=text.replace('tried = true;','tried = true;\n\t\tsetenv("PAN_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 1);\n'
+ # begonia (y218): boot-arg panvk_debug=<options> (PanVK's PANVK_DEBUG, comma-separated, e.g. noafbc): the driver's
+ # own switches for an experiment, in every process shown the device.
+ '\t\t{\n\t\t\tchar bootArgs[1024] = ""; size_t bootSize = sizeof(bootArgs) - 1;\n'
+ '\t\t\tconst char *at = sysctlbyname("kern.bootargs", bootArgs, &bootSize, NULL, 0) == 0 ? strstr(bootArgs, "panvk_debug=") : NULL;\n'
+ '\t\t\tif (at != NULL) {\n\t\t\t\tchar value[128]; size_t n = strcspn(at + 12, " ");\n'
+ '\t\t\t\tif (n < sizeof(value)) { memcpy(value, at + 12, n); value[n] = 0; setenv("PANVK_DEBUG", value, 1); }\n\t\t\t}\n\t\t}')
+if '#include <sys/sysctl.h>' not in text:text=text.replace('#import <Foundation/Foundation.h>','#import <Foundation/Foundation.h>\n#include <sys/sysctl.h>',1)
 f.write_text(text)
 
 mf=source/'NativeBridgeMetalFrontend.mm';original_mtext=mf.read_text();mtext=original_mtext
