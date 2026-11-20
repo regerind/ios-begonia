@@ -21,6 +21,13 @@
 10. **Kamera:** hat ve saat onayı gerekiyor.
 11. **Kalıcı imaj p7+:** kullanıcı isteyince.
 
+
+### Metal tek hat: sıradaki işler (2026-11-20 akşamı, ANALIZ-2026-11-20-METAL-HIZ.md bölüm 9-12)
+1. Cihazda p13'ü doğrula (0019: uniform yüklemeleri 16 hizalı): blur'lu ekranlar doğru mu, fps. Yanlışsa p13n'e dön. Tek seferlik log koşusu için sahibinin onayı gerek (yeni plan y imajlarını yasaklıyor).
+2. Çeviricide (metal2vulkan) buffer ofset maskesini AIR'in bildirdiği hizadan üret; PanVK hizayı maskeden okusun (0019'u varsayımdan garantiye çevirir).
+3. `fixed_frag` ailesini `tests/bifrost_stats.c` ile ölçebilmek: input attachment yolu ve gerçek sampler specialization değerleri.
+4. Ekran yüzeyi LINEAR dma-buf'a yerinde çiziliyor: kendi U-interleaved dokuya çizip karede bir kez kopyalamayı ölç.
+5. Bellek/jetsam: y290'daki GPU VA sayacı hâlâ koşulmadı; LRU sınırı tasarımı ondan sonra.
 ## Değişmeyen kurallar
 - IMEI bölümlerine (nvram, nvdata, protect1/2, persist, proinfo...) asla yazılmaz. Flaşlama yalnızca boot ve misc.
 - 2026-11-20 ~00:55, kullanıcı: GPU'yu ve video çözücüyü (VDEC) çözmek için IMEI dışında tam yetki ("sınır yok, çok
