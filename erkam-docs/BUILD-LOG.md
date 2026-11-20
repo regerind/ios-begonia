@@ -57,4 +57,6 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y140 | 03:4x | Varsayılanlarla sağlamlık: Denetim Merkezi (eski `y_script_cc.txt`: 66. sn açılır, 70. sn çekim) ve 86. sn çekim | Panik yok. 86. sn: **Denetim Merkezi doğru** (bulanık arka plan, düğmeler, kaydırıcılar). 70. sn çekimi açılma animasyonunun ortası: üst siyah, altta şerit (animasyon anı mı, çekim yırtılması mı belli değil) |
 | y141 | 03:5x | Varsayılanlarla Bugün paneli (widget bulanıklıkları), 74. sn çekim | Panik yok; çekim tampondan düştü (betikteki 1080p video logu doldurdu) |
 | y142 | 04:0x | Videosuz Bugün paneli betiği, 72. sn çekim | Kaydırmalar Bugün paneline götürmedi (ikinci ana ekran sayfası). Görüntü doğru, bozulma yok |
-| y143 | 04:1x | Önceki kareden bulanıklık 8 doku biriminde (4 değil); YouTube betiği | (sonuç bekleniyor) |
+| y143 | 04:1x | Önceki kareden bulanıklık 8 doku biriminde (4 değil); YouTube betiği | Belirgin fark yok (yarısı 19–20 ms). Kalan: ~5 adet 1622×1525 yakalama ve ana ekranın kendi ağır çizimi |
+| p7 | 04:2x | Kalıcı imaj adayı (gecenin varsayılanları + ses + Wi-Fi + `!MediaRemoteUI`), **flaşlanmadı** | SHA256 20f79679…ecac |
+| y144 | 04:3x | Video ileri/geri sarma testi: YouTube, 58. sn oynat, 66–82. sn sağa/sola çift dokunma (betik `y_script_seek.txt`) | (sonuç bekleniyor) |
