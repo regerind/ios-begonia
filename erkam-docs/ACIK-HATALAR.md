@@ -142,8 +142,15 @@ ya da onay gerekiyor). En üstteki en önemlisi.
   kırmızı okunması (y180, `glalpha=0`), SpringBoard'ın Metal yolu (y181, SpringBoard Metal istemcisi değilken de var).
 - **Şüphe:** İşaretler widget görüntülerinin kendisinde olabilir (chronod ve widget uzantılarının çizdiği yüzeyler), ya
   da köşeleri dört kanalda tutan bir maske dokusunun yanlış biçimde (renk olarak) okunması.
-- **Durum:** açık. Sıradaki: widget uzantılarını Metal listesinden çıkarmak; köşe çizen çağrının izini almak
-  (`gltrace_place` ile köşe bölgesi).
+- **İz (y183):** Widget (sol üst, 102,174–525,597) önce program 3 ile karesinin tamamı düz renkle dolduruluyor
+  (karıştırma kapalı, doku 0 = ekranın kendisi: köprünün çerçeve tamponu okuma öykünmesi), sonra program 63 köşeleri
+  9 parçayla çiziyor (RG8 512×512 ve 190×190 RGBA dokular, karıştırma yine kapalı). `glfetch=0` ile (y184) widget'lar
+  hiç çizilmiyor: CoreAnimation bunlar için çerçeve tamponu okumaya muhtaç. LA08 maskelerinin kanal yönlendirmesi
+  kodda doğru görünüyor.
+- **Şüphe (en güçlü):** köprünün çerçeve tamponu okuma öykünmesi köşe gölgelendiricisinde (program 63) yanlış piksel
+  ya da yanlış kanal veriyor; köşenin dışındaki pikseller "arkadaki renk" yerine maske kanallarının rengini alıyor.
+- **Durum:** açık. Sıradaki: program 63'ün gölgelendirici metnini almak (y185/y186'da zamanlama tutmadı: panel
+  açılmadan iz alındı); `gltrace_place` + daha geç `gltrace_at` ya da `glshaders=1`.
 
 ## 11. Diğerleri
 - **Bluetooth:** Denetleyici canlı (WMT açık, HCI reset OK); iOS tarafı yok. Kullanıcı tarafından hiç denenmedi;
