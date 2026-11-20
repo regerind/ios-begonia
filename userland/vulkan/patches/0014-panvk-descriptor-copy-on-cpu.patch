@@ -1,0 +1,193 @@
+--- a/src/panfrost/vulkan/panvk_cmd_desc_state.h
++++ b/src/panfrost/vulkan/panvk_cmd_desc_state.h
+@@ -31,6 +31,9 @@
+ #if PAN_ARCH < 9
+    uint64_t tables[PANVK_BIFROST_DESC_TABLE_COUNT];
+    uint64_t img_attrib_table;
++   /* begonia: the same tables as CPU pointers (NULL: unknown), for the CPU descriptor copy */
++   void *tables_cpu[PANVK_BIFROST_DESC_TABLE_COUNT];
++   void *img_attrib_table_cpu;
+    uint64_t dyn_ssbos;
+ #else
+    struct {
+--- a/src/panfrost/vulkan/panvk_vX_cmd_desc_state.c
++++ b/src/panfrost/vulkan/panvk_vX_cmd_desc_state.c
+@@ -191,6 +191,7 @@
+          return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+ 
+       shader_desc_state->tables[i] = ptr.gpu;
++      shader_desc_state->tables_cpu[i] = ptr.cpu;
+ 
+       if (i == PANVK_BIFROST_DESC_TABLE_UBO)
+          panvk_cmd_fill_dyn_ubos(desc_state, desc_info, ptr.cpu, desc_count);
+@@ -203,6 +204,7 @@
+             return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+ 
+          shader_desc_state->img_attrib_table = ptr.gpu;
++         shader_desc_state->img_attrib_table_cpu = ptr.cpu;
+       }
+    }
+ 
+--- a/src/panfrost/vulkan/bifrost/panvk_vX_meta_desc_copy.c
++++ b/src/panfrost/vulkan/bifrost/panvk_vX_meta_desc_copy.c
+@@ -3,6 +3,8 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#include <stdlib.h>
++#include <string.h>
+ #include <stddef.h>
+ #include <stdint.h>
+ 
+@@ -384,6 +386,124 @@
+    return panvk_priv_mem_dev_addr(shader->rsd);
+ }
+ 
++/* begonia: the same copy as the desc_copy compute shader above, done by the CPU while the draw is
++ * recorded. Each copy job is two more jobs in the batch (vertex and fragment), and on the Mali-G76 jobs
++ * of this kind cost a few hundred microseconds each in front of every draw. Returns false when some
++ * pointer is not known on the CPU; the caller then uses the GPU job. Descriptor sets are not allowed to
++ * change while a command buffer using them is pending, so recording time is as good as run time. */
++static bool
++panvk_desc_copy_on_cpu(const struct panvk_shader_desc_info *desc_info,
++                       const struct panvk_descriptor_state *desc_state,
++                       const struct panvk_shader_desc_state *sds,
++                       const struct pan_nir_desc_copy_info *ci,
++                       const uint32_t *handles, uint32_t copy_count,
++                       uint32_t attrib_buf_idx_offset)
++{
++   static int enabled = -1;
++   if (enabled < 0) {
++      const char *e = getenv("PANVK_CPU_DESC_COPY");
++      enabled = !(e && e[0] == 0);
++   }
++   if (!enabled || !handles)
++      return false;
++
++   const uint32_t ubo_end = ci->desc_copy.limits[PANVK_BIFROST_DESC_TABLE_UBO];
++   const uint32_t img_end = ci->desc_copy.limits[PANVK_BIFROST_DESC_TABLE_IMG];
++   const uint32_t tex_end = ci->desc_copy.limits[PANVK_BIFROST_DESC_TABLE_TEXTURE];
++   const uint32_t smp_end = ci->desc_copy.limits[PANVK_BIFROST_DESC_TABLE_SAMPLER];
++
++   if ((ubo_end && !sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_UBO]) ||
++       (img_end > ubo_end && (!sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_IMG] ||
++                              !sds->img_attrib_table_cpu)) ||
++       (tex_end > img_end && !sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_TEXTURE]) ||
++       (smp_end > tex_end && !sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_SAMPLER]))
++      return false;
++
++   for (uint32_t i = 0; i < copy_count; i++) {
++      uint32_t set_idx = handles[i] >> 28;
++      if (set_idx >= MAX_SETS)
++         return false;
++      const struct panvk_descriptor_set *set = desc_state->sets[set_idx];
++      if (set && !set->descs.host)
++         return false;
++   }
++
++   for (uint32_t i = 0; i < copy_count; i++) {
++      uint32_t set_idx = handles[i] >> 28;
++      uint32_t src_idx = handles[i] & 0xfffffff;
++      const struct panvk_descriptor_set *set = desc_state->sets[set_idx];
++      /* A set that is not bound has count 0 on the GPU side: zeros are written. */
++      const uint32_t set_count = set ? set->desc_count : 0;
++      const uint32_t *src =
++         (set && src_idx < set_count)
++            ? (const uint32_t *)((const uint8_t *)set->descs.host +
++                                 (size_t)src_idx * PANVK_DESCRIPTOR_SIZE)
++            : NULL;
++
++      if (i < ubo_end || i >= img_end) {
++         unsigned esize;
++         uint8_t *dst;
++         if (i < ubo_end) {
++            esize = sizeof(struct mali_attribute_packed);
++            dst = (uint8_t *)sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_UBO] +
++                  (size_t)i * esize;
++         } else if (i < tex_end) {
++            esize = sizeof(struct mali_texture_packed);
++            dst = (uint8_t *)sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_TEXTURE] +
++                  (size_t)(i - img_end) * esize;
++         } else if (i < smp_end) {
++            esize = sizeof(struct mali_sampler_packed);
++            dst = (uint8_t *)sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_SAMPLER] +
++                  (size_t)(i - tex_end) * esize;
++         } else {
++            continue;
++         }
++         if (src)
++            memcpy(dst, src, esize);
++         else
++            memset(dst, 0, esize);
++         continue;
++      }
++
++      /* image / texel-buffer entries: an attribute plus a pair of attribute buffers */
++      const unsigned esize = pan_size(ATTRIBUTE_BUFFER) * 2;
++      uint32_t didx = i - ubo_end;
++      uint32_t *attrib = (uint32_t *)((uint8_t *)sds->img_attrib_table_cpu +
++                                      (size_t)didx * pan_size(ATTRIBUTE));
++      uint32_t *buf = (uint32_t *)((uint8_t *)sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_IMG] +
++                                   (size_t)didx * esize);
++      STATIC_ASSERT(pan_size(ATTRIBUTE) == 8);
++      STATIC_ASSERT(pan_size(ATTRIBUTE_BUFFER) * 2 == 32);
++      if (!src) {
++         memset(attrib, 0, pan_size(ATTRIBUTE));
++         memset(buf, 0, esize);
++         continue;
++      }
++      uint32_t buf_idx = didx * 2 + attrib_buf_idx_offset;
++      if ((src[0] & BITFIELD_MASK(5)) == MALI_ATTRIBUTE_TYPE_1D) {
++         attrib[0] = (src[4] & ~BITFIELD_MASK(9)) | buf_idx;
++         attrib[1] = src[5];
++         buf[0] = src[0];
++         buf[1] = src[1];
++         buf[2] = src[2] & BITFIELD_MASK(7);
++         buf[3] = src[3];
++         buf[4] = buf[5] = buf[6] = buf[7] = 0;
++      } else {
++         attrib[0] = buf_idx | (src[2] & 0xfffffc00);
++         attrib[1] = 0;
++         buf[0] = src[0];
++         buf[1] = src[1];
++         buf[2] = src[2] & BITFIELD_MASK(7);
++         buf[3] = src[3];
++         buf[4] = src[4];
++         buf[5] = src[5];
++         buf[6] = src[6];
++         buf[7] = src[7];
++      }
++   }
++   return true;
++}
++
+ VkResult
+ panvk_per_arch(meta_get_copy_desc_job)(
+    struct panvk_cmd_buffer *cmdbuf,
+@@ -433,6 +553,13 @@
+       copy_info.tables[i] = shader_desc_state->tables[i];
+    }
+ 
++   if (panvk_desc_copy_on_cpu(desc_info, desc_state, shader_desc_state,
++                              &copy_info,
++                              panvk_priv_mem_host_addr(desc_info->others.map),
++                              copy_info.desc_copy.limits[PANVK_BIFROST_DESC_TABLE_COUNT - 1],
++                              attrib_buf_idx_offset))
++      return VK_SUCCESS;
++
+    uint64_t desc_copy_rsd = panvk_meta_desc_copy_rsd(dev);
+    if (!desc_copy_rsd)
+       return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
+@@ -709,6 +709,10 @@
+          attribs.gpu + (MAX_VS_ATTRIBS * pan_size(ATTRIBUTE));
+       cmdbuf->state.gfx.vs.desc.tables[PANVK_BIFROST_DESC_TABLE_IMG] =
+          bufs.gpu + (num_vbs * pan_size(ATTRIBUTE_BUFFER) * 2);
++      cmdbuf->state.gfx.vs.desc.img_attrib_table_cpu =
++         (uint8_t *)attribs.cpu + (MAX_VS_ATTRIBS * pan_size(ATTRIBUTE));
++      cmdbuf->state.gfx.vs.desc.tables_cpu[PANVK_BIFROST_DESC_TABLE_IMG] =
++         (uint8_t *)bufs.cpu + (num_vbs * pan_size(ATTRIBUTE_BUFFER) * 2);
+    }
+ 
+    return VK_SUCCESS;
