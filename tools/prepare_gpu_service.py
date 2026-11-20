@@ -156,48 +156,6 @@ change('\t\t\tfreeBuffer(&fBuffers[i]);\n\t\t}\n\t}\n\tIOLockUnlock(gMaliLock);'
        '\tfor (uint32_t k = 0; k < 2; k++) {              /* y303: the kept ones */\n\t\tif (fParked[k].memory != NULL) {\n'
        '\t\t\tif (hakios_mali_ready()) {\n\t\t\t\thakios_mali_unmap(fParked[k].address, fParked[k].size);\n\t\t\t\tfParked[k].memory->release();\n\t\t\t}\n'
        '\t\t\tfParked[k].memory = NULL;\n\t\t}\n\t}\n\tIOLockUnlock(gMaliLock);')
-# begonia (y311): the last surface buffer closed is kept as it is -- its pages in the GPU's tables, its surface held -- until
-# the next one is closed, and a surface asked for again while it is kept is that buffer again. CoreAnimation draws every
-# frame into a new surface, and the window server's client asked for each one twice (y310: 4 surface calls, 2 closes and 2
-# address ranges a frame; 1.42 million pages entered into the GPU's tables in 5 s, 448 ms, and 73 ms taking them out: 2.3 ms
-# of a 22 ms frame, on the thread that draws). A buffer closed while a job still names it is that buffer again as well,
-# instead of a second one of the same pages. Boot-arg beg_spark=0: as before.
-change('fParked[2];   /* y303 */\n',
-       'fParked[2];   /* y303 */\n'
-       '\tstruct { IOMemoryDescriptor * memory; MiniIOSurface * surface; uint64_t address, size; } fSurfParked;   /* y311 */\n')
-change('\thakios_mali_unmap(b->address, b->size);\n\tb->memory->release();\n\tif (b->surface != NULL) {\n\t\tMiniIOSurfaceDrop(b->surface);\n\t}\n\tbzero(b, sizeof(*b));\n}',
-       '\tif (!fClosing && b->surface != NULL && b->size >= (4ull << 20) && begonia_surf_park()) {\n'
-       '\t\tIOMemoryDescriptor * memory = fSurfParked.memory;\n\t\tMiniIOSurface * surface = fSurfParked.surface;\n'
-       '\t\tuint64_t address = fSurfParked.address, size = fSurfParked.size;\n\n'
-       '\t\tfSurfParked.memory = b->memory;\n\t\tfSurfParked.surface = b->surface;\n\t\tfSurfParked.address = b->address;\n\t\tfSurfParked.size = b->size;\n'
-       '\t\tbegonia_park_kept++;\n\t\tbzero(b, sizeof(*b));\n'
-       '\t\tif (memory != NULL) {\n\t\t\thakios_mali_unmap(address, size);\n\t\t\tmemory->release();\n\t\t\tMiniIOSurfaceDrop(surface);\n\t\t}\n'
-       '\t\treturn;\n\t}\n'
-       '\thakios_mali_unmap(b->address, b->size);\n\tb->memory->release();\n\tif (b->surface != NULL) {\n\t\tMiniIOSurfaceDrop(b->surface);\n\t}\n\tbzero(b, sizeof(*b));\n}')
-change('void\nHakiosMaliUserClient::freeBuffer(struct mali_buffer * b)\n{',
-       'static bool\nbegonia_surf_park(void)\n{\n\tstatic uint32_t mode = 99;\n\n\tif (mode == 99) {\n\t\tuint32_t value = 1;\n\n'
-       '\t\t(void)PE_parse_boot_argn("beg_spark", &value, sizeof(value));\n\t\tmode = value;\n\t}\n\treturn mode != 0;\n}\n\n'
-       'void\nHakiosMaliUserClient::freeBuffer(struct mali_buffer * b)\n{')
-change('\t\tif (fBuffers[i].memory != NULL && !fBuffers[i].dying && fBuffers[i].surface == s) {\n\t\t\tb = &fBuffers[i];\n',
-       '\t\tif (fBuffers[i].memory != NULL && fBuffers[i].surface == s && (!fBuffers[i].dying || begonia_surf_park())) {\n'
-       '\t\t\tif (fBuffers[i].dying) {                /* y311: closed, a job still naming it: not closed after all */\n'
-       '\t\t\t\tfBuffers[i].dying = false;\n\t\t\t\tbegonia_park_hits++;\n\t\t\t}\n'
-       '\t\t\tb = &fBuffers[i];\n')
-change('\tb = newBuffer(s->memory, PAGE_SIZE, size, &request->handle, PANFROST_BO_NOEXEC);\n',
-       '\tif (fSurfParked.memory != NULL && fSurfParked.surface == s && fSurfParked.size == size) {       /* y311 */\n'
-       '\t\tfor (uint32_t n = 0; n < MALI_BUFFERS; n++) {\n\t\t\tuint32_t i = (fNextBuffer + n) % MALI_BUFFERS;\n\n'
-       '\t\t\tif (fBuffers[i].memory == NULL) {\n\t\t\t\tb = &fBuffers[i];\n\t\t\t\trequest->handle = i + 1;\n\t\t\t\tfNextBuffer = i + 1;\n\t\t\t\tbreak;\n\t\t\t}\n\t\t}\n'
-       '\t\tif (b != NULL) {\n\t\t\tbzero(b, sizeof(*b));\n'
-       '\t\t\tb->memory = fSurfParked.memory;\n\t\t\tb->surface = fSurfParked.surface;\n\t\t\tb->address = fSurfParked.address;\n\t\t\tb->size = size;\n'
-       '\t\t\tfSurfParked.memory = NULL;\n\t\t\tfSurfParked.surface = NULL;\n\t\t\tbegonia_park_hits++;\n'
-       '\t\t\tmemory->release();               /* (the kept buffer has its own, and its own hold on the surface) */\n'
-       '\t\t\tMiniIOSurfaceDrop(s);\n\t\t\treturn kIOReturnSuccess;\n\t\t}\n\t}\n'
-       '\tb = newBuffer(s->memory, PAGE_SIZE, size, &request->handle, PANFROST_BO_NOEXEC);\n')
-change('\tfor (uint32_t k = 0; k < 2; k++) {              /* y303: the kept ones */\n',
-       '\tif (fSurfParked.memory != NULL) {              /* y311 */\n'
-       '\t\tif (hakios_mali_ready()) {\n\t\t\thakios_mali_unmap(fSurfParked.address, fSurfParked.size);\n\t\t\tfSurfParked.memory->release();\n'
-       '\t\t\tMiniIOSurfaceDrop(fSurfParked.surface);\n\t\t}\n\t\tfSurfParked.memory = NULL;\n\t\tfSurfParked.surface = NULL;\n\t}\n'
-       '\tfor (uint32_t k = 0; k < 2; k++) {              /* y303: the kept ones */\n')
 (tree/'iokit/Kernel/begonia.mali.cpp').write_text(text)
 for name in ['hakios.mali_va.h','hakios.mali_cpu_cache.h']:
     shutil.copyfile(source/name,tree/'bsd/dev'/name)
