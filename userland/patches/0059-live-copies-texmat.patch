@@ -1,0 +1,80 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -4437,6 +4437,18 @@
+ 	return true;
+ }
+ 
++/* (y193) why a draw that reads the picture while drawing elsewhere was not taken for a copy: the first few said */
++static void
++live_why(const char *why, GLsizei count, float drawn, float read)
++{
++	static unsigned said;
++
++	if (said++ < 12) {
++		say("hakios-gl: a read of the picture left to the swap: %s (%d corners; %.0f px drawn, %.0f px read)\n", why,
++		    (int)count, drawn, read);
++	}
++}
++
+ /* true: this draw reads the display's picture (unit 0) one pixel to one pixel while drawing elsewhere */
+ static bool
+ backdrop_live_copy(struct eagl *e, GLenum type, const void *indices, GLint first, GLsizei count)
+@@ -4453,11 +4465,13 @@
+ 	}
+ 	glGetIntegerv(0x8894 /* GL_ARRAY_BUFFER_BINDING */, &array_buffer);
+ 	if (array_buffer != 0) {
++		live_why("vertex buffer", count, 0, 0);
+ 		return false;
+ 	}
+ 	if (indices != NULL) {
+ 		glGetIntegerv(0x8895 /* GL_ELEMENT_ARRAY_BUFFER_BINDING */, &element_buffer);
+ 		if (element_buffer != 0) {
++			live_why("index buffer", count, 0, 0);
+ 			return false;
+ 		}
+ 	}
+@@ -4467,8 +4481,24 @@
+ 	 * a copy at its own size; a blur's are all made smaller.
+ 	 */
+ 	if (count % 3 != 0 || count > 600) {
++		live_why("not triangles", count, 0, 0);
+ 		return false;
+ 	}
++	/*
++	 * (y193) CoreAnimation's vertex shader takes the texture place as vertex_texcoord0 * texmat0.xy + texmat0.zw: the
++	 * places in the array are scaled by the program's texmat0 (y192: never taken for a copy).
++	 */
++	float scale[2] = { 1.0f, 1.0f };
++	if (e->program != 0) {
++		GLint where = glGetUniformLocation(e->program, "texmat0");
++		GLfloat m[4] = { 1, 1, 0, 0 };
++
++		if (where >= 0) {
++			glGetUniformfv(e->program, where, m);
++			scale[0] = m[0] < 0 ? -m[0] : m[0];
++			scale[1] = m[1] < 0 ? -m[1] : m[1];
++		}
++	}
+ 	float dw = 0, dh = 0;
+ 	for (GLsizei tri = 0; tri < count; tri += 3) {
+ 		const uint8_t *one = indices;
+@@ -4480,15 +4510,18 @@
+ 		}
+ 		if (!float_bounds(e, 0, type, indices != NULL ? (const void *)one : NULL, at, 3, pl, ph) ||
+ 		    !float_bounds(e, 2, type, indices != NULL ? (const void *)one : NULL, at, 3, tl, th)) {
++			live_why("arrays not readable", count, 0, 0);
+ 			return false;
+ 		}
+ 		float tw = ph[0] - pl[0], tht = ph[1] - pl[1];
+-		float sw = (th[0] - tl[0]) * (float)image->width, sh = (th[1] - tl[1]) * (float)image->height;
++		float sw = (th[0] - tl[0]) * scale[0] * (float)image->width, sh = (th[1] - tl[1]) * scale[1] * (float)image->height;
+ 		if (tw < 2.0f || tht < 2.0f || tw > 8192.0f || tht > 8192.0f || sw < 0.0f || sh < 0.0f) {
++			live_why("not pixels", count, tw, sw);
+ 			return false;           /* not pixels (or texture places turned round): left to the swap */
+ 		}
+ 		float rx = sw / tw, ry = sh / tht;
+ 		if (rx < 0.8f || rx > 1.25f || ry < 0.8f || ry > 1.25f) {
++			live_why("not its own size", count, tw, sw);
+ 			return false;           /* made smaller (or bigger): a backdrop's blur */
+ 		}
+ 		dw = tw > dw ? tw : dw;
