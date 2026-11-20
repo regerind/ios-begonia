@@ -8,7 +8,7 @@
  #include "genxml/gen_macros.h"
  
  #include "panvk_buffer.h"
-@@ -91,9 +92,36 @@
+@@ -91,9 +92,56 @@
     } indirect_info;
  };
  
@@ -35,6 +35,26 @@
 +   return mode == 1;
 +}
 +
++/* begonia: PANVK_RESTART: a strip's all-ones index is a restart (see CmdDrawIndexed); PANVK_RESTART_SLICES: in the
++ * 5-second slices of the time since boot whose number modulo 4 is 2 or 3 (a measurement). */
++static bool
++begonia_strip_restart(void)
++{
++   static int mode = -1;
++   if (mode < 0)
++      mode = getenv("PANVK_RESTART_SLICES") ? 2 : getenv("PANVK_RESTART") ? 1 : 0;
++   if (mode == 2) {
++      struct timespec ts;
++#ifdef __APPLE__
++      clock_gettime(CLOCK_UPTIME_RAW, &ts);
++#else
++      clock_gettime(CLOCK_MONOTONIC, &ts);
++#endif
++      return ((ts.tv_sec / 5) & 3) >= 2;
++   }
++   return mode == 1;
++}
++
  static bool
  is_indirect_draw(const struct panvk_draw_data *draw)
  {
@@ -45,7 +65,7 @@
     return draw->info.indirect.buffer_dev_addr != 0 ||
            draw->info.index.index_size != 0;
  }
-@@ -411,6 +439,31 @@
+@@ -411,6 +459,31 @@
     if (result != VK_SUCCESS)
        return result;
  
@@ -77,7 +97,7 @@
     draw->tiler_ctx = &batch->tiler.ctx;
     return VK_SUCCESS;
  }
-@@ -953,6 +1006,14 @@
+@@ -953,6 +1026,14 @@
        /* In case of indirect draw, the descriptor will be patched at runtime */
        cfg.index_count = is_indirect_draw(draw) ? 1 : draw->info.vertex.count;
  
@@ -92,7 +112,7 @@
        cfg.low_depth_cull = cfg.high_depth_cull =
           vk_rasterization_state_depth_clip_enable(rs);
  
-@@ -1918,6 +1979,31 @@
+@@ -1918,6 +1999,89 @@
        },
     };
  
@@ -100,6 +120,62 @@
 +    * to work out: drawn directly, as a draw without indices is, with the vertex job over the indices' range and the
 +    * tiler reading the indices. No helper job (a compute job a draw), and no varyings in the device's one buffer for
 +    * indirect draws. */
++   /* begonia: Metal restarts a strip at the all-ones index always. y294's counters: the vertex shader ran 250 million
++    * times in 5 s for 36000 triangles -- about 65536 vertices a draw: draws of strips came here with the restart off
++    * and their all-ones indices counted as the highest index (and drawn as a vertex). For a strip without the restart
++    * the indices are looked at again: with an all-ones index among them the draw restarts there, and the range is the
++    * other indices'. Counted and said every 4096 draws. */
++   {
++      const VkPrimitiveTopology topo = cmdbuf->vk.dynamic_graphics_state.ia.primitive_topology;
++      const bool strip = topo == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP || topo == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
++      const struct panvk_buffer *ib = cmdbuf->state.gfx.ib.buf;
++      const uint32_t isz = cmdbuf->state.gfx.ib.index_size;
++      static uint32_t n_draws, n_strip, n_valid, n_ones, n_made, n_restart;
++      static uint64_t range_before, range_after;
++      uint32_t mn = UINT32_MAX, mx = 0;
++      bool ones = false, any = false;
++
++      if (draw.cpu_minmax.valid && !draw.info.index.restart_enable && ib && ib->bound_mem &&
++          ib->bound_mem->addr.host) {
++         const uint8_t *bytes = (const uint8_t *)ib->bound_mem->addr.host + ib->bound_offset +
++                                cmdbuf->state.gfx.ib.buf_offset + (uint64_t)firstIndex * isz;
++         const uint32_t all = isz == 4 ? UINT32_MAX : isz == 2 ? UINT16_MAX : UINT8_MAX;
++         for (uint32_t i = 0; i < indexCount; i++) {
++            uint32_t v = isz == 4 ? ((const uint32_t *)bytes)[i]
++                                  : isz == 2 ? ((const uint16_t *)bytes)[i] : bytes[i];
++            if (v == all) {
++               ones = true;
++               continue;
++            }
++            if (v < mn) mn = v;
++            if (v > mx) mx = v;
++            any = true;
++         }
++      }
++      n_draws++;
++      n_strip += strip;
++      n_valid += draw.cpu_minmax.valid;
++      n_ones += ones;
++      n_restart += draw.info.index.restart_enable;
++      if (draw.cpu_minmax.valid)
++         range_before += draw.cpu_minmax.max - draw.cpu_minmax.min + 1;
++      if (ones && strip && any && begonia_strip_restart()) {
++         draw.info.index.restart_enable = true;
++         draw.cpu_minmax.min = mn;
++         draw.cpu_minmax.max = mx;
++         n_made++;
++      }
++      if (draw.cpu_minmax.valid)
++         range_after += draw.cpu_minmax.max - draw.cpu_minmax.min + 1;
++      if ((n_draws & 4095) == 0) {
++         fprintf(stderr, "panvk: begonia: indexed draws %u: strips %u, range known %u, restart on %u, an all-ones index "
++                         "without restart %u (made restarts %u); vertices in all before %llu after %llu; now topology %u "
++                         "index size %u count %u\n",
++                 n_draws, n_strip, n_valid, n_restart, n_ones, n_made, (unsigned long long)range_before,
++                 (unsigned long long)range_after, (unsigned)topo, isz, indexCount);
++      }
++   }
++
 +   if (draw.cpu_minmax.valid && begonia_direct_indexed()) {
 +      const uint32_t range = draw.cpu_minmax.max - draw.cpu_minmax.min + 1;
 +      struct panvk_draw_data direct = {
@@ -116,6 +192,8 @@
 +         .vertex_range = range,
 +         .padded_vertex_count = padded_vertex_count(cmdbuf, range, instanceCount),
 +      };
++
++      direct.info.index.restart_enable = draw.info.index.restart_enable;
 +
 +      panvk_cmd_draw(cmdbuf, &direct);
 +      return;

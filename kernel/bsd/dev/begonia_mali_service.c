@@ -618,7 +618,7 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
  * 3 on, and in 3 the chain's caches are not flushed at its end), with the slices' statistics and the counters.
  */
 static uint32_t overlap_on;
-static bool overlap_now(void) {return overlap_on==1 || (overlap_on==2 && (slice_now()&3)>=2);}
+static bool overlap_now(void) {return overlap_on==1 || (overlap_on==2 && (slice_now()&3)==3);}   /* y295: slice 3 alone */
 static bool draws_only(uint64_t chain) {
  bool tiler=false;
  lck_mtx_lock(vm_lock);
@@ -677,7 +677,7 @@ static int run_pair(uint64_t fchain,uint64_t fseq,uint64_t fqueued,uint64_t vcha
  gap_pre+=began-entered;gap_pre_n++;
  wr(0x2004,0xffffffff);wr(0x1008,0);wr(0x1004,0xffffffff);
  start_slot(0,fchain,(3u<<8)|(3u<<12)|(8u<<16));
- start_slot(1,vchain,(3u<<8)|(((overlap_on==2 && (slice_now()&3)==3)?0u:3u)<<12)|(8u<<16));
+ start_slot(1,vchain,(3u<<8)|(3u<<12)|(8u<<16));
  nanoseconds_to_absolutetime(150*NSEC_PER_MSEC,&deadline);
  deadline+=began;
  unsigned looks=0;uint32_t irq;
