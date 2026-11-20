@@ -59,7 +59,8 @@ ya da onay gerekiyor). En üstteki en önemlisi.
   - Çağrı izi alınamadı (y120/y121).
 - **Denenen:** backboardd'yi Metal'e almak (y123): backboardd çöktü, yenisi kare üretemedi.
 - **Durum:** büyük ölçüde düzeldi (y136–y162), bkz. COZULEN-HATALAR. Doğru kurulumla y161: 47–51 kare/sn, karelerin
-  %27'si 18 ms altında. Henüz tam 60 değil.
+  %27'si 18 ms altında. Henüz tam 60 değil. y193'ten beri widget köşe düzeltmesi (0057–0059) varsayılan: YouTube
+  41–44 kare/sn (y194). `gllivecopy=0` ile 47–51'e döner ama Bugün panelinde köşe işaretleri geri gelir.
 - **Kalan en büyük GPU masrafı (y166–y169):** kare başına ~9 tam 1622×1525 geçiş. CoreAnimation havuzdaki büyük bir
   dokuya (program 5, kopya) makassız tek küçük dörtgen çiziyor; sonuç çoğunlukla saydam. Panfrost geçişin alanını görüş
   alanından aldığı için her biri 2,47 Mpx. Denenenler: temizliği görüş alanına sınırlamak (0056, görüş alanı zaten dokunun
@@ -134,7 +135,8 @@ ya da onay gerekiyor). En üstteki en önemlisi.
   (y163, 0054 açık) kaydırıcı var. Kayıp büyük olasılıkla o kuruluma özgü.
 - **Durum:** gözleniyor (doğru kurulumda görülmedi). Kullanıcı elle görürse yeniden açılır.
 
-## 10e. Bugün panelinde widget köşelerinde renkli işaretler
+## 10e. Bugün panelinde widget köşelerinde renkli işaretler — DÜZELDİ (y193/y199), bkz. COZULEN-HATALAR
+Aşağısı araştırmanın kaydı.
 - **Belirti (y177, otomasyonla ilk kez açılan Bugün paneli):** Her widget'ın köşelerinde küçük renkli L işaretleri:
   sol üst yeşil, sağ üst mavi, sağ alt kırmızı, sol alt beyaz. Yuvarlatılmış köşenin dışında kalan, saydam olması
   gereken pikseller renkli çiziliyor gibi.
