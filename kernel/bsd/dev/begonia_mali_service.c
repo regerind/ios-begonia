@@ -54,6 +54,14 @@ static uint64_t stat_sizes[6],stat_size_us[6];
 static unsigned fail_count,fail_slot;static uint32_t fail_irq,fail_mmu,fail_status;
 static uint64_t fail_seq,fail_head,fail_tail,fail_fault,fail_chain,fail_at,fail_took;
 static int job_bound=-1;
+/*
+ * y217: what the slowest pixel job of each 5 s was asked to draw -- the window server on Metal has full-screen jobs of
+ * 10-24 ms where the GL path's take 3 (y214). The job's framebuffer descriptor, read through the GPU's own tables after
+ * the job ended, said raw with the statistics (72 words: the parameters, then the first render target); decoded on the
+ * host against Mesa's v7.xml. Read only.
+ */
+extern unsigned int ml_phys_read_word_64(addr64_t paddr);
+static uint32_t slow_words[72];static uint64_t slow_took,slow_fbd;
 static uint32_t rd(unsigned o) {return *(volatile uint32_t *)(gpu+o);}
 static void wr(unsigned o,uint32_t v) {*(volatile uint32_t *)(gpu+o)=v;__asm__ volatile("dsb sy":::"memory");}
 static int wait(unsigned o,uint32_t mask,uint32_t value) {
@@ -277,8 +285,29 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
   async_jobs?"queued":"run in the submit");
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
  say_submitters();
+ if(slow_took) {
+  uint64_t us;absolutetime_to_nanoseconds(slow_took,&us);us/=1000;
+  for(unsigned row=0;row<6;row++) {
+   const uint32_t *w=slow_words+12*row;
+   printf("BEGONIA GPU FBD %u (%llu us, %llx): %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\n",row,us,slow_fbd,
+    w[0],w[1],w[2],w[3],w[4],w[5],w[6],w[7],w[8],w[9],w[10],w[11]);
+  }
+  slow_took=0;
+ }
 }
 /* One job on the GPU, start to finish; nobody else touches its registers meanwhile. 1: done. */
+static void note_slow(uint64_t chain,uint64_t took) {
+ if(took<=slow_took)return;
+ lck_mtx_lock(vm_lock);
+ uint64_t at=beg_gpu_vm_translate(&space,chain+40);
+ uint64_t fbd=at?(ml_phys_read_word_64(at)|((uint64_t)ml_phys_read_word_64(at+4)<<32)):0;
+ for(unsigned i=0;i<72;i++) {
+  uint64_t word=fbd?beg_gpu_vm_translate(&space,(fbd&~63ull)+4*i):0;
+  slow_words[i]=word?ml_phys_read_word_64(word):0xdeadbeef;
+ }
+ lck_mtx_unlock(vm_lock);
+ slow_took=took;slow_fbd=fbd;
+}
 static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,unsigned depth) {
  int success=0;
  lck_mtx_lock(vm_lock);
@@ -308,7 +337,7 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
    printf("BEGONIA GPU SERVICE: hardware recovery failed\n");
   }
  }
- job_stats(began,mach_absolute_time(),fragment,queued,depth);
+ { uint64_t ended=mach_absolute_time();if(fragment && success)note_slow(chain,ended-began);job_stats(began,ended,fragment,queued,depth); }
  return success;
 }
 /*
