@@ -303,3 +303,9 @@ Aşağısı araştırmanın kaydı.
 - **Şüphe/sonraki adım:** backboardd ve diğer Metal istemcilerinin bellek kullanımını koşu boyunca izlemek (footprint büyüyor mu), uçuştaki kare
   sayısını sınırlamak (fb_queue), jetsam öncesi serbest sayfa sayısını loglamak.
 - **Durum:** AÇIK. p12 kriteri "backboardd aynı pid'de kalır" bu yüzden garantilenemiyor.
+  - **Bellek ölçümü (y281-y284, kernel BEGONIA MEM, sayfa = 16 KB):** normal bir oturumda serbest sayfa 120-200 (2-3 MB) dibinde, wired ~114-130 bin sayfa
+    (~1.8-2.0 GB), aktif+pasif ~45 bin. Toplam ~177 bin sayfa (~2.8 GB). Yeniden başlamadan hemen sonra (y281) wired 34 bin (~540 MB), serbest 74 bin:
+    yani ~90 bin sayfa (~1.4 GB) wired bellek backboardd ve istemcilerine ait (GPU tamponları/yüzeyler wired). Sistem sürekli sınırda, küçük bir
+    sıçrama jetsam'i (reason 1/0x4, 1/0x5) tetikliyor. Her kare yeni yüzeyde geliyor ("none twice"): 5 sn de ~55-140 yüzey yapılıyor, 52-68 büyük (10 MB).
+    Sonraki: hangi sürecin kaç wired bellek tuttuğunu görmek (süreç başına), PanVK BO/tiler heap boyutu, uçuştaki kare sayısını sınırlamak.
+  - Bu akşam async swap ile (fb_gpuseq=1 metal_swapwait=0) ~20 koşuda 3 yeniden başlama (y272, y274, y281); y282-y284 ve y275 temiz. Oran eski "10 da 1" ile aynı mertebede.
