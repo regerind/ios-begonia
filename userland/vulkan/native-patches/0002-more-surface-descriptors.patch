@@ -1,0 +1,13 @@
+--- a/hakios-native-surface-fd.c	2026-11-20 10:53:10.872680442 +0300
++++ b/hakios-native-surface-fd.c	2026-11-20 10:53:10.873914291 +0300
+@@ -13,7 +13,9 @@
+ #include <sys/stat.h>
+ #include <unistd.h>
+ 
+-#define SURFACE_FD_LIMIT 256
++/* begonia: 4096, not 256: the window server alone holds several hundred surfaces in place, each with a descriptor
++ * for its buffer and one for each texture over it (userland/metal/bridge/begonia_surface.rs). */
++#define SURFACE_FD_LIMIT 4096
+ struct surface_fd { uint64_t token,size; dev_t device; ino_t inode; uint32_t surface,handle; int anchor; };
+ static struct surface_fd records[SURFACE_FD_LIMIT];
+ static uint64_t next_token;

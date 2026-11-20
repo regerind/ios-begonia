@@ -1,0 +1,71 @@
+--- a/src/panfrost/vulkan/panvk_vX_physical_device.c
++++ b/src/panfrost/vulkan/panvk_vX_physical_device.c
+@@ -165,6 +165,11 @@
+       .EXT_extended_dynamic_state3 = true,
+       .EXT_external_memory_acquire_unmodified = true,
+       .EXT_external_memory_dma_buf = true,
++      /* begonia: listed so that the Metal runtime's no-copy route exists at all; every
++       * pointer is refused (GetMemoryHostPointerPropertiesEXT), and the runtime then
++       * takes the dma-bufs its caller makes of the pages (an IOSurface's, through the
++       * transport's surface descriptors). No host pointer is ever imported. */
++      .EXT_external_memory_host = PAN_ARCH == 7,
+       .EXT_global_priority = true,
+       .EXT_global_priority_query = true,
+       .EXT_graphics_pipeline_library = true,
+@@ -1264,6 +1269,9 @@
+       .fullyCoveredFragmentShaderInputVariable = false,
+       .conservativeRasterizationPostDepthCoverage = false,
+ 
++      /* VK_EXT_external_memory_host (begonia: see the extension's line) */
++      .minImportedHostPointerAlignment = 4096,
++
+       /* VK_EXT_custom_border_color */
+       .maxCustomBorderColorSamplers = 32768,
+ 
+--- a/src/panfrost/vulkan/panvk_physical_device.c
++++ b/src/panfrost/vulkan/panvk_physical_device.c
+@@ -1691,6 +1691,20 @@
+       return;
+    }
+ 
++   /* begonia: a buffer for host allocations can be asked for (the Metal runtime asks
++    * before it takes its no-copy route); the allocation itself is refused. */
++   if (pExternalBufferInfo->handleType ==
++       VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT) {
++      pExternalBufferProperties->externalMemoryProperties =
++         (VkExternalMemoryProperties){
++            .externalMemoryFeatures = VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT,
++            .exportFromImportedHandleTypes = 0,
++            .compatibleHandleTypes =
++               VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
++         };
++      return;
++   }
++
+    const VkExternalMemoryHandleTypeFlags supported_handle_types =
+       VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
+       VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+--- a/src/panfrost/vulkan/panvk_device_memory.c
++++ b/src/panfrost/vulkan/panvk_device_memory.c
+@@ -464,6 +464,21 @@
+    return VK_SUCCESS;
+ }
+ 
++/* begonia: no host pointer is imported on this kernel (it maps no user pages into the
++ * GPU's address space); the refusal sends the Metal runtime to its dma-buf route. */
++VKAPI_ATTR VkResult VKAPI_CALL
++panvk_GetMemoryHostPointerPropertiesEXT(
++   VkDevice _device, VkExternalMemoryHandleTypeFlagBits handleType,
++   const void *pHostPointer,
++   VkMemoryHostPointerPropertiesEXT *pMemoryHostPointerProperties)
++{
++   (void)_device;
++   (void)handleType;
++   (void)pHostPointer;
++   pMemoryHostPointerProperties->memoryTypeBits = 0;
++   return VK_ERROR_INVALID_EXTERNAL_HANDLE;
++}
++
+ VKAPI_ATTR VkResult VKAPI_CALL
+ panvk_GetMemoryFdPropertiesKHR(VkDevice _device,
+                                VkExternalMemoryHandleTypeFlagBits handleType,

@@ -696,6 +696,47 @@ tele_hooks.append((' {char warning[700];if(nmb_last_warning(warning,sizeof warni
  ' {char warning[900];const size_t n=nmb_last_warning(warning,sizeof warning);static unsigned long long said;\n'
  '  if(n && said++<40)for(size_t at=0,k=0;at<n && k<14;at+=60,k++)nbConsole([NSString stringWithFormat:@"tele w%02zu %.60s",k,warning+at]);}\n'
  ' nbConsole([NSString stringWithFormat:@"tele M mirror made %llu not %llu uploads %llu (%llu KB) unchanged %llu hashing %llu us",gMirrorMade.load(),gMirrorNot.load(),gMirrorUploads.load(),gMirrorBytes.load()>>10,gMirrorSkips.load(),gMirrorHashUs.load()]);\n'))
+# begonia (y209): IOSurfaces the GPU reaches in place (userland/metal/bridge/begonia_surface.rs says why): a surface's
+# no-copy buffer is made with the transport's surface descriptors as the runtime's dma-buf source. Boot-arg
+# metal_surfaces=0: none (the copies, as before); 1 (default): the window server only; 2: every process.
+tele_hooks.append((' NmbBuffer *handle=nmb_buffer_new_no_copy_releasing(gDevice,alias.bytes,length,options,releasePinnedHost,context);\n',
+ ''' NmbBuffer *handle=nullptr;
+ if(surface && nbSurfacesInPlace()) {
+  handle=nmb_buffer_new_no_copy_surface(gDevice,alias.bytes,length,options,releasePinnedHost,context,IOSurfaceGetID(surface),gSurfaceFdCreate,gSurfaceFdRelease);
+  static std::atomic<unsigned> said{0};
+  if(!handle && said++<6)nbConsole([NSString stringWithFormat:@"tele surface %u of %lu bytes not in place: %s",IOSurfaceGetID(surface),(unsigned long)length,nmb_last_error()]);
+ }
+ if(!handle)handle=nmb_buffer_new_no_copy_releasing(gDevice,alias.bytes,length,options,releasePinnedHost,context);
+'''))
+tele_hooks.append(('static NmbBuffer *pinnedNoCopyBuffer(',
+ '''#include <sys/resource.h>
+static NmbSurfaceFdCreate gSurfaceFdCreate;
+static NmbSurfaceFdRelease gSurfaceFdRelease;
+static bool nbSurfacesInPlace() {
+ static int on=-1;
+ if(on<0) {
+  char args[1024]="";size_t size=sizeof(args)-1;int level=1;
+  if(sysctlbyname("kern.bootargs",args,&size,NULL,0)==0){const char *at=strstr(args,"metal_surfaces=");if(at)level=atoi(at+15);}
+  bool wanted=level>=2 || (level==1 && strcmp(getprogname(),"backboardd")==0);
+  if(wanted) {
+   // (the transport is part of the Vulkan driver's library, which the runtime has opened by now)
+   void *driver=dlopen("/redwood/lib/libvulkan_panfrost.dylib",RTLD_NOW);
+   gSurfaceFdCreate=driver?(NmbSurfaceFdCreate)dlsym(driver,"hakios_native_surface_fd_create"):nullptr;
+   gSurfaceFdRelease=driver?(NmbSurfaceFdRelease)dlsym(driver,"hakios_native_surface_fd_release"):nullptr;
+   wanted=gSurfaceFdCreate && gSurfaceFdRelease;
+   // (each surface in place holds a descriptor or two: the default limit of 256 is the window server's surfaces alone)
+   struct rlimit limit;
+   if(wanted && getrlimit(RLIMIT_NOFILE,&limit)==0 && limit.rlim_cur<8192){limit.rlim_cur=limit.rlim_max<8192?limit.rlim_max:8192;setrlimit(RLIMIT_NOFILE,&limit);}
+   nbConsole([NSString stringWithFormat:@"tele surfaces in place: %s (metal_surfaces=%d)",wanted?"yes":"the transport has no surface descriptors",level]);
+  }
+  on=wanted;
+ }
+ return on;
+}
+static NmbBuffer *pinnedNoCopyBuffer('''))
+tele_hooks.append((' nbConsole([NSString stringWithFormat:@"tele M mirror made',
+ ' {uint64_t sd[3]={};nmb_surface_descriptor_counts(sd);nbConsole([NSString stringWithFormat:@"tele D surface descriptors made %llu refused %llu not-first-page %llu",(unsigned long long)sd[0],(unsigned long long)sd[1],(unsigned long long)sd[2]]);}\n'
+ ' nbConsole([NSString stringWithFormat:@"tele M mirror made'))
 for old,new in tele_hooks:
  assert mtext.count(old)==1,'telemetry hook does not fit: '+old[:90]
  mtext=mtext.replace(old,new)
