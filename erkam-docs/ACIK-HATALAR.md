@@ -105,6 +105,14 @@ ya da onay gerekiyor). En üstteki en önemlisi.
   (modem IMEI'yi oradan okur, salt okunur kalmalı).
 - **Durum:** beklemede.
 
+## 10d. Denetim Merkezi'nde ses kaydırıcısı bazen görünmüyor
+- **Belirti:** Ses kaydırıcısının kutusu tamamen yok (yerinde yalnızca bulanık arka plan).
+- **Kanıt:** y155 ve y156 çekimlerinde yok; y140, y157 ve y159 çekimlerinde var (beyaz dolu kutu).
+- **Şüphe:** Önce köprü 0054'ten (geç temizlik) sanıldı: y157'de 0054 kapalıyken kaydırıcı vardı. Ama y159'da 0054
+  açıkken de var. 0055'in sayaçları da (hedef çizilmeden önce başka yolla kullanıldı mı) hiç artmadı. Büyük olasılıkla
+  ses durumunun geç gelmesine bağlı bir zamanlama hatası (ses sunucusunun ne zaman hazır olduğu); 0054 tamamen aklanmış değil.
+- **Durum:** gözleniyor. Kullanıcı elle bakarsa açık/kapalı hangisi olduğunu söyleyebilir.
+
 ## 11. Diğerleri
 - **Bluetooth:** Denetleyici canlı (WMT açık, HCI reset OK); iOS tarafı yok. Kullanıcı tarafından hiç denenmedi;
   büyük ihtimalle çalışmıyor.
