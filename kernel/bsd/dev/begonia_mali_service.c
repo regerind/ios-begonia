@@ -525,6 +525,8 @@ static void wait_say(unsigned slice) {
  keep("%s",line);
  keep("Iv s%u %u/%u/%u/%u",slice,show_gaps[0],show_gaps[1],show_gaps[2],show_gaps[3]);
  { uint64_t us[5];for(int k=0;k<5;k++){absolutetime_to_nanoseconds(__atomic_exchange_n(&io_t[k],0,__ATOMIC_RELAXED),&us[k]);us[k]/=1000;}
+   { extern uint32_t begonia_park_hits,begonia_park_kept;static uint32_t h,k;
+     keep("Pk s%u kept %u taken %u",slice,begonia_park_kept-k,begonia_park_hits-h);h=begonia_park_hits;k=begonia_park_kept; }
    keep("Io s%u address %llu/%lluus map %llu/%lluus unmap %llu/%lluus mapped %llu enqueue %llu/%lluus",slice,
     __atomic_exchange_n(&io_n[0],0,__ATOMIC_RELAXED),us[0],__atomic_exchange_n(&io_n[1],0,__ATOMIC_RELAXED),us[1],
     __atomic_exchange_n(&io_n[2],0,__ATOMIC_RELAXED),us[2],__atomic_exchange_n(&io_n[3],0,__ATOMIC_RELAXED),

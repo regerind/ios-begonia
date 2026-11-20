@@ -112,6 +112,50 @@ change('\tIOLockLock(gMaliLock);\n\tfor (uint32_t i = 0; fBuffers != NULL && i <
        '\tIOLockLock(gMaliLock);\n\tfClosing = true;\n\tfDyingCount = 0;\n\tfor (uint32_t i = 0; fBuffers != NULL && i < MALI_BUFFERS; i++) {')
 change('\tIOLockLock(gMaliLock);\n\tif (fRequests++ < 32) {',
        '\tIOLockLock(gMaliLock);\n\tif (fDyingCount != 0) {\n\t\treapBuffers();\n\t}\n\tif (fRequests++ < 32) {')
+# y303: a buffer the driver made, closed, is kept for the next one of its size (boot-arg beg_park: 1 always, 2 in the odd
+# 5-second slices of the time since boot). y302 with the home screen swiped: every frame the window server made one buffer
+# of 12.7 MB and closed it again (hakios_mali_address 100 times in 5 s for 100 frames, 3112 pages entered each time): the
+# kernel's pages taken, cleared, entered into the GPU's tables one by one, taken out and given back, with 1100 to 3000 pages
+# free in all; the window server spends a quarter to a third of its processor time in the kernel while it draws. At most two
+# buffers a client, each 4 to 24 MB, of the same size and flags as asked; cleared when taken (a new buffer reads zeros).
+change('(reapBuffers()) */\n};',
+       '(reapBuffers()) */\n\tuint32_t flags;                         /* y303: createBO\'s */\n\tbool made;                              /* by createBO: the driver\'s own pages */\n};')
+change('\tbool                    fClosing;\n',
+       '\tbool                    fClosing;\n\tstruct { IOMemoryDescriptor * memory; uint64_t address, size; uint32_t flags; } fParked[2];   /* y303 */\n')
+change('static IOLock * gMaliLock;\n',
+       'static IOLock * gMaliLock;\n\n'
+       'extern "C" { uint32_t begonia_park_hits, begonia_park_kept; }\n'
+       'static bool\nbegonia_park_now(void)\n{\n\tstatic uint32_t mode = 99;\n\n\tif (mode == 99) {\n\t\tuint32_t value = 0;\n\n'
+       '\t\t(void)PE_parse_boot_argn("beg_park", &value, sizeof(value));\n\t\tmode = value;\n\t}\n'
+       '\tif (mode == 2) {\n\t\tuint64_t ns = 0;\n\n\t\tabsolutetime_to_nanoseconds(mach_absolute_time(), &ns);\n\t\treturn ((ns / 5000000000ull) & 1) != 0;\n\t}\n'
+       '\treturn mode == 1;\n}\n')
+change('\thakios_mali_unmap(b->address, b->size);\n\tb->memory->release();\n\tif (b->surface != NULL) {\n\t\tMiniIOSurfaceDrop(b->surface);\n\t}\n\tbzero(b, sizeof(*b));\n}',
+       '\tif (!fClosing && b->made && b->surface == NULL && b->size >= (4ull << 20) && b->size <= (24ull << 20) && begonia_park_now()) {\n'
+       '\t\tfor (uint32_t k = 0; k < 2; k++) {\n\t\t\tif (fParked[k].memory == NULL) {\n'
+       '\t\t\t\tfParked[k].memory = b->memory;\n\t\t\t\tfParked[k].address = b->address;\n\t\t\t\tfParked[k].size = b->size;\n\t\t\t\tfParked[k].flags = b->flags;\n'
+       '\t\t\t\tbegonia_park_kept++;\n\t\t\t\tbzero(b, sizeof(*b));\n\t\t\t\treturn;\n\t\t\t}\n\t\t}\n\t}\n'
+       '\thakios_mali_unmap(b->address, b->size);\n\tb->memory->release();\n\tif (b->surface != NULL) {\n\t\tMiniIOSurfaceDrop(b->surface);\n\t}\n\tbzero(b, sizeof(*b));\n}')
+change('\tif (size == 0 || size > MALI_BUFFER_MAX) {\n\t\treturn kIOReturnBadArgument;\n\t}\n\tmemory = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,',
+       '\tif (size == 0 || size > MALI_BUFFER_MAX) {\n\t\treturn kIOReturnBadArgument;\n\t}\n'
+       '\tfor (uint32_t k = 0; k < 2; k++) {              /* y303: one kept of this size and these flags */\n'
+       '\t\tif (fParked[k].memory == NULL || fParked[k].size != size || fParked[k].flags != request->flags) {\n\t\t\tcontinue;\n\t\t}\n'
+       '\t\tstruct mali_buffer * kept = NULL;\n\n'
+       '\t\tfor (uint32_t n = 0; n < MALI_BUFFERS; n++) {\n\t\t\tuint32_t i = (fNextBuffer + n) % MALI_BUFFERS;\n\n'
+       '\t\t\tif (fBuffers[i].memory == NULL) {\n\t\t\t\tkept = &fBuffers[i];\n\t\t\t\trequest->handle = i + 1;\n\t\t\t\tfNextBuffer = i + 1;\n\t\t\t\tbreak;\n\t\t\t}\n\t\t}\n'
+       '\t\tif (kept == NULL) {\n\t\t\tbreak;\n\t\t}\n'
+       '\t\tvoid * bytes = ((IOBufferMemoryDescriptor *) fParked[k].memory)->getBytesNoCopy();\n\n'
+       '\t\tif (bytes != NULL) {\n\t\t\tbzero(bytes, (size_t) size);\n\t\t}\n'
+       '\t\tbzero(kept, sizeof(*kept));\n\t\tkept->memory = fParked[k].memory;\n\t\tkept->address = fParked[k].address;\n\t\tkept->size = size;\n'
+       '\t\tkept->flags = request->flags;\n\t\tkept->made = true;\n\t\tfParked[k].memory = NULL;\n\t\trequest->offset = kept->address;\n'
+       '\t\tbegonia_park_hits++;\n\t\treturn kIOReturnSuccess;\n\t}\n'
+       '\tmemory = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,')
+change('\tb->memory = memory;\n\trequest->offset = b->address;\n\thakios_mali_tag(b->address, 1, 0, 0, 0, 0, 0);\n',
+       '\tb->memory = memory;\n\tb->flags = request->flags;\n\tb->made = true;\n\trequest->offset = b->address;\n\thakios_mali_tag(b->address, 1, 0, 0, 0, 0, 0);\n')
+change('\t\t\tfreeBuffer(&fBuffers[i]);\n\t\t}\n\t}\n\tIOLockUnlock(gMaliLock);',
+       '\t\t\tfreeBuffer(&fBuffers[i]);\n\t\t}\n\t}\n'
+       '\tfor (uint32_t k = 0; k < 2; k++) {              /* y303: the kept ones */\n\t\tif (fParked[k].memory != NULL) {\n'
+       '\t\t\tif (hakios_mali_ready()) {\n\t\t\t\thakios_mali_unmap(fParked[k].address, fParked[k].size);\n\t\t\t\tfParked[k].memory->release();\n\t\t\t}\n'
+       '\t\t\tfParked[k].memory = NULL;\n\t\t}\n\t}\n\tIOLockUnlock(gMaliLock);')
 (tree/'iokit/Kernel/begonia.mali.cpp').write_text(text)
 for name in ['hakios.mali_va.h','hakios.mali_cpu_cache.h']:
     shutil.copyfile(source/name,tree/'bsd/dev'/name)
