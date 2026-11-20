@@ -1,17 +1,30 @@
---- a/src/panfrost/vulkan/bifrost/panvk_vX_meta_desc_copy.c
-+++ b/src/panfrost/vulkan/bifrost/panvk_vX_meta_desc_copy.c
-@@ -579,6 +579,14 @@
-                               attrib_buf_idx_offset))
-       return VK_SUCCESS;
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
+@@ -1155,6 +1155,13 @@
+       util_dynarray_append(&batch->jobs, ptr.cpu);
+    }
  
++   /* begonia: copy jobs that go to the GPU (vertex), said with the CPU copy's counters */
 +   {
-+      /* begonia: copy jobs that still go to the GPU (the CPU copy refused or off), said with the CPU copy's counters */
-+      static unsigned gpu_jobs;
-+      if ((++gpu_jobs & 1023) == 1 && getenv("PANVK_CPU_DESC_COPY_STATS"))
-+         fprintf(stderr, "panvk desc copy on the GPU: %u jobs so far (stage with %u descriptors)\n", gpu_jobs,
-+                 copy_info.desc_copy.limits[PANVK_BIFROST_DESC_TABLE_COUNT - 1]);
++      static unsigned gpu_jobs, calls;
++      gpu_jobs += ptr.gpu != 0;
++      if ((++calls & 1023) == 0 && getenv("PANVK_CPU_DESC_COPY_STATS"))
++         fprintf(stderr, "panvk vertex copy calls %u, of them GPU jobs %u\n", calls, gpu_jobs);
 +   }
-+
-    uint64_t desc_copy_rsd = panvk_meta_desc_copy_rsd(dev);
-    if (!desc_copy_rsd)
-       return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    draw->jobs.vertex_copy_desc = ptr;
+    return VK_SUCCESS;
+ }
+@@ -1179,6 +1186,13 @@
+       util_dynarray_append(&batch->jobs, ptr.cpu);
+    }
+ 
++   /* begonia: copy jobs that go to the GPU (fragment), said with the CPU copy's counters */
++   {
++      static unsigned gpu_jobs, calls;
++      gpu_jobs += ptr.gpu != 0;
++      if ((++calls & 1023) == 0 && getenv("PANVK_CPU_DESC_COPY_STATS"))
++         fprintf(stderr, "panvk fragment copy calls %u, of them GPU jobs %u\n", calls, gpu_jobs);
++   }
+    draw->jobs.frag_copy_desc = ptr;
+    return VK_SUCCESS;
+ }
