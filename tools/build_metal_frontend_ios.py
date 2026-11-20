@@ -46,7 +46,11 @@ text=text.replace('tried = true;','tried = true;\n\t\tsetenv("PAN_I_WANT_A_BROKE
  '\t\t\tif (at != NULL) {\n\t\t\t\tchar value[128]; size_t n = strcspn(at + 12, " ");\n'
  '\t\t\t\tif (n < sizeof(value)) { memcpy(value, at + 12, n); value[n] = 0; setenv("PANVK_DEBUG", value, 1); }\n\t\t\t}\n'
  # (y220: metal_contain=0 -- the translator emits no containment checks into shaders: bridge patch 0004)
- '\t\t\tif (strstr(bootArgs, "metal_contain=0") != NULL) setenv("NMB_UNCONTAINED", "1", 1);\n\t\t}')
+ '\t\t\tif (strstr(bootArgs, "metal_contain=0") != NULL) setenv("NMB_UNCONTAINED", "1", 1);\n'
+ # (y234: ca_env=NAME,NAME -- each CoreAnimation switch (CA_DISABLE_INPLACE_SHADERS ...) set to 1 in every process shown the device)
+ '\t\t\tconst char *caEnv = strstr(bootArgs, "ca_env=");\n\t\t\tif (caEnv != NULL) {\n\t\t\t\tchar names[200]; size_t n = strcspn(caEnv + 7, " ");\n'
+ '\t\t\t\tif (n < sizeof(names)) { memcpy(names, caEnv + 7, n); names[n] = 0;\n'
+ '\t\t\t\t\tfor (char *name = names, *next; name && *name; name = next) { next = strchr(name, \',\'); if (next) *next++ = 0; setenv(name, "1", 1); } }\n\t\t\t}\n\t\t}')
 if '#include <sys/sysctl.h>' not in text:text=text.replace('#import <Foundation/Foundation.h>','#import <Foundation/Foundation.h>\n#include <sys/sysctl.h>',1)
 f.write_text(text)
 
