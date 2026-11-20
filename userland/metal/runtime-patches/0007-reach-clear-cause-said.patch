@@ -1,0 +1,36 @@
+--- a/crates/metal2vulkan-runtime/src/clear_reach.rs
++++ b/crates/metal2vulkan-runtime/src/clear_reach.rs
+@@ -523,6 +523,33 @@
+             if extent == area && !left_out.contains(&(index as u32)) && tiles.is_none() {
+                 continue;
+             }
++            // begonia: why this color gets a render pass of its own (10: bounded DontCare tiles,
++            // 11: the clear reaches past the render area, 12: left out of the first instance), with the
++            // first few cases on the console.
++            {
++                let cause = if tiles.is_some() {
++                    10
++                } else if extent != area {
++                    11
++                } else {
++                    12
++                };
++                crate::begonia_site(cause);
++                static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
++                let said = SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                if said < 12 {
++                    use std::io::Write;
++                    if let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("/dev/console") {
++                        let _ = writeln!(
++                            console,
++                            "m2v: reach clear cause {cause} color {index} extent {extent:?} area {area:?} target {:?} fmt {:?} stores {}",
++                            color.target.extent,
++                            color.target.texture.pixel_format(),
++                            stores(color.store)
++                        );
++                    }
++                }
++            }
+             let rects = tiles.map_or_else(|| vec![rect(extent)], |t| t.rects(extent));
+             let (pass, framebuffer, made) =
+                 render_target::reach_pass(device, &color.target, false, extent)?;
