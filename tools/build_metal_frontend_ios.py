@@ -632,7 +632,7 @@ tele_hooks.append((' dispatch_group_wait(_schedulingHandlers,DISPATCH_TIME_FOREV
 # one level, one sample, a plain format, usage without RenderTarget/ShaderWrite, a buffer the CPU can read. Not seen:
 # a GPU write into the buffer's bytes (a blit) -- the mirror keeps the bytes the CPU last had. metal_mirror=0: off.
 tele_hooks.append(('@property(nonatomic) NSUInteger offset,rowBytes;\n',
- '@property(nonatomic) NSUInteger offset,rowBytes;\n@property(nonatomic) BOOL mirror,mirrorFilled;\n@property(nonatomic) uint64_t mirrorHash;\n@property(nonatomic) uint32_t mirrorTexel;\n'))
+ '@property(nonatomic) NSUInteger offset,rowBytes;\n@property(nonatomic) BOOL mirror,mirrorFilled;\n@property(nonatomic) uint64_t mirrorHash;\n@property(nonatomic,strong) NSMutableData *mirrorHashes;\n@property(nonatomic) uint32_t mirrorTexel;\n'))
 tele_hooks.append(('@implementation NBBuffer (Textures)\n- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d offset:(NSUInteger)offset bytesPerRow:(NSUInteger)row {\n',
  '''static std::atomic<unsigned long long> gMirrorMade,gMirrorNot,gMirrorUploads,gMirrorSkips,gMirrorBytes,gMirrorHashUs;
 static bool nbMirrorOn() {
@@ -658,23 +658,34 @@ static void nbMirrorSync(NBTexture *t) {
   base+=t.offset;
   const uint64_t began=nowUs();
   const size_t rowBytes=(size_t)t.descriptor.width*t.mirrorTexel,rows=(size_t)t.descriptor.height,pitch=t.rowBytes;
-  // (four lanes of 8 bytes each: y212's one lane took 13 ms a commit for the window server's ~50 mirrored textures)
-  uint64_t h=0x9e3779b97f4a7c15ull,l0=h,l1=h^0x1111111111111111ull,l2=h^0x2222222222222222ull,l3=h^0x3333333333333333ull;
-  const uint64_t m=0xff51afd7ed558ccdull;
-  for(size_t y=0;y<rows;y++) {
-   const uint8_t *p=base+y*pitch;size_t n=rowBytes;
-   for(;n>=32;n-=32,p+=32) {
-    uint64_t w[4];memcpy(w,p,32);
-    l0=(l0^w[0])*m;l0^=l0>>29;l1=(l1^w[1])*m;l1^=l1>>29;l2=(l2^w[2])*m;l2^=l2>>29;l3=(l3^w[3])*m;l3^=l3>>29;
+  // Four lanes of 8 bytes each. A texture of more than 32 KiB is checked an eighth of its rows at a commit (rows
+  // y%8==phase, the phase moving on each time, a hash kept for each phase): y213's whole hash of every mirrored
+  // texture took 12 ms a commit. A change is then seen within 8 commits at the latest, at once where it touches the
+  // rows of the commit's phase -- which a new bitmap, written top to bottom, does.
+  const unsigned stride=rowBytes*rows>32768?8:1;
+  auto hashRows=[&](unsigned phase)->uint64_t {
+   uint64_t h=0x9e3779b97f4a7c15ull,l0=h,l1=h^0x1111111111111111ull,l2=h^0x2222222222222222ull,l3=h^0x3333333333333333ull;
+   const uint64_t m=0xff51afd7ed558ccdull;
+   for(size_t y=phase;y<rows;y+=stride) {
+    const uint8_t *p=base+y*pitch;size_t n=rowBytes;
+    for(;n>=32;n-=32,p+=32) {
+     uint64_t w[4];memcpy(w,p,32);
+     l0=(l0^w[0])*m;l0^=l0>>29;l1=(l1^w[1])*m;l1^=l1>>29;l2=(l2^w[2])*m;l2^=l2>>29;l3=(l3^w[3])*m;l3^=l3>>29;
+    }
+    for(;n>=8;n-=8,p+=8){uint64_t w;memcpy(&w,p,8);l0=(l0^w)*m;l0^=l0>>29;}
+    uint64_t w=0;if(n)memcpy(&w,p,n);l1=(l1^w^(uint64_t)n)*0xc4ceb9fe1a85ec53ull;l1^=l1>>32;
    }
-   for(;n>=8;n-=8,p+=8){uint64_t w;memcpy(&w,p,8);l0=(l0^w)*m;l0^=l0>>29;}
-   uint64_t w=0;if(n)memcpy(&w,p,n);l1=(l1^w^(uint64_t)n)*0xc4ceb9fe1a85ec53ull;l1^=l1>>32;
-  }
-  h=((l0*31+l1)*31+l2)*31+l3;h^=h>>31;
+   h=((l0*31+l1)*31+l2)*31+l3;return h^(h>>31);
+  };
+  if(!t.mirrorHashes)t.mirrorHashes=[NSMutableData dataWithLength:8*sizeof(uint64_t)];
+  uint64_t *kept=(uint64_t *)t.mirrorHashes.mutableBytes;
+  const unsigned phase=stride>1?(unsigned)(t.mirrorHash++%stride):0;
+  const uint64_t h=hashRows(phase);
+  if(t.mirrorFilled && h==kept[phase]){gMirrorHashUs+=nowUs()-began;gMirrorSkips++;return;}
+  for(unsigned k=0;k<stride;k++)kept[k]=k==phase?h:hashRows(k);
   gMirrorHashUs+=nowUs()-began;
-  if(t.mirrorFilled && h==t.mirrorHash){gMirrorSkips++;return;}
   [(id<MTLTexture>)t replaceRegion:MTLRegionMake2D(0,0,t.descriptor.width,t.descriptor.height) mipmapLevel:0 slice:0 withBytes:base bytesPerRow:pitch bytesPerImage:pitch*rows];
-  t.mirrorHash=h;t.mirrorFilled=YES;gMirrorUploads++;gMirrorBytes+=rowBytes*rows;
+  t.mirrorFilled=YES;gMirrorUploads++;gMirrorBytes+=rowBytes*rows;
  }
 }
 static NBTexture *nbMirrorTexture(NBBuffer *self,MTLTextureDescriptor *d,NSUInteger offset,NSUInteger row) {
