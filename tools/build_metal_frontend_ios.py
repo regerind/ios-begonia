@@ -38,6 +38,91 @@ stext=stext.replace('#include <dlfcn.h>','#include <dlfcn.h>\n#include <mach-o/d
 shown.write_text(stext)
 f=source/'HakiosMetalVK.mm';text=f.read_text();old='#define DEFAULT_ICD "/redwood/lib/libhakios.vk.dylib"'
 assert text.count(old)==1;text=text.replace(old,'#define DEFAULT_ICD "/redwood/lib/libvulkan_panfrost.dylib"')
+# begonia (y301): the translated shaders' directory. y300: a boot's 89 render pipeline states took 5.3 s to make in the window
+# server (60 ms each, to 132 ms, on the thread that draws: the stutter of everything done for the first time), 0.7 s of it the
+# driver's compiling -- the rest the translation, which the runtime keeps on disk for the next process to read; the cache read
+# nothing (hit 0, miss 141). Which directory it got, and whether that one outlives a boot, nobody had looked at: a fixed one on
+# the data volume first (/private/var/mobile/Library/Caches/m2v, then /private/var/db/m2v), and what was chosen and how many
+# entries it held when the process opened it are kept for the telemetry (tele XC).
+old='''	char candidates[4][512] = {};
+'''
+assert text.count(old)==1
+text=text.replace(old,'''	char candidates[6][512] = {};
+	static const unsigned order[6] = {4, 5, 0, 1, 2, 3};
+	strlcpy(candidates[4], "/private/var/mobile/Library/Caches/", sizeof(candidates[4]));
+	strlcpy(candidates[5], "/private/var/db/", sizeof(candidates[5]));
+''')
+old='''	for (unsigned i = 0; i < 4; i++) {
+		if (candidates[i][0] == '\\0') {
+			continue;
+		}
+		strlcat(candidates[i], "m2v", sizeof(candidates[i]));
+		mkdir(candidates[i], 0700);
+		if (access(candidates[i], W_OK) == 0) {
+			strlcpy(path, candidates[i], size);
+			return true;
+		}
+	}
+	return false;
+}
+'''
+assert text.count(old)==1,text.count(old)
+text=text.replace(old,'''	for (unsigned n = 0; n < 6; n++) {
+		const unsigned i = order[n];
+		if (candidates[i][0] == '\\0') {
+			continue;
+		}
+		strlcat(candidates[i], "m2v", sizeof(candidates[i]));
+		mkdir(candidates[i], 0777);
+		if (access(candidates[i], W_OK) == 0) {
+			strlcpy(path, candidates[i], size);
+			hakiosCacheCount(path, i);
+			return true;
+		}
+	}
+	snprintf(gHakiosCacheNote, sizeof(gHakiosCacheNote), "no writable cache directory");
+	return false;
+}
+''')
+old='''static bool
+cacheDirectory(char *path, size_t size)
+'''
+assert text.count(old)==1
+text=text.replace(old,'''#include <dirent.h>
+static char gHakiosCacheNote[700] = "cache directory not chosen yet";
+extern "C" const char *hakiosCacheNote(void) { return gHakiosCacheNote; }
+static unsigned
+hakiosCacheEntries(const char *dir, unsigned depth)
+{
+	unsigned n = 0;
+	DIR *d = opendir(dir);
+	if (d == NULL) {
+		return 0;
+	}
+	for (struct dirent *e; (e = readdir(d)) != NULL && n < 100000;) {
+		if (e->d_name[0] == '.') {
+			continue;
+		}
+		if (e->d_type == DT_DIR && depth < 4) {
+			char sub[1024];
+			snprintf(sub, sizeof(sub), "%s/%s", dir, e->d_name);
+			n += hakiosCacheEntries(sub, depth + 1);
+		} else {
+			n++;
+		}
+	}
+	closedir(d);
+	return n;
+}
+static void
+hakiosCacheCount(const char *path, unsigned candidate)
+{
+	snprintf(gHakiosCacheNote, sizeof(gHakiosCacheNote), "cache %s (candidate %u), %u entries when opened by %s[%d] uid %d", path,
+	    candidate, hakiosCacheEntries(path, 0), getprogname(), (int)getpid(), (int)getuid());
+}
+static bool
+cacheDirectory(char *path, size_t size)
+''')
 text=text.replace('tried = true;','tried = true;\n\t\tsetenv("PAN_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 1);\n'
  # begonia (y218): boot-arg panvk_debug=<options> (PanVK's PANVK_DEBUG, comma-separated, e.g. noafbc): the driver's
  # own switches for an experiment, in every process shown the device.
@@ -616,6 +701,7 @@ static void nbTeleTick() {
  }
  {char warning[700];if(nmb_last_warning(warning,sizeof warning))nbConsole([NSString stringWithFormat:@"tele WW %s",warning]);}
  unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeLock);kinds=(unsigned)gTelePipes.size();}
+ {extern "C" const char *hakiosCacheNote(void);nbConsole([NSString stringWithFormat:@"tele XC %s",hakiosCacheNote()]);}
  nbConsole([NSString stringWithFormat:@"tele X pipes asked %llu kinds %u not-ok %llu warns %llu libs %llu | handlers scheduled n=%llu %lluus max %llu, completed n=%llu %lluus max %llu",
   gTelePipeAsked.load(),kinds,gTelePipeStubs.load(),gTeleWarns.load(),gTeleLibraries.load(),
   (unsigned long long)gTeleScheduled.count.load(),(unsigned long long)gTeleScheduled.total.load(),(unsigned long long)gTeleScheduled.slowest.load(),
