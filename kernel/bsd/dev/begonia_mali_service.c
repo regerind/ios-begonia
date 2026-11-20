@@ -360,6 +360,10 @@ static void prf_say(void) {
    begonia_perf_note("P%u g%llu j%llu/%llu c%llu f%llu q%llu x%llu i%llu t%llu l%llu F%llu L%llu T%llu/%llu W%llu R%llu a%llu h%llu/%llu/%llu/%llu/%llu w%llu s%llu",
     n++,j[6]>>20,j[10]>>20,j[18]>>20,j[63]>>10,c[4]>>20,c[11]>>20,c[26]>>20,c[28]>>20,c[43]>>20,(c[44]+c[45])>>20,c[55]>>20,c[57]>>20,
     c[58]>>20,c[59]>>20,c[62]>>20,m[32]>>20,m[33]>>20,m[37]>>10,m[38]>>10,m[39]>>10,m[40]>>10,m[41]>>10,m[47]>>20,m[48]>>20); }
+ { /* kept too: GPU address space live and the window server's (MB), pages free and wired */
+   extern unsigned int vm_page_free_count,vm_page_wire_count;long long bb=0;
+   for(int i=0;i<8;i++)if(!strncmp(va_proc[i].name,"backboardd",10))bb=va_proc[i].net>>20;
+   begonia_perf_note("V%lld b%lld f%u w%u",(long long)(va_live>>20),bb,vm_page_free_count,vm_page_wire_count); }
  printf("BEGONIA PRF EN: J %llx T %llx M %llx S %llx\n",prf_sum[0][2],prf_sum[1][2],prf_sum[2][2],prf_sum[3][2]);
  for(unsigned b=0;b<4;b++)for(unsigned c=0;c<64;c++)prf_sum[b][c]=0;
  prf_samples=0;
