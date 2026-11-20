@@ -1,0 +1,131 @@
+--- a/crates/metal2vulkan-runtime/src/color_resolve.rs
++++ b/crates/metal2vulkan-runtime/src/color_resolve.rs
+@@ -698,6 +698,7 @@
+                 // (the device keeps the pipeline, this the framebuffer and set, the encoder the
+                 // textures and planes); every image rests in `GENERAL`.
+                 unsafe {
++                    crate::begonia_site(0);
+                     raw.cmd_begin_render_pass(command_buffer, &begin, vk::SubpassContents::INLINE);
+                     raw.cmd_bind_pipeline(
+                         command_buffer,
+--- a/crates/metal2vulkan-runtime/src/sample_planes.rs
++++ b/crates/metal2vulkan-runtime/src/sample_planes.rs
+@@ -1249,6 +1249,7 @@
+                         .render_pass(merge.render_pass)
+                         .framebuffer(*framebuffer)
+                         .render_area(*area);
++                    crate::begonia_site(1);
+                     raw.cmd_begin_render_pass(command_buffer, &begin, vk::SubpassContents::INLINE);
+                     raw.cmd_bind_pipeline(
+                         command_buffer,
+--- a/crates/metal2vulkan-runtime/src/stencil_copy.rs
++++ b/crates/metal2vulkan-runtime/src/stencil_copy.rs
+@@ -724,6 +724,7 @@
+         .framebuffer(framebuffer)
+         .render_area(area)
+         .clear_values(&clear);
++    crate::begonia_site(2);
+     device.cmd_begin_render_pass(raw, &begin, vk::SubpassContents::INLINE);
+     device.cmd_bind_descriptor_sets(raw, vk::PipelineBindPoint::GRAPHICS, layout, 0, &[set], &[]);
+     let viewport = vk::Viewport {
+--- a/crates/metal2vulkan-runtime/src/clear_reach.rs
++++ b/crates/metal2vulkan-runtime/src/clear_reach.rs
+@@ -682,6 +682,7 @@
+                     // 0 or its depth/stencil attachment, is the one cleared; every rectangle lies
+                     // in the area.
+                     unsafe {
++                        crate::begonia_site(3);
+                         raw.cmd_begin_render_pass(
+                             command_buffer,
+                             &begin,
+--- a/crates/metal2vulkan-runtime/src/device/prime.rs
++++ b/crates/metal2vulkan-runtime/src/device/prime.rs
+@@ -1152,6 +1152,7 @@
+                 .render_pass(render_pass)
+                 .framebuffer(framebuffer)
+                 .render_area(area);
++            crate::begonia_site(4);
+             device.cmd_begin_render_pass(
+                 recorded,
+                 &begin,
+--- a/crates/metal2vulkan-runtime/src/sample_interleave.rs
++++ b/crates/metal2vulkan-runtime/src/sample_interleave.rs
+@@ -1191,6 +1191,7 @@
+                             .render_pass(merge.render_pass)
+                             .framebuffer(*framebuffer)
+                             .render_area(area);
++                        crate::begonia_site(5);
+                         raw.cmd_begin_render_pass(
+                             command_buffer,
+                             &begin,
+--- a/crates/metal2vulkan-runtime/src/render/capture.rs
++++ b/crates/metal2vulkan-runtime/src/render/capture.rs
+@@ -555,6 +555,7 @@
+                         .render_pass(pass_raw)
+                         .framebuffer(framebuffer_raw)
+                         .render_area(render_area);
++                    crate::begonia_site(6);
+                     raw.cmd_begin_render_pass(
+                         command_buffer,
+                         &begin,
+--- a/crates/metal2vulkan-runtime/src/render/pass_steps.rs
++++ b/crates/metal2vulkan-runtime/src/render/pass_steps.rs
+@@ -179,6 +179,7 @@
+                 .framebuffer(framebuffer)
+                 .render_area(self.render_area)
+                 .clear_values(&self.clear_values);
++            crate::begonia_site(7);
+             raw.cmd_begin_render_pass(
+                 command_buffer,
+                 &begin,
+@@ -253,6 +254,7 @@
+                     .framebuffer(framebuffer.raw)
+                     .render_area(self.render_area)
+                     .clear_values(&self.clear_values);
++                crate::begonia_site(8);
+                 raw.cmd_begin_render_pass(command_buffer, &begin, vk::SubpassContents::INLINE);
+                 raw.cmd_end_render_pass(command_buffer);
+             }
+--- a/crates/metal2vulkan-runtime/src/nan_clear.rs
++++ b/crates/metal2vulkan-runtime/src/nan_clear.rs
+@@ -262,6 +262,7 @@
+                 // subpass's one color attachment is the one cleared, of an unsigned-integer
+                 // format, which takes `uint32`.
+                 unsafe {
++                    crate::begonia_site(9);
+                     device.cmd_begin_render_pass(raw, &begin, vk::SubpassContents::INLINE);
+                     device.cmd_clear_attachments(raw, &attachments, &rects);
+                     device.cmd_end_render_pass(raw);
+--- a/crates/metal2vulkan-runtime/src/lib.rs
++++ b/crates/metal2vulkan-runtime/src/lib.rs
+@@ -319,3 +319,11 @@
+ pub use work_counts::WorkCounts;
+ pub use wrapped_buffer::{VkBufferMemory, WrappedBufferProblem};
+ pub use ycbcr::{IoSurfaceYCbCr, SurfaceYCbCrMatrix};
++
++/// begonia: how often each place that begins a Vulkan render pass ran (printed with the encoder line, `render.rs`).
++pub(crate) static BEGONIA_SITES: [std::sync::atomic::AtomicU64; 16] =
++    [const { std::sync::atomic::AtomicU64::new(0) }; 16];
++
++pub(crate) fn begonia_site(which: usize) {
++    BEGONIA_SITES[which].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++}
+--- a/crates/metal2vulkan-runtime/src/render.rs
++++ b/crates/metal2vulkan-runtime/src/render.rs
+@@ -3102,13 +3102,14 @@
+                 if let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("/dev/console") {
+                     let _ = writeln!(
+                         console,
+-                        "m2v: enc {n} inst {} multi {} bar {} tile {} disp {} drew {}",
++                        "m2v: enc {n} inst {} multi {} bar {} tile {} disp {} drew {} sites {:?}",
+                         INST.load(Relaxed),
+                         MULTI.load(Relaxed),
+                         BAR.load(Relaxed),
+                         TILE.load(Relaxed),
+                         DISP.load(Relaxed),
+-                        DRAWS.load(Relaxed)
++                        DRAWS.load(Relaxed),
++                        crate::BEGONIA_SITES.iter().map(|s| s.load(Relaxed)).collect::<Vec<_>>()
+                     );
+                 }
+             }
