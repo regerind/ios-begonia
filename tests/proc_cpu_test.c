@@ -424,6 +424,50 @@ sample_window(int w, char hist[NS][4000])
 				if (!tot_n[say]) {
 					continue;
 				}
+				{
+					/* y306: the running samples by image (the name before '!' or '+'; a named function of the shared
+					 * cache counts as "named"): which layer the time is in */
+					static struct { char name[28]; unsigned n; } img[40];
+					char out[900];
+					int ni = 0, oo = snprintf(out, sizeof(out), "PROFILE BB %c IMG n=%u:", "AB"[say], tot_n[say]);
+					memset(img, 0, sizeof(img));
+					for (int i = 0; i < TOT && tot[say][i].name[0]; i++) {
+						char key[28];
+						size_t len = strcspn(tot[say][i].name, "!+");
+						if (tot[say][i].name[len] == 0) {
+							snprintf(key, sizeof(key), "named");
+						} else {
+							snprintf(key, sizeof(key), "%.*s", (int)(len < 27 ? len : 27), tot[say][i].name);
+						}
+						int at = -1;
+						for (int k = 0; k < ni; k++) {
+							if (strcmp(img[k].name, key) == 0) {
+								at = k;
+							}
+						}
+						if (at < 0 && ni < 40) {
+							at = ni++;
+							snprintf(img[at].name, sizeof(img[at].name), "%s", key);
+						}
+						if (at >= 0) {
+							img[at].n += tot[say][i].leaf;
+						}
+					}
+					for (int k = 0; k < 12; k++) {
+						int best = -1;
+						for (int i = 0; i < ni; i++) {
+							if (img[i].n && (best < 0 || img[i].n > img[best].n)) {
+								best = i;
+							}
+						}
+						if (best < 0) {
+							break;
+						}
+						oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " %s %u;", img[best].name, img[best].n);
+						img[best].n = 0;
+					}
+					puts(out);
+				}
 				for (int pass = 0; pass < 2; pass++) {
 					char out[1500];
 					unsigned char used[TOT];
@@ -664,6 +708,10 @@ main(int argc, char **argv)
 				strcat(thistory[k], tl);
 			}
 			(void)tag;           /* (y103: the sampler says more; the log ring is small) */
+			if (k == 0) {           /* y306: the window server's threads, its last windows: is one thread the whole of it */
+				size_t hl = strlen(thistory[k]);
+				printf("BBTHREADS%s\n", thistory[k] + (hl > 700 ? hl - 700 : 0));
+			}
 		}
 		/* the top five of this window */
 		int top[5] = { -1, -1, -1, -1, -1 };

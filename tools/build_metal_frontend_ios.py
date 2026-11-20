@@ -1028,6 +1028,14 @@ old='static void nbMirrorSync(NBTexture *t) {\n @synchronized(t) {\n'
 assert mtext.count(old)==1
 mtext=mtext.replace(old,'static int begThin(void);\nstatic void nbMirrorSync(NBTexture *t) {\n @synchronized(t) {\n'
  '  if(t.mirrorFilled && begThin() && ((gCommits.load()+((uintptr_t)t>>6))&1))return;\n')
+# begonia (y306): boot-arg beg_nw=1, a measurement the owner asked for: the window server is given no texture of a surface
+# of two planes -- the wallpaper is one (y298: a 4:2:0 surface, 3.2 MB of planes) -- to see what the home screen costs
+# without it (he sees the app switcher's cards swipe at 60 frames a second, the home screen's pages at half that).
+old=' if(planes)gSurfacePlanar++;\n'
+assert mtext.count(old)==1
+mtext=mtext.replace(old,old+' {static int nw=-1;if(nw<0){char args[1024]="";size_t size=sizeof(args)-1;\n'
+ '   nw=strcmp(getprogname(),"backboardd")==0 && sysctlbyname("kern.bootargs",args,&size,NULL,0)==0 && strstr(args,"beg_nw=1")!=NULL;}\n'
+ '  if(nw && planes>=2){refuseSurface(9,surface,d,plane,0,0);return nil;}}\n')
 if '#include <time.h>' not in mtext:mtext=mtext.replace('#include <atomic>\n','#include <atomic>\n#include <time.h>\n',1)
 
 frontend = mtext
