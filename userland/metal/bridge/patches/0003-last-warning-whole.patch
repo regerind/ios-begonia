@@ -1,0 +1,12 @@
+--- a/NativeMetalObjects.rs	2026-11-20 10:54:03.292208424 +0300
++++ b/NativeMetalObjects.rs	2026-11-20 10:54:03.295038319 +0300
+@@ -252,7 +252,8 @@
+     if message.severity >= MessageSeverity::Warning {
+         OTHER_MESSAGES[1].fetch_add(1, Relaxed);
+         if let Ok(mut last) = LAST_WARNING.lock() {
+-            *last = message.text.chars().take(160).collect();
++            // (begonia: 700 characters, not 160 -- the reason a texture is shadowed comes after the first 160)
++            *last = message.text.chars().take(700).collect();
+         }
+     } else {
+         OTHER_MESSAGES[0].fetch_add(1, Relaxed);
