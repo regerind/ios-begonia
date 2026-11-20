@@ -190,3 +190,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y267 | 18:04 | y264 ayarı + Today resim doğrulaması (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0 fb_shot_step=12`) | Today resmi DOĞRU (widget köşeleri, blur, y199 yerleşimi). backboardd[13 ayakta, uyarı yok. |
 | y268 | 18:09 | kernel tanılaması: SLOT1 SAMPLES (zincirlerdeki iş türü sıraları: draw başına 2 compute nereden?), y264 ayarı (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
 | y269 | 18:13 | PanVK 0014 sayacı açık (PANVK_CPU_DESC_COPY_STATS=1): CPU descriptor kopyası devrede mi? draw başına 2 compute nereden? (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0 ca_env=PANVK_CPU_DESC_COPY_STATS=1`) | |
+| y270 | 18:17 | y269 tekrarı: ca_env değişken ADI alır (=1 yazılmaz); PanVK 0014 sayacı: CPU descriptor kopyası devrede mi? (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0 ca_env=PANVK_CPU_DESC_COPY_STATS`) | |
