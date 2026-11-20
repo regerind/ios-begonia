@@ -162,3 +162,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y239 | 15:00 | y238'in aynısı + pass satırına tile boyutu ve örnek sayısı (tN sM): tam ekran geçişler 16x16 mı 32x32 mi? | |
 | y240 | 15:04 | PanVK 0016: `panvk_debug=tile2` (tile iki kat, hız karşılaştırması) | |
 | y241 | 15:08 | PanVK 0016: `panvk_debug=passtime,tile2` (tile iki kat + geçiş süreleri) | |
+| y242 | 15:13 | PanVK 0016 (v7'de shaderFloat16 açık): `metal_caps_log=1` (hız + supportsNativeHardwareFP16 değeri) | |
