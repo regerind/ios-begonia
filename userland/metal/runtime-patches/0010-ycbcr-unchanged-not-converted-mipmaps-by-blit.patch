@@ -59,8 +59,8 @@
 +    hash | 1
 +}
 +
-+static BEGONIA_YCBCR: [std::sync::atomic::AtomicU64; 2] =
-+    [const { std::sync::atomic::AtomicU64::new(0) }; 2];
++static BEGONIA_YCBCR: [std::sync::atomic::AtomicU64; 4] =
++    [const { std::sync::atomic::AtomicU64::new(0) }; 4];
 +
  /// The CoreVideo surfaces a texture is made over (the module docs): the OSType, the bits of its
  /// codes and whether they are packed, which the format's must be, its range, and how its chroma
@@ -96,7 +96,7 @@
      /// The planes it converts, and the bytes of their buffer they lie in.
      pub(super) fn source(&self) -> (YCbCrPlanes, Range<u64>) {
          (self.source.0, self.source.1.clone())
-@@ -544,6 +616,48 @@
+@@ -544,6 +616,61 @@
          command_buffer: vk::CommandBuffer,
          source: vk::Buffer,
      ) {
@@ -115,7 +115,20 @@
 +                    let (start, end) = (self.source.1.start as usize, self.source.1.end as usize);
 +                    // SAFETY: the planes' bytes lie in the buffer (checked when the texture was made), which
 +                    // is held here.
++                    let began = std::time::Instant::now();
 +                    let hash = unsafe { begonia_sparse_hash(base.as_ptr().add(start), end.saturating_sub(start)) };
++                    let looked = BEGONIA_YCBCR[2].fetch_add(began.elapsed().as_nanos() as u64, Relaxed);
++                    let looks = BEGONIA_YCBCR[3].fetch_add(1, Relaxed) + 1;
++                    if looks % 256 == 0 {
++                        eprintln!(
++                            "m2v: begonia: ycbcr looked at {looks} times, {} us in all; not recorded {}, recorded {}; planes {} bytes, groups {:?}",
++                            looked / 1000,
++                            BEGONIA_YCBCR[0].load(Relaxed),
++                            BEGONIA_YCBCR[1].load(Relaxed),
++                            end.saturating_sub(start),
++                            self.groups
++                        );
++                    }
 +                    let streak = if self.last.swap(hash, Relaxed) == hash {
 +                        self.streak.fetch_add(1, Relaxed) + 1
 +                    } else {

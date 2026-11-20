@@ -1,0 +1,212 @@
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -959,6 +959,140 @@
+    }
+ }
+ 
++/* begonia: two things the translated CoreAnimation fragment shaders do at every pixel that change no bit of the result.
++ *
++ * 1. Metal's `half` vectors come as 32-bit floats narrowed to halves in pairs, added or multiplied, widened one by one,
++ *    put in a vec4 and narrowed again: with the operations taken apart to scalars, NIR's own rules see the widening
++ *    of a half narrowed straight back (exact) and drop both.
++ * 2. A `half` read from a buffer is read as a word and decoded by hand to a 32-bit float (thirteen operations: the
++ *    exponent rebased, denormals by a multiplication, infinities, the sign), then narrowed to a half -- which is the
++ *    word's low 16 bits again. The narrowing takes the bits.
++ *
++ * Measured on the host (tests/bifrost_stats.c, Bifrost v7), instructions: the 3-tap blur 130 -> 88, the 7-tap 142 ->
++ * 86, the 14-tap 345 -> 162, a plain image layer 85 -> 63. The decoding's identity holds for every one of the 65536
++ * halves (NaN payloads aside), checked by computing it. PANVK_FRAG_PREPASS turns it on. */
++static nir_alu_instr *
++begonia_alu(nir_def *def, nir_op op)
++{
++   if (nir_def_instr(def)->type != nir_instr_type_alu)
++      return NULL;
++   nir_alu_instr *alu = nir_instr_as_alu(nir_def_instr(def));
++   return alu->op == op && alu->def.num_components == 1 ? alu : NULL;
++}
++
++/* `alu` is `op(x, constant)` (either order where it commutes): x, and the constant in *k */
++static nir_def *
++begonia_with_const(nir_alu_instr *alu, bool commutes, uint64_t *k)
++{
++   if (!alu)
++      return NULL;
++   for (unsigned i = commutes ? 0 : 1; i < 2; i++) {
++      if (nir_src_is_const(alu->src[i].src) && alu->src[1 - i].swizzle[0] == 0 &&
++          alu->src[1 - i].src.ssa->num_components == 1) {
++         *k = nir_src_as_uint(alu->src[i].src);
++         return alu->src[1 - i].src.ssa;
++      }
++   }
++   return NULL;
++}
++
++/* the word whose low 16 bits `bits` decodes to a 32-bit float, or NULL */
++static nir_def *
++begonia_decoded_half(nir_def *bits)
++{
++   nir_alu_instr *join = begonia_alu(bits, nir_op_ior);
++   if (!join || bits->bit_size != 32)
++      return NULL;
++   for (unsigned side = 0; side < 2; side++) {
++      uint64_t k;
++      /* the sign: (x & 0x8000) << 16 */
++      nir_def *sign = begonia_with_const(begonia_alu(join->src[side].src.ssa, nir_op_ishl), false, &k);
++      if (!sign || k != 16 || join->src[side].swizzle[0] != 0)
++         continue;
++      nir_def *x = begonia_with_const(begonia_alu(sign, nir_op_iand), true, &k);
++      if (!x || k != 0x8000)
++         continue;
++      /* the rest: m < 0x400 ? u2f(m) * 2^-24 : (m << 13) + (m >= 0x7c00 ? 0x70000000 : 0x38000000), m = x & 0x7fff */
++      nir_alu_instr *pick = begonia_alu(join->src[1 - side].src.ssa, nir_op_bcsel);
++      if (!pick || join->src[1 - side].swizzle[0] != 0)
++         continue;
++      nir_def *m = begonia_with_const(begonia_alu(pick->src[0].src.ssa, nir_op_ult), false, &k);
++      if (!m || k != 0x400)
++         continue;
++      nir_def *mx = begonia_with_const(begonia_alu(m, nir_op_iand), true, &k);
++      if (mx != x || k != 0x7fff)
++         continue;
++      nir_alu_instr *small = begonia_alu(pick->src[1].src.ssa, nir_op_fmul);
++      nir_alu_instr *big = begonia_alu(pick->src[2].src.ssa, nir_op_iadd);
++      if (!small || !big)
++         continue;
++      bool small_ok = false;
++      for (unsigned i = 0; i < 2; i++) {
++         nir_alu_instr *as_float = begonia_alu(small->src[i].src.ssa, nir_op_u2f32);
++         if (as_float && as_float->src[0].src.ssa == m && nir_src_is_const(small->src[1 - i].src) &&
++             nir_src_as_float(small->src[1 - i].src) == 0x1p-24)
++            small_ok = true;
++      }
++      bool big_ok = false;
++      for (unsigned i = 0; i < 2; i++) {
++         nir_def *shifted = begonia_with_const(begonia_alu(big->src[i].src.ssa, nir_op_ishl), false, &k);
++         nir_alu_instr *bias = begonia_alu(big->src[1 - i].src.ssa, nir_op_bcsel);
++         if (shifted != m || k != 13 || !bias)
++            continue;
++         nir_def *top = begonia_with_const(begonia_alu(bias->src[0].src.ssa, nir_op_uge), false, &k);
++         if (top == m && k == 0x7c00 && nir_src_is_const(bias->src[1].src) && nir_src_is_const(bias->src[2].src) &&
++             nir_src_as_uint(bias->src[1].src) == 0x70000000 && nir_src_as_uint(bias->src[2].src) == 0x38000000)
++            big_ok = true;
++      }
++      if (small_ok && big_ok)
++         return x;
++   }
++   return NULL;
++}
++
++static bool
++begonia_half_bits_instr(nir_builder *b, nir_instr *instr, void *data)
++{
++   (void)data;
++   if (instr->type != nir_instr_type_alu)
++      return false;
++   nir_alu_instr *narrow = nir_instr_as_alu(instr);
++   if (narrow->op != nir_op_f2f16 && narrow->op != nir_op_f2f16_rtne)
++      return false;
++   if (narrow->def.num_components != 1 || narrow->src[0].src.ssa->num_components != 1)
++      return false;
++   nir_def *x = begonia_decoded_half(narrow->src[0].src.ssa);
++   if (!x)
++      return false;
++   b->cursor = nir_before_instr(instr);
++   nir_def_replace(&narrow->def, nir_u2u16(b, x));
++   return true;
++}
++
++static unsigned
++begonia_fragment_prepass(nir_shader *nir)
++{
++   bool halves = false;
++   if (nir->info.stage != MESA_SHADER_FRAGMENT)
++      return 0;
++   NIR_PASS(_, nir, nir_lower_alu_to_scalar, NULL, NULL);
++   NIR_PASS(_, nir, nir_lower_phis_to_scalar, NULL, NULL);
++   for (unsigned i = 0; i < 4; i++) {
++      NIR_PASS(_, nir, nir_opt_copy_prop);
++      NIR_PASS(_, nir, nir_opt_algebraic);
++      NIR_PASS(_, nir, nir_opt_constant_folding);
++      NIR_PASS(_, nir, nir_opt_cse);
++      NIR_PASS(_, nir, nir_opt_dce);
++   }
++   NIR_PASS(halves, nir, nir_shader_instructions_pass, begonia_half_bits_instr, nir_metadata_control_flow, NULL);
++   if (halves) {
++      NIR_PASS(_, nir, nir_opt_copy_prop);
++      NIR_PASS(_, nir, nir_opt_dce);
++      NIR_PASS(_, nir, nir_opt_cse);
++   }
++   return 1 + halves;
++}
++
+ static void
+ panvk_lower_nir_io(nir_shader *nir)
+ {
+@@ -1058,6 +1192,15 @@
+    /* We're going to modify this so make our own copy to be nicer to callers */
+    struct pan_compile_inputs input = *compile_input;
+ 
++   /* begonia: see begonia_fragment_prepass */
++   {
++      static int prepass = -1;
++      if (prepass < 0)
++         prepass = getenv("PANVK_FRAG_PREPASS") != NULL;
++      if (prepass)
++         begonia_fragment_prepass(nir);
++   }
++
+    if (nir->info.stage == MESA_SHADER_VERTEX)
+       NIR_PASS(_, nir, nir_shader_intrinsics_pass, panvk_lower_load_vs_input,
+                nir_metadata_control_flow, NULL);
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
+@@ -1051,6 +1051,50 @@
+    const bool writes_point_size =
+       vs->info.vs.writes_point_size && draw->info.prim == MESA_PRIM_POINTS;
+ 
++   /* begonia: what a pass is made of, said now and then: the render target's size, its draws and the fragment
++    * shaders' code sizes with their draw counts (a code size names the CoreAnimation shader: tests/bifrost_stats.c
++    * gives the sizes on the host). PANVK_PASS_SAID. One pass in 48 of the big ones that are not the screen, one in
++    * 96 of the screen's. */
++   {
++      static int said = -1;
++      static struct {
++         void *batch;
++         uint32_t w, h, draws, n;
++         uint32_t size[8], count[8];
++      } pass;
++      static uint32_t big, screen;
++      if (said < 0)
++         said = getenv("PANVK_PASS_SAID") != NULL;
++      if (said) {
++         if (pass.batch != (void *)cmdbuf->cur_batch) {
++            const bool is_screen = pass.w >= 1080 && pass.h >= 2200;
++            if (pass.batch && pass.w * pass.h >= 400000 &&
++                ((is_screen ? ++screen % 96 : ++big % 48) == 0)) {
++               char line[256];
++               int o = snprintf(line, sizeof(line), "panvk: begonia: pass %ux%u, %u draws:", pass.w, pass.h, pass.draws);
++               for (unsigned i = 0; i < pass.n && o < (int)sizeof(line) - 24; i++)
++                  o += snprintf(line + o, sizeof(line) - o, " fs %u x%u,", pass.size[i], pass.count[i]);
++               fprintf(stderr, "%s\n", line);
++            }
++            memset(&pass, 0, sizeof(pass));
++            pass.batch = (void *)cmdbuf->cur_batch;
++            pass.w = cmdbuf->state.gfx.render.fb.layout.width_px;
++            pass.h = cmdbuf->state.gfx.render.fb.layout.height_px;
++         }
++         const struct panvk_shader *fs_shader = get_fs(cmdbuf);
++         const struct panvk_shader_variant *fsv = fs_shader ? panvk_shader_only_variant(fs_shader) : NULL;
++         const uint32_t size = fsv ? fsv->bin_size : 0;
++         unsigned i;
++         for (i = 0; i < pass.n && pass.size[i] != size; i++)
++            ;
++         if (i == pass.n && pass.n < 8)
++            pass.size[pass.n++] = size;
++         if (i < 8)
++            pass.count[i]++;
++         pass.draws++;
++      }
++   }
++
+    pan_pack(primsz, PRIMITIVE_SIZE, cfg) {
+       if (writes_point_size) {
+          cfg.size_array = draw->psiz;

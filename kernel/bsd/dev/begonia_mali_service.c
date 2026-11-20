@@ -477,6 +477,33 @@ static void frag_say(unsigned slice) {
  }
  keep("%s",line);
 }
+/* y297: who sleeps in hakios_mali_wait() and for how long (y296: with the GPU 75% busy the callers slept 8 s in 5:
+ * somebody waits for the GPU where it need not). By thread: its process, how often, the time in all, how many of the
+ * waits had no end set (over 1 s). Kept with every slice; pid 0 is the display driver's wait for a frame. */
+extern uint64_t thread_tid(thread_t thread);
+static struct {int pid;uint64_t tid;char name[12];uint32_t n,forever;uint64_t total;} waiters[8];
+static void wait_account(uint64_t slept,uint64_t timeout) {
+ int pid=proc_selfpid(),slot=-1,least=0;uint64_t tid=thread_tid(current_thread());
+ for(int i=0;i<8;i++) {
+  if(waiters[i].n && waiters[i].pid==pid && waiters[i].tid==tid){slot=i;break;}
+  if(waiters[i].total<waiters[least].total)least=i;
+ }
+ if(slot<0) {
+  slot=least;waiters[slot].pid=pid;waiters[slot].tid=tid;waiters[slot].n=0;waiters[slot].forever=0;waiters[slot].total=0;
+  waiters[slot].name[0]=0;proc_selfname(waiters[slot].name,sizeof(waiters[slot].name));
+ }
+ waiters[slot].n++;waiters[slot].total+=slept;if(timeout>1000000000ull)waiters[slot].forever++;
+}
+static void wait_say(unsigned slice) {
+ char line[380];int o=snprintf(line,sizeof line,"Wt s%u",slice);
+ for(int i=0;i<8;i++)if(waiters[i].n && o<(int)sizeof(line)-60) {
+  uint64_t ms;absolutetime_to_nanoseconds(waiters[i].total,&ms);ms/=1000000;
+  o+=snprintf(line+o,sizeof(line)-o," %s[%d]%llx:%u/%llums/%u",waiters[i].name,waiters[i].pid,waiters[i].tid&0xfff,waiters[i].n,ms,
+   waiters[i].forever);
+  waiters[i].n=0;waiters[i].total=0;waiters[i].forever=0;
+ }
+ keep("%s",line);
+}
 static void say_submitters(void);
 static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queued,unsigned depth) {
  uint64_t took=ended-began,ns;
@@ -557,7 +584,7 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
     stat_jobs,stat_fragment,pair_n,busy*100/ns,(long long)(va_live>>20),bb,vm_page_free_count,vm_page_wire_count);
    keep_frames=0;pair_n=0; }
  keep("K s%u compute %llu/%llums draws %llu/%llums",stat_slice,s1_kind_jobs[0],s1_kind_us[0]/1000,s1_kind_jobs[1],s1_kind_us[1]/1000);
- frag_say(stat_slice);probe_say(stat_slice);prf_say(stat_slice);keep_say();
+ frag_say(stat_slice);probe_say(stat_slice);wait_say(stat_slice);prf_say(stat_slice);keep_say();
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
@@ -874,6 +901,7 @@ bool hakios_mali_wait(uint64_t seq,uint64_t timeout) {
   lck_mtx_unlock(queue_lock);
   __atomic_fetch_add(&stat_sleeps,1,__ATOMIC_RELAXED);
   __atomic_fetch_add(&stat_slept,mach_absolute_time()-asleep,__ATOMIC_RELAXED);
+  wait_account(mach_absolute_time()-asleep,timeout);
  }
  /*
   * begonia (y43): a job that failed has ended too. Answered "not done", a program's wait for it (WAIT_BO: a timeout) was
