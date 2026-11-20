@@ -692,6 +692,9 @@ tele_hooks.append((' self.committed=YES;\n self.committedUs=nowUs();\n nbTeleTic
  ' self.committed=YES;\n self.committedUs=nowUs();\n nbTeleTick();\n'
  ' if(nbMirrorOn() && !self.encodeFailure)for(id owner in [_resourceOwners copy])if([owner isKindOfClass:[NBTexture class]] && [(NBTexture *)owner mirror])nbMirrorSync((NBTexture *)owner);'))
 tele_hooks.append((' {char warning[700];if(nmb_last_warning(warning,sizeof warning))nbConsole([NSString stringWithFormat:@"tele WW %s",warning]);}\n',
+ # (the runtime's last warning whole, in pieces of 60 characters: the console cuts and interleaves long lines)
+ ' {char warning[900];const size_t n=nmb_last_warning(warning,sizeof warning);static unsigned long long said;\n'
+ '  if(n && said++<40)for(size_t at=0,k=0;at<n && k<14;at+=60,k++)nbConsole([NSString stringWithFormat:@"tele w%02zu %.60s",k,warning+at]);}\n'
  ' nbConsole([NSString stringWithFormat:@"tele M mirror made %llu not %llu uploads %llu (%llu KB) unchanged %llu hashing %llu us",gMirrorMade.load(),gMirrorNot.load(),gMirrorUploads.load(),gMirrorBytes.load()>>10,gMirrorSkips.load(),gMirrorHashUs.load()]);\n'))
 for old,new in tele_hooks:
  assert mtext.count(old)==1,'telemetry hook does not fit: '+old[:90]
