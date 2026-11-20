@@ -5,7 +5,7 @@
  }
  
 +/*
-+ * begonia, boot-arg sb_nowall=1 (a measurement the owner asked for, never a default): SpringBoard's wallpaper windows
++ * begonia, boot-arg sb_nowall=1 (first a measurement the owner asked for; p18 carries it at his word): SpringBoard's wallpaper windows
 + * hidden, so that the window server has no wallpaper at all to compose. y306's beg_nw=1 only refused the window server
 + * the wallpaper's two-plane surface as a texture: the 1041x1180 pass went, but CoreAnimation drew the wallpaper another
 + * way and the shot still showed it. Here every window whose class is named after the wallpaper or the poster is hidden,
@@ -45,9 +45,9 @@
 +	if (nowall_rounds == 0 || nowall_rounds == 6) {
 +		say("hakios: SpringBoard: no wallpaper: %lu of %lu windows hidden%s%s\n", hidden, count, names[0] ? ";" : "", names);
 +	}
-+	if (++nowall_rounds < 20) {
-+		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 3 * (int64_t)NSEC_PER_SEC), dispatch_get_main_queue(), NULL, nowall_hide);
-+	}
++	nowall_rounds += nowall_rounds < 1000;          /* (p18: for good, the owner wants the phone without one: every 3 s in the first minute, then every 10) */
++	dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, (nowall_rounds < 20 ? 3 : 10) * (int64_t)NSEC_PER_SEC), dispatch_get_main_queue(), NULL,
++	    nowall_hide);
 +}
 +
 +static void
