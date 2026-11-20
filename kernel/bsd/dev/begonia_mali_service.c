@@ -54,6 +54,7 @@ static uint64_t stat_sizes[6],stat_size_us[6];
 /* y260: what the vertex/tiler slot's time is: chains with a compute job, chains of vertex/tiler jobs alone, others
  * (read-only: the jobs' type words are looked at, nothing is written). */
 static uint64_t s1_kind_jobs[3],s1_kind_us[3];
+static uint64_t s1_types[16],s1_chain_len_sum;   /* y261: every job of slot 1's chains by type (4 compute, 5 vertex, 7 tiler, ...) */
 static unsigned fail_count,fail_slot;static uint32_t fail_irq,fail_mmu,fail_status;
 static uint64_t fail_seq,fail_head,fail_tail,fail_fault,fail_chain,fail_at,fail_took;
 static int job_bound=-1;
@@ -288,6 +289,11 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
   async_jobs?"queued":"run in the submit");
  printf("BEGONIA GPU SLOT1: chains with a compute job %llu, %llu ms; vertex/tiler only %llu, %llu ms; other %llu, %llu ms\n",
   s1_kind_jobs[0],s1_kind_us[0]/1000,s1_kind_jobs[1],s1_kind_us[1]/1000,s1_kind_jobs[2],s1_kind_us[2]/1000);
+ printf("BEGONIA GPU SLOT1 TYPES: jobs in slot 1's chains %llu: null %llu, write %llu, flush %llu, compute %llu, vertex %llu, "
+  "geometry %llu, tiler %llu, fused %llu, other %llu\n",s1_chain_len_sum,s1_types[1],s1_types[2],s1_types[3],s1_types[4],
+  s1_types[5],s1_types[6],s1_types[7],s1_types[8],
+  s1_chain_len_sum-s1_types[1]-s1_types[2]-s1_types[3]-s1_types[4]-s1_types[5]-s1_types[6]-s1_types[7]-s1_types[8]);
+ for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
  say_submitters();
@@ -324,8 +330,9 @@ static unsigned chain_kind(uint64_t chain) {
   if(!at){kind=2;break;}
   unsigned type=(ml_phys_read_word_64(at+16)>>1)&0x7f;
   uint64_t next=ml_phys_read_word_64(at+24)|((uint64_t)ml_phys_read_word_64(at+28)<<32);
-  if(type==4){kind=0;break;}
-  if(type!=2 && type!=3 && type!=5 && type!=6 && type!=7 && type!=8)kind=2;
+  s1_types[type&15]++;s1_chain_len_sum++;
+  if(type==4)kind=0;
+  if(type!=2 && type!=3 && type!=4 && type!=5 && type!=6 && type!=7 && type!=8 && kind!=0)kind=2;
   chain=next;
  }
  lck_mtx_unlock(vm_lock);
