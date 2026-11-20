@@ -738,6 +738,16 @@ tele_hooks.append((' auto attachment=[&](MTLRenderPassAttachmentDescriptor *a,Nm
 '''))
 tele_hooks.append((' unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeLock);kinds=(unsigned)gTelePipes.size();}\n nbConsole([NSString stringWithFormat:@"tele X pipes',
  ' gTelePasses=16;\n unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeLock);kinds=(unsigned)gTelePipes.size();}\n nbConsole([NSString stringWithFormat:@"tele X pipes'))
+# (y221, an experiment: boot-arg metal_nodraw=1 -- the window server's draws are dropped, its passes kept: what a
+# full-screen pass costs with nothing drawn in it. The screen stays as the passes clear it.)
+tele_hooks.append(('static void completed(void *context);\nstatic void scheduled(void *context);\n',
+ 'static void completed(void *context);\nstatic void scheduled(void *context);\n'
+ 'static bool nbNoDraw() {\n static int on=-1;\n if(on<0){char args[1024]="";size_t size=sizeof(args)-1;\n'
+ '  on=strcmp(getprogname(),"backboardd")==0 && sysctlbyname("kern.bootargs",args,&size,NULL,0)==0 && strstr(args,"metal_nodraw=1")!=NULL;}\n return on;\n}\n'))
+tele_hooks.append((' if(self.stub)return;\n gDraws++;self.commandBuffer->encodedWork.draws++;\n [self check:nmb_render_draw(',
+ ' if(self.stub || nbNoDraw())return;\n gDraws++;self.commandBuffer->encodedWork.draws++;\n [self check:nmb_render_draw('))
+tele_hooks.append((' if(self.stub)return;\n if(![(id)b isKindOfClass:[NBBuffer class]]){[self.commandBuffer refuse:@"foreign index buffer"];return;}',
+ ' if(self.stub || nbNoDraw())return;\n if(![(id)b isKindOfClass:[NBBuffer class]]){[self.commandBuffer refuse:@"foreign index buffer"];return;}'))
 # (y212: CoreAnimation's own bitmaps -- glyphs, masks -- come through the private newLinearTextureWithDescriptor:...,
 # over its newBufferWithBytesNoCopy buffers; one image of one slice is the same texture)
 tele_hooks.append((' NmbTextureDescriptor descriptor;if(!textureDescriptor(d,&descriptor))return nil;\n NmbTexture *handle=nmb_texture_new_linear(',
