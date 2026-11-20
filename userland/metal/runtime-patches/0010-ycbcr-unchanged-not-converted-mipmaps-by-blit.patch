@@ -1,6 +1,6 @@
 --- a/crates/metal2vulkan-runtime/src/ycbcr.rs
 +++ b/crates/metal2vulkan-runtime/src/ycbcr.rs
-@@ -144,6 +144,64 @@
+@@ -144,6 +144,66 @@
  use metal2vulkan::metal::PixelFormat;
  use std::ops::Range;
  
@@ -42,19 +42,21 @@
 +    begonia_switch(&CELL, "M2V_YSKIP", 1)
 +}
 +
-+/// begonia: every 64th byte's word of `len` bytes at `bytes`, hashed; never 0.
++/// begonia: every 256th byte's word of `len` bytes at `bytes` from byte `64 * phase` on, hashed;
++/// never 0. (y297: every 64th byte's word of a surface took 520 us a look, three looks a frame; a
++/// look now reads a quarter, and four looks in a row read what one read.)
 +///
 +/// # Safety
 +///
 +/// `len` bytes at `bytes` are readable.
-+unsafe fn begonia_sparse_hash(bytes: *const u8, len: usize) -> u64 {
++unsafe fn begonia_sparse_hash(bytes: *const u8, len: usize, phase: usize) -> u64 {
 +    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-+    let mut at = 0usize;
++    let mut at = 64 * (phase & 3);
 +    while at + 8 <= len {
 +        // SAFETY: the caller's contract; the word lies within `len`.
 +        let word = unsafe { std::ptr::read_unaligned(bytes.add(at).cast::<u64>()) };
 +        hash = (hash ^ word).wrapping_mul(0x0000_0100_0000_01b3).rotate_left(23);
-+        at += 64;
++        at += 256;
 +    }
 +    hash | 1
 +}
@@ -65,25 +67,27 @@
  /// The CoreVideo surfaces a texture is made over (the module docs): the OSType, the bits of its
  /// codes and whether they are packed, which the format's must be, its range, and how its chroma
  /// plane is subsampled. `420v` and `420f` are 8-bit 4:2:0, `422v` and `422f` 4:2:2, `444v` and
-@@ -420,6 +478,11 @@
+@@ -420,6 +480,12 @@
      kernel: OwnedKernel,
      sets: OwnedSets,
      groups: [u32; 2],
 +    /// begonia: the buffer the planes lie in (its bytes are looked at before a conversion), the hash of
 +    /// the bytes at the conversion before, and how many in a row had it (`record`).
 +    watch: Option<super::buffer::WeakBuffer>,
-+    last: std::sync::atomic::AtomicU64,
++    last: [std::sync::atomic::AtomicU64; 4],
 +    streak: std::sync::atomic::AtomicU32,
++    turn: std::sync::atomic::AtomicU32,
  }
  
  impl YCbCrConversion {
-@@ -482,9 +545,18 @@
+@@ -482,9 +548,19 @@
              kernel,
              sets,
              groups,
 +            watch: None,
-+            last: std::sync::atomic::AtomicU64::new(0),
++            last: [const { std::sync::atomic::AtomicU64::new(0) }; 4],
 +            streak: std::sync::atomic::AtomicU32::new(0),
++            turn: std::sync::atomic::AtomicU32::new(0),
          })
      }
  
@@ -96,7 +100,7 @@
      /// The planes it converts, and the bytes of their buffer they lie in.
      pub(super) fn source(&self) -> (YCbCrPlanes, Range<u64>) {
          (self.source.0, self.source.1.clone())
-@@ -544,6 +616,61 @@
+@@ -544,6 +620,62 @@
          command_buffer: vk::CommandBuffer,
          source: vk::Buffer,
      ) {
@@ -104,7 +108,7 @@
 +        // a compute thread a texel -- because the surface's bytes are the CPU's to write unseen. Measured on the
 +        // home screen (y295): about three compute chains a frame, 5.8 ms each on all four cores of the GPU, a
 +        // third of the frame's GPU time, for a surface that does not change. A sparse hash of the bytes tells:
-+        // as at the two conversions recorded before (two: one of them may have been recorded into a command
++        // as at the eight looks before (a look reads a quarter of the sampled words, so two rounds of all; one may have been recorded into a command
 +        // buffer that never ran), nothing is recorded and the image keeps its texels. Every 256th is converted
 +        // whatever the hash says. Bytes written between this and the command buffer's commit are seen one use
 +        // later.
@@ -116,7 +120,8 @@
 +                    // SAFETY: the planes' bytes lie in the buffer (checked when the texture was made), which
 +                    // is held here.
 +                    let began = std::time::Instant::now();
-+                    let hash = unsafe { begonia_sparse_hash(base.as_ptr().add(start), end.saturating_sub(start)) };
++                    let phase = (self.turn.fetch_add(1, Relaxed) & 3) as usize;
++                    let hash = unsafe { begonia_sparse_hash(base.as_ptr().add(start), end.saturating_sub(start), phase) };
 +                    let looked = BEGONIA_YCBCR[2].fetch_add(began.elapsed().as_nanos() as u64, Relaxed);
 +                    let looks = BEGONIA_YCBCR[3].fetch_add(1, Relaxed) + 1;
 +                    if looks % 256 == 0 {
@@ -129,18 +134,18 @@
 +                            self.groups
 +                        );
 +                    }
-+                    let streak = if self.last.swap(hash, Relaxed) == hash {
++                    let streak = if self.last[phase].swap(hash, Relaxed) == hash {
 +                        self.streak.fetch_add(1, Relaxed) + 1
 +                    } else {
 +                        self.streak.store(0, Relaxed);
 +                        0
 +                    };
 +                    let skipped = BEGONIA_YCBCR[0].load(Relaxed);
-+                    if streak >= 2 && skipped % 256 != 255 {
++                    if streak >= 8 && skipped % 256 != 255 {
 +                        BEGONIA_YCBCR[0].fetch_add(1, Relaxed);
 +                        return;
 +                    }
-+                    if streak >= 2 {
++                    if streak >= 8 {
 +                        BEGONIA_YCBCR[0].fetch_add(1, Relaxed);
 +                    }
 +                }
@@ -200,3 +205,34 @@
          let transfers = ImageUsageFlags::TRANSFER_SRC | ImageUsageFlags::TRANSFER_DST;
          let features = FormatFeatureFlags2::TRANSFER_SRC | FormatFeatureFlags2::TRANSFER_DST;
          if !plan.usage.contains(transfers) || !facts.optimal(plan.format).contains(features) {
+--- a/crates/metal2vulkan/src/lower/texture/mod.rs
++++ b/crates/metal2vulkan/src/lower/texture/mod.rs
+@@ -1986,7 +1986,17 @@
+     let slot = s.slot;
+     cx.facts
+         .insert(crate::pipeline::facts::RuntimeFact::YCbCrTexture { slot });
+-    Ok(cx.inputs.ycbcr_textures.contains(&slot))
++    Ok(cx.inputs.ycbcr_textures.contains(&slot) && !begonia_ycbcr_native())
++}
++
++/// begonia: `M2V_YNATIVE`: a YCbCr texture's linear samples through the device's own filter of its
++/// converted image, as every other texture's are here, and not Metal's filter emulated by fetches on
++/// the YCbCr format's grid. Measured on the device (y297): the home screen's two draws of such a
++/// texture into a 1041x1180 target had fragment shaders of 9840 and 10272 bytes (CoreAnimation's
++/// largest other one is 1840), ran 126 instructions a quad and took 16 ms a frame.
++fn begonia_ycbcr_native() -> bool {
++    static NATIVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++    *NATIVE.get_or_init(|| std::env::var_os("M2V_YNATIVE").is_some())
+ }
+ 
+ /// The address-mode map constexpr sampler `words` samples texture slot `index` under: the map
+@@ -2009,7 +2019,8 @@
+ /// Whether `image` is a slot under its YCbCr variant ([`ycbcr_texture`]).
+ pub(crate) fn ycbcr_slot(cx: &SelectCx<'_>, image: ImageRef) -> Result<bool, Error> {
+     match image {
+-        ImageRef::Slot(index) => Ok(cx.inputs.ycbcr_textures.contains(&slot_of(cx, index)?.slot)),
++        ImageRef::Slot(index) => Ok(cx.inputs.ycbcr_textures.contains(&slot_of(cx, index)?.slot)
++            && !begonia_ycbcr_native()),
+         ImageRef::Heap { .. } => Ok(false),
+     }
+ }

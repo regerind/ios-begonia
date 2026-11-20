@@ -481,6 +481,13 @@ static void frag_say(unsigned slice) {
  * somebody waits for the GPU where it need not). By thread: its process, how often, the time in all, how many of the
  * waits had no end set (over 1 s). Kept with every slice; pid 0 is the display driver's wait for a frame. */
 extern uint64_t thread_tid(thread_t thread);
+/* y298: the threads that handed jobs in this slice (a waiter among them is marked "*": the thread that draws sleeps for
+ * the GPU), and the times between the display driver's waits for a frame: to 20 ms (one refresh), to 36, to 52, longer. */
+static uint64_t submit_tids[6];static uint32_t show_gaps[4];static uint64_t show_last;
+static void submit_account(void) {
+ uint64_t tid=thread_tid(current_thread());
+ for(int i=0;i<6;i++){if(submit_tids[i]==tid)return;if(!submit_tids[i]){submit_tids[i]=tid;return;}}
+}
 static struct {int pid;uint64_t tid;char name[12];uint32_t n,forever;uint64_t total;} waiters[8];
 static void wait_account(uint64_t slept,uint64_t timeout) {
  int pid=proc_selfpid(),slot=-1,least=0;uint64_t tid=thread_tid(current_thread());
@@ -498,11 +505,15 @@ static void wait_say(unsigned slice) {
  char line[380];int o=snprintf(line,sizeof line,"Wt s%u",slice);
  for(int i=0;i<8;i++)if(waiters[i].n && o<(int)sizeof(line)-60) {
   uint64_t ms;absolutetime_to_nanoseconds(waiters[i].total,&ms);ms/=1000000;
-  o+=snprintf(line+o,sizeof(line)-o," %s[%d]%llx:%u/%llums/%u",waiters[i].name,waiters[i].pid,waiters[i].tid&0xfff,waiters[i].n,ms,
-   waiters[i].forever);
+  bool draws=false;for(int k=0;k<6;k++)if(submit_tids[k] && submit_tids[k]==waiters[i].tid)draws=true;
+  o+=snprintf(line+o,sizeof(line)-o," %s[%d]%llx%s:%u/%llums/%u",waiters[i].name,waiters[i].pid,waiters[i].tid&0xfff,draws?"*":"",
+   waiters[i].n,ms,waiters[i].forever);
   waiters[i].n=0;waiters[i].total=0;waiters[i].forever=0;
  }
  keep("%s",line);
+ keep("Iv s%u %u/%u/%u/%u",slice,show_gaps[0],show_gaps[1],show_gaps[2],show_gaps[3]);
+ for(int k=0;k<6;k++)submit_tids[k]=0;
+ for(int k=0;k<4;k++)show_gaps[k]=0;
 }
 static void say_submitters(void);
 static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queued,unsigned depth) {
@@ -865,6 +876,7 @@ uint64_t hakios_mali_enqueue(uint64_t chain,bool fragment) {
   __atomic_store_n(&completed,seq,__ATOMIC_RELEASE);
   return success?seq:0;
  }
+ submit_account();
  char who[20];who[0]=0;proc_selfname(who,sizeof who);
  int pid=proc_selfpid();
  bool halves=!strncmp(who,"backboardd",10) || !strncmp(who,"SpringBoard",11) || !strncmp(who,"com.apple.WebKit",16);
@@ -886,7 +898,13 @@ uint64_t hakios_mali_submitted_seq(void) {return __atomic_load_n(&submitted,__AT
 /* Job `seq` done, and well, within `timeout` nanoseconds (0: is it done now). */
 bool hakios_mali_wait(uint64_t seq,uint64_t timeout) {
  if(!seq)return true;
- if(!proc_selfpid())keep_frames++;   /* y293: the display driver waits here: a frame shown */
+ if(!proc_selfpid()) {                 /* y293: the display driver waits here: a frame shown */
+  keep_frames++;
+  uint64_t now=mach_absolute_time(),ns=0;
+  if(show_last)absolutetime_to_nanoseconds(now-show_last,&ns);
+  show_last=now;
+  if(ns)show_gaps[ns<=20000000ull?0:ns<=36000000ull?1:ns<=52000000ull?2:3]++;
+ }
  if(!hakios_mali_ready())return false;
  if(async_jobs && timeout && seq>__atomic_load_n(&completed,__ATOMIC_ACQUIRE)) {
   uint64_t interval,deadline;
