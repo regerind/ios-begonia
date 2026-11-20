@@ -1,0 +1,92 @@
+--- a/crates/metal2vulkan-runtime/src/dma_buf.rs
++++ b/crates/metal2vulkan-runtime/src/dma_buf.rs
+@@ -370,6 +370,7 @@
+         class: MemoryClass,
+     ) -> Result<(HostBuffer, Placement), Error> {
+         if !self.imports_dma_buf_buffers(vk::BufferCreateFlags::empty()) {
++            begonia_say("the device imports no dma-buf for a buffer without a dedicated allocation");
+             return Err(not_importable());
+         }
+         // The window starts `window.offset` bytes before the pointer, in the pages it touches.
+@@ -386,6 +387,7 @@
+         };
+         let chunks = source(request).map_err(|_| not_importable())?;
+         if !answers(&chunks, &request, importer.page) {
++            begonia_say(&format!("the chunks do not answer the request of {} bytes, granule {}, page {}", request.length, request.granule, importer.page));
+             return Err(invalid(call, Problem::DmaBuf));
+         }
+         let mut pages = DmaBufPages::new(self, source, request);
+@@ -431,6 +433,7 @@
+         // A range the binding layer pads to 16 bytes from the bytes stays inside the buffer, as
+         // a pointer's import holds it (`based_size`).
+         if based_size(window.offset, length).is_none_or(|padded| padded > size) {
++            begonia_say(&format!("{length} bytes at {} padded run past the chunks' {size}", window.offset));
+             return Err(not_importable());
+         }
+         let sparse = lengths.len() > 1;
+@@ -463,13 +466,17 @@
+                 false => requirements.size <= size,
+             };
+             if !fits {
++                begonia_say(&format!("the buffer needs {} bytes aligned to {alignment}, the chunks hold {size}", requirements.size));
+                 return Err(not_importable());
+             }
+             let memories = self.import_chunks(importer, chunks, pages, &requirements, class)?;
+             if !sparse {
+                 // SAFETY: the buffer is unbound, made for dma-bufs; the memory is of a type it
+                 // takes and holds its requirements from 0.
+-                unsafe { raw_device.bind_buffer_memory(raw, memories[0].0, 0) }.map_err(vulkan)?;
++                unsafe { raw_device.bind_buffer_memory(raw, memories[0].0, 0) }.map_err(|error| {
++                    begonia_say(&format!("vkBindBufferMemory: {error:?}"));
++                    vulkan(error)
++                })?;
+                 return Ok(memories[0]);
+             }
+             let mut offset = 0;
+@@ -524,14 +531,22 @@
+         let mut imported = Vec::with_capacity(chunks.len());
+         for DmaBufChunk { fd, length } in chunks {
+             // SAFETY: the importer is this device's, and the descriptor a dma-buf.
+-            let types = unsafe { importer.dma_buf_types(raw_device, fd.as_fd()) }
+-                .map_err(import_refused)?;
++            let types = unsafe { importer.dma_buf_types(raw_device, fd.as_fd()) }.map_err(|error| {
++                begonia_say(&format!("vkGetMemoryFdPropertiesKHR of a chunk of {length} bytes: {error:?}"));
++                import_refused(error)
++            })?;
+             let allowed = types & requirements.memory_type_bits;
+             let (memory, type_index) = lock(&shared.memory)
+                 .import_dma_buf(raw_device, fd, length, (allowed, class), None)
+                 .map_err(|failure| match failure {
+-                    ImportFailure::NoMemoryType => not_importable(),
+-                    ImportFailure::Vulkan(error) => import_refused(error),
++                    ImportFailure::NoMemoryType => {
++                        begonia_say(&format!("no memory type: the chunk's {types:#x}, the buffer's {:#x}", requirements.memory_type_bits));
++                        not_importable()
++                    }
++                    ImportFailure::Vulkan(error) => {
++                        begonia_say(&format!("the import of a chunk of {length} bytes (types {allowed:#x}): {error:?}"));
++                        import_refused(error)
++                    }
+                 })?;
+             pages.memories.push(memory);
+             imported.push((memory, type_index));
+@@ -601,6 +616,19 @@
+     }
+ }
+ 
++/// begonia: why the dma-buf route refused a no-copy buffer or a texture's image, on the console (the
++/// first 16): the refusal itself is `Unsupported(HostMemory)` whatever the step, and the caller then
++/// takes a buffer that copies the bytes, without a word.
++pub(super) fn begonia_say(what: &str) {
++    use std::io::Write;
++    static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
++    if SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 16 {
++        if let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("/dev/console") {
++            let _ = writeln!(console, "m2v: dma-buf route: {what}");
++        }
++    }
++}
++
+ /// `DRM_FORMAT_MOD_LINEAR` of Linux's `drm_fourcc.h`: one plane of rows one after another, each
+ /// the plane's pitch from the last.
+ pub(super) const DRM_FORMAT_MOD_LINEAR: u64 = 0;
