@@ -515,7 +515,15 @@ main(int argc, char **argv)
 			}
 		}
 		char line[400];
-		int o = snprintf(line, sizeof(line), "t=%d all %.0f%%:", w * 3, all);
+		/* (y146: the VM compressor's mode and what it holds, MB) */
+		int vmmode = -1;
+		uint64_t vmbytes = 0;
+		size_t vz = sizeof(vmmode);
+		sysctlbyname("vm.compressor_mode", &vmmode, &vz, NULL, 0);
+		vz = sizeof(vmbytes);
+		sysctlbyname("vm.compressor_bytes_used", &vmbytes, &vz, NULL, 0);
+		int o = snprintf(line, sizeof(line), "t=%d all %.0f%% vmc %d/%lluMB:", w * 3, all, vmmode,
+		    (unsigned long long)(vmbytes >> 20));
 		for (int s = 0; s < 5 && top[s] >= 0; s++) {
 			if (pct[top[s]] >= 2.0) {
 				o += snprintf(line + o, sizeof(line) - (size_t)o, " %s %.0f%%;", b[top[s]].name, pct[top[s]]);
