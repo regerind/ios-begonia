@@ -226,6 +226,110 @@ msg_callers(int p, const uint64_t *pcs, int n)
 	}
 }
 
+/*
+ * y307: every running sample of the window server by the layer it is in -- the one of its leaf-most frame that is
+ * PanVK's, the runtime's, the front end's or QuartzCore's (a sample in the allocator or in a system call counts for the
+ * layer that called) -- and in that layer by place (256 bytes of an own image, a function of QuartzCore). y306's tables
+ * by name held a third of the samples: an own image's code is named in 64-byte pieces, thousands of them.
+ */
+enum { LAYERS = 5, FINE = 3000 };
+static const char *const layer_names[LAYERS] = { "pv", "rt", "fe", "qc", "other" };
+static unsigned layer_n[LAYERS], layer_k[LAYERS];       /* samples; those of them whose leaf is a system call's */
+static struct { uint32_t key, n; } fine[LAYERS - 1][FINE];
+
+static int
+layer_of(int p, uint64_t pc, uint32_t *key)
+{
+	int lo = 0, hi = nimages[p] - 1, at = -1;
+	while (lo <= hi) {
+		int mid = (lo + hi) / 2;
+		if (images[p][mid].base <= pc) {
+			at = mid;
+			lo = mid + 1;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	if (at >= 0 && pc - images[p][at].base < (64u << 20)) {
+		const char *name = images[p][at].name;
+		int l = strncmp(name, "libvulkan_panfrost", 18) == 0 ? 0 : strncmp(name, "libmetal2vulkan", 15) == 0 ? 1 :
+		    strncmp(name, "HakiosMetal", 11) == 0 ? 2 : -1;
+		if (l >= 0) {
+			*key = (uint32_t)((pc - images[p][at].base) >> 8);
+			return l;
+		}
+	}
+	Dl_info info;
+	if (dladdr((const void *)pc, &info) && info.dli_fname != NULL && info.dli_fbase != NULL) {
+		const char *slash = strrchr(info.dli_fname, '/');
+		if (strcmp(slash ? slash + 1 : info.dli_fname, "QuartzCore") == 0) {
+			*key = (uint32_t)((info.dli_saddr ? (uint64_t)info.dli_saddr : pc) - (uint64_t)info.dli_fbase);
+			return 3;
+		}
+	}
+	return -1;
+}
+
+static void
+layer_count(int p, const uint64_t *pcs, int n)
+{
+	if (p != 1 || msg_phase < 0) {
+		return;
+	}
+	Dl_info info;
+	int kernel = dladdr((const void *)pcs[0], &info) && info.dli_fname != NULL && strstr(info.dli_fname, "libsystem_kernel") != NULL;
+	for (int i = 0; i < n; i++) {
+		uint32_t key = 0;
+		int l = layer_of(p, pcs[i], &key);
+		if (l < 0) {
+			continue;
+		}
+		layer_n[l]++;
+		layer_k[l] += (unsigned)kernel;
+		unsigned h = (key * 2654435761u) % FINE;
+		for (int k = 0; k < FINE; k++, h = (h + 1) % FINE) {
+			if (fine[l][h].n == 0 || fine[l][h].key == key) {
+				fine[l][h].key = key;
+				fine[l][h].n++;
+				break;
+			}
+		}
+		return;
+	}
+	layer_n[LAYERS - 1]++;
+	layer_k[LAYERS - 1] += (unsigned)kernel;
+}
+
+static void
+layer_say(void)
+{
+	char out[1100];
+	int oo = snprintf(out, sizeof(out), "LAYERS");
+	for (int l = 0; l < LAYERS; l++) {
+		oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " %s %u (k %u);", layer_names[l], layer_n[l], layer_k[l]);
+	}
+	puts(out);
+	for (int l = 0; l < LAYERS - 1; l++) {
+		static uint32_t took[FINE / 32 + 1];
+		memset(took, 0, sizeof(took));
+		oo = snprintf(out, sizeof(out), "LAYER %s:", layer_names[l]);
+		for (int k = 0; k < 44 && oo < (int)sizeof(out) - 24; k++) {
+			int best = -1;
+			for (int i = 0; i < FINE; i++) {
+				if (fine[l][i].n && !(took[i / 32] >> (i % 32) & 1) && (best < 0 || fine[l][i].n > fine[l][best].n)) {
+					best = i;
+				}
+			}
+			if (best < 0 || fine[l][best].n < 3) {
+				break;
+			}
+			took[best / 32] |= 1u << (best % 32);
+			oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " %x:%u", fine[l][best].key, fine[l][best].n);
+		}
+		puts(out);
+	}
+}
+
 static void
 sample_task(int p, task_t task)
 {
@@ -289,6 +393,7 @@ sample_task(int p, task_t task)
 		pthread_mutex_lock(&sym_lock);
 		samples[p]++;
 		msg_callers(p, pcs, n);
+		layer_count(p, pcs, n);
 		const void *seen[20];
 		int ns = 0;
 		for (int i = 0; i < n; i++) {
@@ -420,6 +525,9 @@ sample_window(int w, char hist[NS][4000])
 				}
 			}
 			msg_phase = ph;
+			if (t >= 66) {          /* (the log keeps its end: the session's last windows say it) */
+				layer_say();
+			}
 			for (int say = 0; say < 2; say++) {
 				if (!tot_n[say]) {
 					continue;
