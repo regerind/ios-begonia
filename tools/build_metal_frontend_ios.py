@@ -864,6 +864,25 @@ tele_hooks.append((' kept[cmd][arg]=value;\n return value;\n',
  ' if(nbCapOff(sel_getName(cmd),arg,true))value=0;\n nbCapLog(sel_getName(cmd),arg,true,value);\n kept[cmd][arg]=value;\n return value;\n'))
 tele_hooks.append(('   if(!strcmp(name,"supportsExtendedXR10Formats"))value=0;\n',
  '   if(!strcmp(name,"supportsExtendedXR10Formats"))value=0;\n   if(nbCapOff(name,0,false))value=0;\n   if(nbCapsLogOn()){char line[100];snprintf(line,sizeof line,"caps installed %s=%llu",name,(unsigned long long)value);nbCapAdd(std::string("i:")+name,line);}\n'))
+# begonia (y237): metal_consts=NAME:VALUE,NAME:VALUE -- function constants overridden when a function is specialized (an experiment:
+# what does the GPU cost with CoreAnimation's blend function out of the shader? The picture is wrong while it is on).
+tele_hooks.append((' std::string text;\n for(const NmbConstant &c:constants) {\n',
+ r"""
+ {static std::unordered_map<std::string,uint64_t> forced;static int got=0;
+  if(!got){got=1;char args[1024]="";size_t size=sizeof(args)-1;
+   if(sysctlbyname("kern.bootargs",args,&size,NULL,0)==0){const char *at=strstr(args,"metal_consts=");
+    if(at){at+=13;std::string list(at,strcspn(at," "));
+     for(size_t from=0;from<list.size();){size_t to=list.find(',',from);if(to==std::string::npos)to=list.size();
+      std::string item=list.substr(from,to-from);size_t colon=item.find(':');
+      if(colon!=std::string::npos)forced[item.substr(0,colon)]=strtoull(item.c_str()+colon+1,NULL,10);from=to+1;}}}}
+  static uint64_t store[64];
+  if(!forced.empty())for(size_t i=0;i<constants.size()&&i<64;i++){
+   if(!constants[i].name)continue;auto it=forced.find(constants[i].name);if(it==forced.end())continue;
+   store[i]=it->second;constants[i].bytes=&store[i];}
+ }
+ std::string text;
+ for(const NmbConstant &c:constants) {
+"""))
 for old,new in tele_hooks:
  assert mtext.count(old)==1,'telemetry hook does not fit: '+old[:90]
  mtext=mtext.replace(old,new)
