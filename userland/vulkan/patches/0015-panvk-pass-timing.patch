@@ -1,6 +1,6 @@
 --- a/src/panfrost/vulkan/jm/panvk_cmd_buffer.h
 +++ b/src/panfrost/vulkan/jm/panvk_cmd_buffer.h
-@@ -60,6 +60,13 @@
+@@ -60,6 +60,15 @@
     struct pan_tls_info tlsinfo;
     unsigned wls_total_size;
     bool issued;
@@ -10,13 +10,15 @@
 +      uint8_t rt_count;
 +      char load[2], store[2];
 +      uint32_t jobs;
++      uint16_t tile;
++      uint8_t samples;
 +   } begonia;
  };
  
  enum panvk_cmd_event_op_type {
 --- a/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
 +++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
-@@ -196,6 +196,20 @@
+@@ -196,6 +196,22 @@
           .tiler_ctx = &batch->tiler.ctx,
        };
  
@@ -25,6 +27,8 @@
 +         batch->begonia.w = l->render_area_px.max_x - l->render_area_px.min_x + 1;
 +         batch->begonia.h = l->render_area_px.max_y - l->render_area_px.min_y + 1;
 +         batch->begonia.rt_count = l->rt_count;
++         batch->begonia.tile = l->tile_size_px;
++         batch->begonia.samples = l->sample_count;
 +         for (unsigned i = 0; i < 2; i++) {
 +            batch->begonia.fmt[i] = l->rt_formats[i];
 +            batch->begonia.load[i] = fbd_info.load->rts[i].in_bounds_load == PAN_FB_LOAD_IMAGE ? 'L' :
@@ -86,11 +90,11 @@
 +   if (fd < 0)
 +      return;
 +   char line[120];
-+   int n = snprintf(line, sizeof(line), "pt v%.1f f%.1f %ux%u r%u %.9s/%.9s L%c%c S%c%c j%u\n",
++   int n = snprintf(line, sizeof(line), "pt v%.1f f%.1f %ux%u r%u %.9s/%.9s L%c%c S%c%c j%u t%u s%u\n",
 +                    v_us / 1000.0, f_us / 1000.0, b->begonia.w, b->begonia.h, b->begonia.rt_count,
 +                    util_format_short_name(b->begonia.fmt[0]), util_format_short_name(b->begonia.fmt[1]),
 +                    b->begonia.load[0], b->begonia.load[1], b->begonia.store[0], b->begonia.store[1],
-+                    b->begonia.jobs);
++                    b->begonia.jobs, b->begonia.tile, b->begonia.samples);
 +   if (n > 0)
 +      (void)!write(fd, line, n);
 +}
