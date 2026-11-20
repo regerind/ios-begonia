@@ -1,0 +1,52 @@
+--- a/hakios-native-surface-fd.c	2026-11-21 00:16:45.936908748 +0300
++++ b/hakios-native-surface-fd.c	2026-11-21 00:16:45.937241504 +0300
+@@ -20,11 +20,32 @@
+ static struct surface_fd records[SURFACE_FD_LIMIT];
+ static uint64_t next_token;
+ static pthread_mutex_t surface_fd_lock=PTHREAD_MUTEX_INITIALIZER;
++/* begonia (y308): CoreAnimation draws every frame into a new surface, so a descriptor was made and let go of for
++ * every frame: mkstemp, unlink, ftruncate to 12 MB, fstat, close -- ftruncate alone was the window server's most
++ * frequent running place (y307: 73 of 2462 samples). A file let go of is kept, up to 24 of them, and given again
++ * for the same size: its record is new (token, surface, no handle), only the file is an old one. */
++#define SURFACE_FD_SPARE 24
++static struct { int fd; uint64_t size; dev_t device; ino_t inode; } spare[SURFACE_FD_SPARE];
+ 
+ int hakios_native_surface_fd_create(uint32_t surface,uint64_t size,uint64_t *token)
+ {
+     if(!surface || !token || !size || size>(256u<<20) || (size&4095)) { errno=EINVAL;return -1; }
+     *token=0;
++    pthread_mutex_lock(&surface_fd_lock);
++    for(unsigned k=0;k<SURFACE_FD_SPARE;k++)if(spare[k].size==size) {
++        int kept=spare[k].fd;dev_t device=spare[k].device;ino_t inode=spare[k].inode;
++        int again=fcntl(kept,F_DUPFD_CLOEXEC,3);
++        if(again<0)break;
++        for(unsigned i=0;i<SURFACE_FD_LIMIT;i++)if(!records[i].token && next_token!=UINT64_MAX) {
++            spare[k].size=0;
++            records[i]=(struct surface_fd){++next_token,size,device,inode,surface,0,kept};
++            *token=next_token;
++            pthread_mutex_unlock(&surface_fd_lock);
++            return again;
++        }
++        close(again);break;
++    }
++    pthread_mutex_unlock(&surface_fd_lock);
+     char path[]="/tmp/scion-surface-XXXXXX";
+     int fd=mkstemp(path);if(fd<0)return -1;
+     /* /tmp belongs to the guest RAM filesystem. Keep only open descriptors. */
+@@ -69,9 +90,14 @@
+     if(!token)return EINVAL;
+     pthread_mutex_lock(&surface_fd_lock);
+     for(unsigned i=0;i<SURFACE_FD_LIMIT;i++)if(records[i].token==token) {
+-        int anchor=records[i].anchor;records[i]=(struct surface_fd){0};
++        int anchor=records[i].anchor;
++        for(unsigned k=0;k<SURFACE_FD_SPARE;k++)if(!spare[k].size) {
++            spare[k].fd=anchor;spare[k].size=records[i].size;spare[k].device=records[i].device;spare[k].inode=records[i].inode;
++            anchor=-1;break;
++        }
++        records[i]=(struct surface_fd){0};
+         pthread_mutex_unlock(&surface_fd_lock);
+-        return close(anchor)?errno:0;
++        return anchor<0?0:close(anchor)?errno:0;
+     }
+     pthread_mutex_unlock(&surface_fd_lock);
+     return EINVAL;
