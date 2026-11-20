@@ -262,3 +262,11 @@ Aşağısı araştırmanın kaydı.
     olabilir (doğrulanmadı).
   - Ölçüm sınırı: passtime f değeri bekleme gecikmesini içerir (toplam f 12.5 sn > çekirdeğin GPU süresi ~9 sn).
   - y247: begonia_gpu_spin=2000 kalıcı kazanç vermedi (7-8 kare/5 sn).
+  - **y249-y254 (2026-11-20 akşam): 1.6x kuyruğu çözüldü.** Bölünme encoder'da DEĞİL (y249: inst==enc, multi/bar/tile/disp = 0).
+    Fazla geçişler `clear_reach.rs`'in "ulaşım temizliği"nden (y250: 7680 encoder'ın 1936'sında; y251 nedeni: clear alanı, render
+    alanının 32 px karoya yuvarlanmış hâlini kapsıyor, bunun için tam ekran attachment load+store ile ayrı geziliyor, iki yanında
+    Barrier::everything()). Yama 0008 (karo payı için bu pass'i atla): BeginRendering/encoder 1.5-1.8 → ~1.07, 5 sn'de GPU işi 1170 → ~600,
+    kuyruk 116 → ≤15 derin, kare 38-55 → 52-63 (aynı seek betiği, y249 vs y254). Hâlâ 45-60 kare (GL) değil.
+  - Şerit sürümü (y252) pass sayısını ARTIRDI (sağ+alt şerit ayrı pass); bırakıldı.
+  - Hâlâ açık: encoder başına ~13 tam ekran geçiş (CA'nın kendisi), geçişler arası Barrier::everything() ölü zamanı, DontCare clear'ı
+    (tiles) yolu. Resim doğrulaması: Control Center doğru (y253); Today/YouTube y255/y256.

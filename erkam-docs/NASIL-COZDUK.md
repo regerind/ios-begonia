@@ -152,3 +152,17 @@ maliyeti (çizimsiz geçiş 1–2 ms), kapsama denetimleri. Ayrıntı ve sonraki
 **Araçlar:** `C:\begonia-private\sh\tele.sh TAG` (sayaçlar), `tele_keys.py` (boru hattı anahtarları), `qc_from_key.py`
 (CA boru hattını makinede çevirip komut sayar; `out/metal2vulkan-target-host/release/metal2vulkan`). Çekirdek, her 5 sn'nin
 en yavaş fragment işinin çerçeve arabelleği tanımlayıcısını `BEGONIA GPU FBD` satırlarıyla yazdırır.
+
+## Metal yolunda fazladan render pass'leri: ulaşım temizliği (2026-11-20, y249-y254)
+**Sorun:** PanVK'da BeginRendering sayısı Metal render encoder sayısının ~1.6 katıydı; her pass tam ekranda ~1-2 ms sabit maliyet ve iş
+başına ~0.5 ms GPU boşluğu demek.
+**Kök neden:** encoder'lar bölünmüyordu (0005: inst==enc). Asıl kaynak metal2vulkan runtime'ının `clear_reach.rs`'indeki "ulaşım
+temizliği": Metal'in Clear yükü render alanını 32 px karoya yuvarlayıp temizler; runtime bunu taklit etmek için, alan karo katı değilse,
+tüm attachment'ı load+store eden AYRI bir render pass açıyordu (+ iki yanında `Barrier::everything()`), encoder'ların %25-34'ünde.
+**Çözüm:** `userland/metal/runtime-patches/0008-reach-clear-margin-skipped.patch`: çizimli pass'te yalnızca yuvarlama payı (<32 px) için
+bu pass açılmaz; ana alanı pass'in kendi load-op clear'ı temizler (karo tabanlı GPU'da bedava). Teşhis yamaları: 0005 (encoder başına
+instance sayısı), 0006 (her render-pass başlangıç noktası sayacı), 0007 (nedenler).
+**Doğrulama:** log (BeginRendering ≈ encoder, sites[3]=0, kare 38-55 → 52-63 aynı betikle) + ekran görüntüsü (Control Center doğru).
+**Kalan şüphe:** Metal payı temizler, biz bırakıyoruz; payın içeriği hiçbir program tarafından sayılamaz ama atlas gibi alt-dikdörtgen
+çizimlerinde komşu texel'ler artık temizlenmiyor (Metal'de siliniyordu). Resim şu ana kadar bozulmadı; Today/YouTube doğrulaması sürüyor.
+Not: m2v konsol satırları her satır iki kez iç içe basılıyor ("33283328" = 3328).
