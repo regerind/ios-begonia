@@ -1,0 +1,150 @@
+--- a/src/panfrost/vulkan/panvk_buffer.h
++++ b/src/panfrost/vulkan/panvk_buffer.h
+@@ -11,9 +11,13 @@
+ #include "vk_buffer.h"
+ 
+ struct panvk_priv_bo;
++struct panvk_device_memory;
+ 
+ struct panvk_buffer {
+    struct vk_buffer vk;
++   /* begonia: the memory and offset it is bound to (a CPU pointer to its bytes, where the memory is mapped) */
++   struct panvk_device_memory *bound_mem;
++   uint64_t bound_offset;
+ };
+ 
+ VK_DEFINE_NONDISP_HANDLE_CASTS(panvk_buffer, vk.base, VkBuffer,
+--- a/src/panfrost/vulkan/panvk_buffer.c
++++ b/src/panfrost/vulkan/panvk_buffer.c
+@@ -89,6 +89,8 @@
+          *bind_status->pResult = VK_SUCCESS;
+ 
+       buffer->vk.device_address = mem->addr.dev + pBindInfos[i].memoryOffset;
++      buffer->bound_mem = mem;
++      buffer->bound_offset = pBindInfos[i].memoryOffset;
+ 
+       panvk_address_binding_report(device, &buffer->vk.base,
+                                    buffer->vk.device_address, buffer->vk.size,
+--- a/src/panfrost/vulkan/panvk_cmd_draw.h
++++ b/src/panfrost/vulkan/panvk_cmd_draw.h
+@@ -217,6 +217,8 @@
+       uint64_t dev_addr;
+       uint64_t size;
+       uint8_t index_size;
++      const struct panvk_buffer *buf; /* begonia */
++      uint64_t buf_offset;
+    } ib;
+ 
+    struct {
+--- a/src/panfrost/vulkan/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/panvk_vX_cmd_draw.c
+@@ -1021,7 +1021,10 @@
+       cmdbuf->state.gfx.ib.size = panvk_buffer_range(buf, offset, size);
+       assert(cmdbuf->state.gfx.ib.size <= UINT32_MAX);
+       cmdbuf->state.gfx.ib.dev_addr = panvk_buffer_gpu_ptr(buf, offset);
++      cmdbuf->state.gfx.ib.buf = buf;
++      cmdbuf->state.gfx.ib.buf_offset = offset;
+    } else {
++      cmdbuf->state.gfx.ib.buf = NULL;
+       cmdbuf->state.gfx.ib.size = 0;
+       /* In case of NullDescriptors, we need to set a non-NULL address and rely
+        * on out-of-bounds behavior against the zero size of the buffer. Note
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
+@@ -19,6 +19,8 @@
+ #include "panvk_cmd_draw.h"
+ #include "panvk_cmd_meta.h"
+ #include "panvk_cmd_precomp.h"
++#include "panvk_device_memory.h"
++#include "panvk_buffer.h"
+ #include "panvk_device.h"
+ #include "panvk_entrypoints.h"
+ #include "panvk_image.h"
+@@ -44,6 +46,11 @@
+ 
+ struct panvk_draw_data {
+    struct panvk_draw_info info;
++   /* begonia: the lowest and highest index of an indexed draw, found on the CPU */
++   struct {
++      bool valid;
++      uint32_t min, max;
++   } cpu_minmax;
+    unsigned vertex_range;
+    unsigned padded_vertex_count;
+    struct mali_invocation_packed invocation;
+@@ -1564,11 +1571,16 @@
+    uint64_t index_min_max_res_ptr = 0;
+    uint32_t job_before_indirect_helper = copy_desc_job_id;
+    if (draw->info.index.index_size) {
+-      index_min_max_res_ptr =
+-         panvk_cmd_alloc_dev_mem(
+-            cmdbuf, desc,
+-            sizeof(struct libpan_draw_helper_index_min_max_result), 8)
+-            .gpu;
++      struct pan_ptr minmax_alloc = panvk_cmd_alloc_dev_mem(
++         cmdbuf, desc, sizeof(struct libpan_draw_helper_index_min_max_result),
++         8);
++      index_min_max_res_ptr = minmax_alloc.gpu;
++      if (draw->cpu_minmax.valid) {
++         /* begonia: no write job and no search job: the answer is written here */
++         struct libpan_draw_helper_index_min_max_result *res = minmax_alloc.cpu;
++         res->min = draw->cpu_minmax.min;
++         res->max = draw->cpu_minmax.max;
++      } else {
+       const struct panlib_draw_index_minmax_search_helper_args args = {
+          .index_buffer_ptr = draw->info.index.buffer_dev_addr,
+          .cmd = draw->info.indirect.buffer_dev_addr,
+@@ -1610,6 +1622,7 @@
+          PANLIB_BARRIER_NONE, args, util_logbase2(draw->info.index.index_size),
+          draw->info.index.restart_enable);
+       job_before_indirect_helper = batch->vtc_jc.job_index;
++      }
+    }
+ 
+    for (uint32_t i = 0; i < enabled_layer_count; i++) {
+@@ -1830,7 +1843,45 @@
+       .firstInstance = firstInstance,
+    };
+ 
++   /* begonia: the lowest and highest index the draw uses, from the index buffer's bytes where it is mapped (the search
++    * on the GPU is a write job and a compute job over the whole buffer for every draw). */
++   bool cpu_valid = false;
++   uint32_t cpu_min = 0, cpu_max = 0;
++   {
++      const struct panvk_buffer *ib = cmdbuf->state.gfx.ib.buf;
++      const uint32_t isz = cmdbuf->state.gfx.ib.index_size;
++      static int cpu_enabled = -1;
++      if (cpu_enabled < 0) {
++         const char *e = getenv("PANVK_CPU_INDEX_MINMAX");
++         cpu_enabled = !(e && e[0] == '0');
++      }
++      if (cpu_enabled && ib && ib->bound_mem && ib->bound_mem->addr.host && indexCount <= 8192 &&
++          (isz == 1 || isz == 2 || isz == 4) &&
++          ((uint64_t)firstIndex + indexCount) * isz <= cmdbuf->state.gfx.ib.size) {
++         const uint8_t *bytes = (const uint8_t *)ib->bound_mem->addr.host + ib->bound_offset +
++                                cmdbuf->state.gfx.ib.buf_offset + (uint64_t)firstIndex * isz;
++         const bool restart = cmdbuf->vk.dynamic_graphics_state.ia.primitive_restart_enable;
++         uint32_t mn = UINT32_MAX, mx = 0;
++         bool any = false;
++         for (uint32_t i = 0; i < indexCount; i++) {
++            uint32_t v = isz == 4 ? ((const uint32_t *)bytes)[i]
++                                  : isz == 2 ? ((const uint16_t *)bytes)[i] : bytes[i];
++            if (restart && v == (isz == 4 ? UINT32_MAX : isz == 2 ? UINT16_MAX : UINT8_MAX))
++               continue;
++            if (v < mn) mn = v;
++            if (v > mx) mx = v;
++            any = true;
++         }
++         if (any) {
++            cpu_valid = true;
++            cpu_min = mn;
++            cpu_max = mx;
++         }
++      }
++   }
++
+    struct panvk_draw_data draw = {
++      .cpu_minmax = {.valid = cpu_valid, .min = cpu_min, .max = cpu_max},
+       .info = {
+          .index = panvk_draw_info_index(cmdbuf, 0),
+          .indirect.buffer_dev_addr = indirect_index_alloc.gpu,
