@@ -30,16 +30,17 @@
  
 --- a/src/panfrost/vulkan/bifrost/panvk_vX_meta_desc_copy.c
 +++ b/src/panfrost/vulkan/bifrost/panvk_vX_meta_desc_copy.c
-@@ -3,6 +3,8 @@
+@@ -3,6 +3,9 @@
   * SPDX-License-Identifier: MIT
   */
  
++#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
  #include <stddef.h>
  #include <stdint.h>
  
-@@ -384,6 +386,124 @@
+@@ -384,6 +387,144 @@
     return panvk_priv_mem_dev_addr(shader->rsd);
  }
  
@@ -61,8 +62,12 @@
 +      const char *e = getenv("PANVK_CPU_DESC_COPY");
 +      enabled = !(e && e[0] == 0);
 +   }
-+   if (!enabled || !handles)
++   static unsigned stat[8], calls;
++   #define CPUCOPY_FAIL(n) do { stat[n]++; goto report; } while (0)
++   if (!enabled)
 +      return false;
++   if (!handles)
++      CPUCOPY_FAIL(1);
 +
 +   const uint32_t ubo_end = ci->desc_copy.limits[PANVK_BIFROST_DESC_TABLE_UBO];
 +   const uint32_t img_end = ci->desc_copy.limits[PANVK_BIFROST_DESC_TABLE_IMG];
@@ -74,15 +79,15 @@
 +                              !sds->img_attrib_table_cpu)) ||
 +       (tex_end > img_end && !sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_TEXTURE]) ||
 +       (smp_end > tex_end && !sds->tables_cpu[PANVK_BIFROST_DESC_TABLE_SAMPLER]))
-+      return false;
++      CPUCOPY_FAIL(2);
 +
 +   for (uint32_t i = 0; i < copy_count; i++) {
 +      uint32_t set_idx = handles[i] >> 28;
 +      if (set_idx >= MAX_SETS)
-+         return false;
++         CPUCOPY_FAIL(3);
 +      const struct panvk_descriptor_set *set = desc_state->sets[set_idx];
 +      if (set && !set->descs.host)
-+         return false;
++         CPUCOPY_FAIL(4);
 +   }
 +
 +   for (uint32_t i = 0; i < copy_count; i++) {
@@ -158,13 +163,29 @@
 +         buf[7] = src[7];
 +      }
 +   }
++   stat[0]++;
++   calls++;
++   if ((calls & 1023) == 0)
++      goto report_ok;
 +   return true;
++report_ok:
++   fprintf(stderr, "panvk cpu desc copy: done %u, no handles %u, no cpu table %u, bad set %u, set without host %u
++",
++           stat[0], stat[1], stat[2], stat[3], stat[4]);
++   return true;
++report:
++   calls++;
++   if ((calls & 1023) == 0 || stat[1] + stat[2] + stat[3] + stat[4] == 1)
++      fprintf(stderr, "panvk cpu desc copy: done %u, no handles %u, no cpu table %u, bad set %u, set without host %u
++",
++              stat[0], stat[1], stat[2], stat[3], stat[4]);
++   return false;
 +}
 +
  VkResult
  panvk_per_arch(meta_get_copy_desc_job)(
     struct panvk_cmd_buffer *cmdbuf,
-@@ -433,6 +553,13 @@
+@@ -433,6 +574,13 @@
        copy_info.tables[i] = shader_desc_state->tables[i];
     }
  
