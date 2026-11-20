@@ -335,3 +335,21 @@ Aşağısı araştırmanın kaydı.
 - **Sonraki adım (yapılmadı):** mip üretimini compute yerine render/blit ile yapmak ya da PanVK'da ucuzlatmak; ardından 1041x1180 blur pass'i (16 ms).
 - **Jetsam (2b):** bu dört koşuda görülmedi (YouTube/sarma yalnız y292'de koştu); bellek tarafında değişiklik yapılmadı. AÇIK.
 - **Araçlar kaldı:** çekirdekte `begonia_overlap=2` (dilimli istatistik + Mali donanım sayaçları + kalıcı `BEGONIA KEEP` metni), `begonia_prfcnt=1`.
+
+### İkinci 4 denemenin sonucu (y296-y299, 2026-11-20 gece) ve p15: kaydırma hâlâ ~27 fps, sınır artık CPU
+- **GPU tarafı çözüldü (ölçüldü):** kaydırmada kare başına GPU işi ~60 ms -> ~11.5 ms; GPU meşguliyeti %90+ -> %30-33.
+  - YCbCr yüzeyinin (duvar kâğıdı boyutlarında, 3.2 MB düzlem) her encoder'da compute ile yeniden dönüştürülmesi: karede ~17 ms. Düzlem baytlarının
+    seyrek özeti değişmediyse atlanıyor (runtime 0010, `M2V_YSKIP`): compute zincirleri 300 / ~1750 ms -> 0-10 / <55 ms (5 sn).
+  - YCbCr dokusunu örnekleyen shader varyantı Metal filtresini fetch'lerle taklit ediyordu (9840/10272 bayt, warp başına 126 komut): 1041x1180 pass
+    16.3 ms. Cihazın kendi filtresiyle (`M2V_YNATIVE`): 1.0 ms (288/704 bayt, warp başına 5 komut).
+  - Kesin fragment ön-geçişi (PanVK 0022): ekran işleri iş başına 8.7 -> 7.75 ms.
+  - Doğrudan indeksli çizim (PanVK 0021): ~+%10 kare (y294/y295).
+- **Kalan sınır (ölçüldü, DÜZELTİLMEDİ):** kaydırma sırasında backboardd %96-103 CPU (tek çekirdek dolu), GPU %30 meşgul; kare ~27 fps, aralıkların
+  %64'ü 18-35 ms. Çizen iş parçacığı GPU için uyumuyor. Hangi işin pahalı olduğu ayrışmadı (yığın örnekleri: mach_msg2_trap %15-21, HakiosMetal ve
+  libmetal2vulkan adresleri). Sonraki adım: backboardd'in çizim iş parçacığının CPU profili (çizim başına ön yüz + metal2vulkan + PanVK maliyeti,
+  IOKit çağrı sayısı), sonra en pahalı yolun kısaltılması.
+- **p15'te doğrulanmayanlar:** (1) YCbCr yerel filtrenin RENGİ: y298'in çekimleri griydi (düzen/parlaklık doğru), y299'un renkli çekimleri logda
+  kalmadı. Texel değerleri aynı dönüşümden geliyor, yalnız filtre değişti; renk hatası beklenmez ama GÖRÜLMEDİ. (2) Video ve ileri sarma: y299'da
+  oturum bitmeden koşmadı; jetsam (2b) bu ayarla sınanmadı, bellek tarafında değişiklik yok (YCbCr atlama videoda her kare değiştiği için devreye girmez).
+- **Etkisiz çıkanlar (ölçüldü):** mipmap'leri blit ile üretmek (kaydırmada mip isteği yok denecek kadar az), 0020 INTERSECT, iki slotta eşleme.
+- Kapatma: önyükleme argümanı `beg_old=1` dört kazancı da kapatır (p14 davranışı).
