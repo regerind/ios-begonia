@@ -169,3 +169,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y246 | 15:29 | taban (varsayılan spin) aynı betikle, y245 ile karşılaştırma (`begonia_gpu_spin=10`) | taban (spin=10): 6-8 kare/5 sn, GPU %50-55 meşgul, iş başına 574-592 us, kuyrukta 30 ms bekleme. spin etkisi hâlâ belirsiz. |
 | y247 | 15:33 | spin temiz A/B (taban y246) (`begonia_gpu_spin=2000`) | spin=2000 temiz koşu (18 dokunuş, aynı betik): ilk pencereler 11-23 kare/5 sn (açılış), sonra 7-8 kare/5 sn = taban (y246: 6-8). Kalıcı kazanç yok. |
 | y248 | 15:37 | spin 3 ms (taban y246) (`begonia_gpu_spin=300`) | Yarıda kesildi (sahibi durdurdu), koşu yok. |
+| y249 | 16:03 | metal2vulkan 0005: encoder başına Vulkan geçiş sayısı + bölünme nedenleri konsola (m2v: enc ...) (`metal_tele=1`) | |
