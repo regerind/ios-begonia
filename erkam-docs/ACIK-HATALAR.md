@@ -50,8 +50,8 @@ ya da onay gerekiyor). En üstteki en önemlisi.
   - GPU servisinin yoklama gecikmesi değil (y122, 500 µs yoklama: fark yok).
   - Çağrı izi alınamadı (y120/y121).
 - **Denenen:** backboardd'yi Metal'e almak (y123): backboardd çöktü, yenisi kare üretemedi.
-- **Durum:** inceleniyor. Sıradaki: CRC'siz geçişler (y124); geçişleri neyin ürettiğini bulmak için kare izi
-  (`gltrace=KARE-KARE`); CoreAnimation'ın Metal çizicisi (uzun iş).
+- **Durum:** büyük ölçüde düzeldi (y136–y153), bkz. COZULEN-HATALAR. y153: 53 kare/sn, karelerin %46'sı 18 ms altında.
+  Kalan: kare başına ~5 bulanık arka plan yakalama (1622×1525) ve ekranın ~3 kez yeniden yüklenmesi. Henüz tam 60 değil.
 - **Önceki kanıt (y102):** WebKit.Networking 100–134%, WebContent 80–128%, backboardd 85–93%, mediaserverd ~50%. y111'den
   beri AES/SHA donanımı programlara bildiriliyor; MP4 indirirken ağ süreci %20–33.
 - **MediaRemoteUI:** Video başlarken %93–100 CPU (y117); bakılmadı.

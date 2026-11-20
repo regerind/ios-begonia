@@ -1,0 +1,72 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -2165,6 +2165,39 @@
+ 
+ /* ---- the entries written by hand ---------------------------------------------------------------- */
+ 
++/*
++ * begonia (y158): a new target whose clear is put off till it is first drawn into (0054) can be used before that in
++ * other ways -- bound to be read, copied into, uploaded into. y156/y157: with 0054 the Control Center's volume slider
++ * was gone and came back with glclearlate=0. Used so, the target is cleared first, the old way; how often, by which
++ * way, is counted and said.
++ */
++static unsigned due_bound, due_copied, due_uploaded;
++
++static void
++clear_due_now(struct eagl *e, GLuint texture, unsigned *why)
++{
++	struct image *image;
++	GLint draw = 0;
++
++	if (texture == 0 || e->image_count == 0 || (image = image_of(e, texture)) == NULL || !image->clear_due) {
++		return;
++	}
++	image->clear_due = false;
++	(*why)++;
++	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
++	if (e->writer == 0) {
++		glGenFramebuffers(1, &e->writer);
++	}
++	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, e->writer);
++	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image->texture, 0);
++	clear_bound();
++	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)draw);
++	if (*why < 4 || *why % 200 == 0) {
++		say("hakios-gl: target %u used before it was drawn into: cleared first (bound %u, copied into %u, uploaded into %u)\n",
++		    image->texture, due_bound, due_copied, due_uploaded);
++	}
++}
++
+ static void
+ my_glBindTexture(void *context, GLenum target, GLuint texture)
+ {
+@@ -2182,6 +2215,9 @@
+ 	if (target == GL_TEXTURE_2D && e->unit < 8) {
+ 		e->bound[e->unit] = texture;
+ 	}
++	if (target == GL_TEXTURE_2D) {
++		clear_due_now(e, texture, &due_bound);
++	}
+ 	if (texture != 0 && e->image_count != 0 && (image = image_of(e, texture)) != NULL && !image->shared &&
+ 	    shown_changed(e, image) && (column_again += column_like(image), true)) {
+ 		surface_to_texture(e, image);
+@@ -4715,6 +4751,9 @@
+ 		    pixels);
+ 	}
+ 	clear_now(e);
++	if (target == GL_TEXTURE_2D && e->unit < 8) {
++		clear_due_now(e, e->bound[e->unit], &due_uploaded);
++	}
+ 	if (target == GL_TEXTURE_2D && e->unit < 8 && e->groups != NULL) {
+ 		group_read(e, e->bound[e->unit]);
+ 		group_forget(e, e->bound[e->unit]);
+@@ -4744,6 +4783,9 @@
+ 		eagl_trace("glCopyTexSubImage2D(%#x, %d, %d, %d, %d, %d, %d, %d)\n", target, level, x0, y0, x, y, width, height);
+ 	}
+ 	clear_now(e);
++	if (target == GL_TEXTURE_2D && e->unit < 8) {
++		clear_due_now(e, e->bound[e->unit], &due_copied);
++	}
+ 	if (e->groups != NULL) {
+ 		group_read(e, e->colour);
+ 		if (target == GL_TEXTURE_2D && e->unit < 8) {
