@@ -1,0 +1,147 @@
+--- a/src/panfrost/vulkan/jm/panvk_cmd_buffer.h
++++ b/src/panfrost/vulkan/jm/panvk_cmd_buffer.h
+@@ -60,6 +60,13 @@
+    struct pan_tls_info tlsinfo;
+    unsigned wls_total_size;
+    bool issued;
++   /* begonia: what the pass was, for PANVK_DEBUG=passtime (panvk_debug=passtime) */
++   struct {
++      uint16_t w, h, fmt[2];
++      uint8_t rt_count;
++      char load[2], store[2];
++      uint32_t jobs;
++   } begonia;
+ };
+ 
+ enum panvk_cmd_event_op_type {
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_buffer.c
+@@ -196,6 +196,20 @@
+          .tiler_ctx = &batch->tiler.ctx,
+       };
+ 
++      {
++         const struct pan_fb_layout *l = &render->fb.layout;
++         batch->begonia.w = l->render_area_px.max_x - l->render_area_px.min_x + 1;
++         batch->begonia.h = l->render_area_px.max_y - l->render_area_px.min_y + 1;
++         batch->begonia.rt_count = l->rt_count;
++         for (unsigned i = 0; i < 2; i++) {
++            batch->begonia.fmt[i] = l->rt_formats[i];
++            batch->begonia.load[i] = fbd_info.load->rts[i].in_bounds_load == PAN_FB_LOAD_IMAGE ? 'L' :
++                                     fbd_info.load->rts[i].in_bounds_load == PAN_FB_LOAD_CLEAR ? 'C' : 'N';
++            batch->begonia.store[i] = fbd_info.store->rts[i].store ? '1' : '0';
++         }
++         batch->begonia.jobs = util_dynarray_num_elements(&batch->jobs, void *);
++      }
++
+       struct pan_fb_frame_shaders fs;
+       VkResult result = panvk_per_arch(cmd_get_frame_shaders)(
+          cmdbuf, &render->fb.layout, fbd_info.load,
+--- a/src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c
+@@ -29,6 +29,59 @@
+ 
+ #include "drm-uapi/panfrost_drm.h"
+ 
++#include <fcntl.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#include <unistd.h>
++#include "util/format/u_format.h"
++
++/* begonia: PANVK_DEBUG=passtime -- each batch is waited for twice (its vertex/tiler jobs, then its
++ * fragment job) and, when it took 3 ms or more, one line goes to the console (backboardd only):
++ * vertex ms, fragment ms, render area, colour formats, load (L image, C clear, N none) and store
++ * (1/0) of colour 0 and 1, jobs in the batch. The batches run one after the other then: the
++ * times are the GPU's own, the frame rate is not. */
++static bool
++begonia_passtime(void)
++{
++   static int on = -1;
++   if (on < 0) {
++      const char *e = getenv("PANVK_DEBUG");
++      on = e && strstr(e, "passtime") != NULL;
++   }
++   return on;
++}
++
++static uint64_t
++begonia_now_us(void)
++{
++   struct timespec ts;
++   clock_gettime(CLOCK_MONOTONIC, &ts);
++   return (uint64_t)ts.tv_sec * 1000000ull + ts.tv_nsec / 1000;
++}
++
++static void
++begonia_say_pass(const struct panvk_batch *b, uint64_t v_us, uint64_t f_us)
++{
++   static int fd = -2;
++   if (v_us + f_us < 3000)
++      return;
++   if (fd == -2)
++      fd = strcmp(getprogname(), "backboardd") == 0 ? open("/dev/console", O_WRONLY | O_NOCTTY) : -1;
++   if (fd < 0)
++      return;
++   char line[120];
++   int n = snprintf(line, sizeof(line), "pt v%.1f f%.1f %ux%u r%u %.9s/%.9s L%c%c S%c%c j%u
++",
++                    v_us / 1000.0, f_us / 1000.0, b->begonia.w, b->begonia.h, b->begonia.rt_count,
++                    util_format_short_name(b->begonia.fmt[0]), util_format_short_name(b->begonia.fmt[1]),
++                    b->begonia.load[0], b->begonia.load[1], b->begonia.store[0], b->begonia.store[1],
++                    b->begonia.jobs);
++   if (n > 0)
++      (void)!write(fd, line, n);
++}
++
+ static void
+ panvk_queue_submit_batch(struct panvk_gpu_queue *queue,
+                          struct panvk_cmd_buffer *cmdbuf,
+@@ -40,6 +93,7 @@
+    struct panvk_physical_device *phys_dev =
+       to_panvk_physical_device(dev->vk.physical);
+    ASSERTED int ret;
++   uint64_t begonia_v_us = 0, begonia_f_us = 0;
+ 
+    /* Reset the batch if it's already been issued */
+    if (batch->issued) {
+@@ -76,8 +130,13 @@
+          .jc = batch->vtc_jc.first_job,
+       };
+ 
++      uint64_t begonia_t0 = begonia_now_us();
+       ret = pan_kmod_ioctl(dev->drm_fd, DRM_IOCTL_PANFROST_SUBMIT, &submit);
+       assert(!ret);
++      if (begonia_passtime()) {
++         (void)drmSyncobjWait(dev->drm_fd, &submit.out_sync, 1, INT64_MAX, 0, NULL);
++         begonia_v_us = begonia_now_us() - begonia_t0;
++      }
+ 
+       if (PANVK_DEBUG(TRACE) || PANVK_DEBUG(SYNC)) {
+          ret = drmSyncobjWait(dev->drm_fd, &submit.out_sync, 1, INT64_MAX, 0,
+@@ -120,8 +179,13 @@
+          submit.in_sync_count = nr_in_fences;
+       }
+ 
++      uint64_t begonia_t1 = begonia_now_us();
+       ret = pan_kmod_ioctl(dev->drm_fd, DRM_IOCTL_PANFROST_SUBMIT, &submit);
+       assert(!ret);
++      if (begonia_passtime()) {
++         (void)drmSyncobjWait(dev->drm_fd, &submit.out_sync, 1, INT64_MAX, 0, NULL);
++         begonia_f_us = begonia_now_us() - begonia_t1;
++      }
+       if (PANVK_DEBUG(TRACE) || PANVK_DEBUG(SYNC)) {
+          ret = drmSyncobjWait(dev->drm_fd, &submit.out_sync, 1, INT64_MAX, 0,
+                               NULL);
+@@ -148,6 +212,9 @@
+    if (PANVK_DEBUG(TRACE))
+       pandecode_next_frame(dev->debug.decode_ctx);
+ 
++   if (begonia_passtime())
++      begonia_say_pass(batch, begonia_v_us, begonia_f_us);
++
+    batch->issued = true;
+ }
+ 
