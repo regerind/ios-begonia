@@ -214,3 +214,19 @@ Aşağısı araştırmanın kaydı.
   Güncelleme (y228-y229): adım 2 (descriptor kopyasını CPU'ya almak, PanVK 0014) denendi. Kopya çalışıyor (y229:
   66 binden fazla, geri dönüş 0) ama hız değişmedi (6-7 kare / 5 sn). Descriptor kopya işleri darboğaz değil.
   Kalan tek yol: CoreAnimation'ın framebuffer-fetch'siz boru hatlarını seçmesi (QuartzCore RE, adım 1).
+
+  Adım 1 (y230-y237): CoreAnimation'da framebuffer fetch'i kapatma denemesi.
+  - backboardd'in cihaza sorduğu yetenekler (`metal_caps_log=1`): supportsFamily: 1001-1005 ve 1008, supportsMemorylessRenderTargets,
+    supportsRasterOrderGroups (0), supportsTileShaders (0), supportsNativeHardwareFP16 (0), supportsSIMDGroup (0), YCBCR (0).
+    `isFramebufferReadSupported` hiç sorulmuyor: fetch'i seçen ayrı bir yetenek bayrağı yok.
+  - Yanıtları kapatmak (`metal_caps_off`): memoryless kapalı -> ikinci ek (fc_attachment_count 2->1) kalkıyor ama fc_framebuffer_fetch 1 kalıyor;
+    Apple2/3 ailesi kapalı -> fetch yine 1. CA ortam anahtarları (`ca_env=`: CA_DISABLE_INPLACE_SHADERS, CA_FORCE_GENERIC_SHADERS)
+    fetch'i değiştirmedi (ortamın CA'ya ulaştığı doğrulanamadı); CA_DISABLE_TILE_SHADERS backboardd'i yeniden başlattı.
+  - Çevrimdışı ölçüm (`qc_from_key.py`, QC_OVERRIDE ile): fc_framebuffer_fetch=0 tek başına gövde komut sayısını yalnız 193 -> 187 yapıyor.
+    Asıl düşüş fc_blend_function=0 ile (193 -> 106; 64 -> 22). Bu gövde sayıları PanVK profiliyle (runtime 0004); "280" Metal-uyumlu profildeydi.
+  - Cihazda ölçüm (y237, görüntü bozuk): fc_blend_function=0 + fc_framebuffer_fetch=0 zorlanınca 6 -> 8 kare/5 sn, ortalama GPU işi
+    650 -> 427 us, ama en uzun iş hâlâ 23 ms. Shader-içi blend/fetch maliyetin ancak %25-30'u.
+  - QuartzCore içinde pipeline seçim bayrağını yamamak denenmedi: kazanç tavanı bu ölçümle sınırlı (8 kare). fc_framebuffer_fetch'in tablosu
+    dyld cache'te .27.dylddata 0x24a9c8'de (isim işaretçisi); kodu bulunmadı.
+  - Kalan şüpheler: yarım duyarlık (supportsNativeHardwareFP16=0 olduğundan OpFConvert'ler), ekran dolduran backdrop/blur geçişleri
+    (en uzun iş 23 ms), iş başına bellek bant genişliği.
