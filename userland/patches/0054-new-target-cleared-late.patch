@@ -12,7 +12,7 @@
   */
  static int fill_fresh;
  static unsigned fresh_clears;
-+static int clear_late;                  /* boot-arg glclearlate=1 (y152) */
++static int clear_late;                  /* on (y153); boot-arg glclearlate=0: off */
 +static unsigned late_clears, late_shown;
 +
 +/* begonia (y152): a new target cleared in the framebuffer bound now (its own, or ours: clear_due) */
@@ -47,7 +47,7 @@
 +	/*
 +	 * begonia (y152): cleared through a framebuffer of its own, the new target was a batch of its own every frame: the
 +	 * whole 1080x2340 written with nothing drawn ("cleared ... 0 draws"), then read back in by the batch that draws into
-+	 * it. Boot-arg glclearlate=1: a display-size target is cleared by that batch instead, as the first thing it does
++	 * it. Since y153 (on unless glclearlate=0) a display-size target is cleared by that batch instead, as the first thing it does
 +	 * (drawing()): the tiles start cleared, nothing written or read twice. A target shown before anything is drawn into
 +	 * it is cleared the old way first (target_to_surface()).
 +	 */
@@ -112,7 +112,7 @@
  		sync_frames = strstr(arguments, "glsync=1") != NULL;
  		hash_wrapped = strstr(arguments, "glwraphash=1") != NULL;
  		fill_fresh = strstr(arguments, "glfill=1") != NULL;
-+		clear_late = strstr(arguments, "glclearlate=1") != NULL;
++		clear_late = strstr(arguments, "glclearlate=0") == NULL;
  		if (strstr(arguments, "glwait=0") != NULL || (strstr(arguments, "glwait=1") == NULL && display_waits())) {
  			wait_for_frames = 0;
  		}
