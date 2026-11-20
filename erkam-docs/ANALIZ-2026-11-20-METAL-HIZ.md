@@ -112,3 +112,13 @@ Risk: hizasız ofset gelirse o çizimin uniform'ları yanlış okunabilir (yanl�
 | 3. Kare sırası | `fb_queue=2` çekirdekte zaten var (0023 ile birlikte); ayrıca ölçülmedi, yeni kod yok. |
 | 4. Bellek/jetsam, boş kare atlama | Yazılmadı. Kaynak dökümü için y290'ın GPU VA sayacı hâlâ koşulmadı. |
 Host'ta iz yeniden oynatma (trace replay) ve ASan bellek testi YOK: elde yakalanmış kare izi ve Vulkan'ı cihazsız koşturan bir düzenek yok.
+
+## 12. 0019'un varsayımı Metal bildirimiyle DOĞRULANMADI (önemli)
+`tools/air_buffer_args.py` (default.metallib -> llvm-dis) CA shader'larının buffer argümanlarının bildirilen hizalarını verdi:
+- blur'lar (`narrow_blur_7/27`, `single_pass_blur_3`): `u` = `NarrowBlurUniforms`, boyut 88, **hiza 8**; `edr_scale` half, hiza 2.
+- `fixed_frag_lph_cpf`: `uniforms` (CA::OGL::Metal::Uniform) boyut 176 hiza 16; `config_buffer` boyut 52 **hiza 4**; `lod_bias` float hiza 4; `colorP` float4 hiza 16.
+Metal yalnızca "ofset tipin hizasının katı" der. Yani blur uniform'ları için garanti 8, 16 değil. CA'nın ayırıcısı her şeyi 16'ya hizalıyorsa 0019 doğru çalışır;
+tip hizasına göre ayırıyorsa (ör. 4 baytlık `lod_bias`'tan sonra 8 mod 16) blur uniform'ları yanlış okunabilir. Bu ancak cihazda görülür ("not a multiple of 16" satırı).
+Doğru çözüm: çevirici (metal2vulkan) ofset maskesini argümanın bildirilen hizasından üretsin (`& ~(hiza-1)`), PanVK hizayı maskeden okusun; hiza 8 ile blur'da
+yüklemeler ikişer birleşir (tahmin: Tn27 ldst 21 -> ~11). Çevirici normal buffer'larda hizayı hiç kullanmıyor; bu değişiklik YAZILMADI.
+Bu yüzden iki kalıcı imaj hazırlandı: `p13` (0019 açık) ve `p13n` (aynı imaj, `ca_env=PANVK_NO_UBO_ALIGN16` ile 0019 kapalı = p12 davranışı).
