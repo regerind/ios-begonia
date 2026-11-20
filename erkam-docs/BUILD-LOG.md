@@ -152,3 +152,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y230 | 14:12 | Adım 1: PanVK sessiz sayaçla; frontend'e `metal_caps_log=1` (cihaz yetenek sorgularını bir kez yazar) ve `metal_caps_off=sel,sel:arg` (yanıtı 0 yapar). Bu koşu yalnız log: CoreAnimation hangi sorgularla fc_framebuffer_fetch seçiyor? (+ metal_tele=1: boru hattı anahtarları) | 5-12 kare/5 sn (baz), çökme yok; caps satırı çıkmadı (halka). 465 boru hattı anahtarı yazıldı. |
 | y231 | 14:16 | y230 tekrarı: y230 logunda caps satırı yoktu (konsol halkası başlangıcı attı). Caps listesi artık her 10 sn yeniden yazılıyor | |
 | y232 | 14:20 | Adım 1: `metal_caps_off=supportsMemorylessRenderTargets` (memoryless kapalı); metal_tele=1 | |
+| y233 | 14:24 | Adım 1: `metal_caps_off=supportsFamily:1002,supportsFamily:1003` (Apple2/3 ailesi kapalı); metal_tele=1 | |
