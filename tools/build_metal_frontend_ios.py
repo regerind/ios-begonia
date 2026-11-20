@@ -658,12 +658,19 @@ static void nbMirrorSync(NBTexture *t) {
   base+=t.offset;
   const uint64_t began=nowUs();
   const size_t rowBytes=(size_t)t.descriptor.width*t.mirrorTexel,rows=(size_t)t.descriptor.height,pitch=t.rowBytes;
-  uint64_t h=0x9e3779b97f4a7c15ull;
+  // (four lanes of 8 bytes each: y212's one lane took 13 ms a commit for the window server's ~50 mirrored textures)
+  uint64_t h=0x9e3779b97f4a7c15ull,l0=h,l1=h^0x1111111111111111ull,l2=h^0x2222222222222222ull,l3=h^0x3333333333333333ull;
+  const uint64_t m=0xff51afd7ed558ccdull;
   for(size_t y=0;y<rows;y++) {
    const uint8_t *p=base+y*pitch;size_t n=rowBytes;
-   for(;n>=8;n-=8,p+=8){uint64_t w;memcpy(&w,p,8);h=(h^w)*0xff51afd7ed558ccdull;h^=h>>29;}
-   uint64_t w=0;if(n)memcpy(&w,p,n);h=(h^w^(uint64_t)n)*0xc4ceb9fe1a85ec53ull;h^=h>>32;
+   for(;n>=32;n-=32,p+=32) {
+    uint64_t w[4];memcpy(w,p,32);
+    l0=(l0^w[0])*m;l0^=l0>>29;l1=(l1^w[1])*m;l1^=l1>>29;l2=(l2^w[2])*m;l2^=l2>>29;l3=(l3^w[3])*m;l3^=l3>>29;
+   }
+   for(;n>=8;n-=8,p+=8){uint64_t w;memcpy(&w,p,8);l0=(l0^w)*m;l0^=l0>>29;}
+   uint64_t w=0;if(n)memcpy(&w,p,n);l1=(l1^w^(uint64_t)n)*0xc4ceb9fe1a85ec53ull;l1^=l1>>32;
   }
+  h=((l0*31+l1)*31+l2)*31+l3;h^=h>>31;
   gMirrorHashUs+=nowUs()-began;
   if(t.mirrorFilled && h==t.mirrorHash){gMirrorSkips++;return;}
   [(id<MTLTexture>)t replaceRegion:MTLRegionMake2D(0,0,t.descriptor.width,t.descriptor.height) mipmapLevel:0 slice:0 withBytes:base bytesPerRow:pitch bytesPerImage:pitch*rows];
@@ -692,6 +699,25 @@ static NBTexture *nbMirrorTexture(NBBuffer *self,MTLTextureDescriptor *d,NSUInte
 - (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d offset:(NSUInteger)offset bytesPerRow:(NSUInteger)row {
  if(NBTexture *mirror=nbMirrorTexture(self,d,offset,row))return (id<MTLTexture>)mirror;
 '''))
+# (y213, measurement: with metal_tele=1, after each 5 s line the window server's next 16 render passes are described --
+# each colour attachment's size, format, load and store action, storage mode and whether it is a surface)
+tele_hooks.append(('static void completed(void *context);\nstatic void scheduled(void *context);\n',
+ 'static void completed(void *context);\nstatic void scheduled(void *context);\nstatic std::atomic<int> gTelePasses{0};\n'))
+tele_hooks.append((' auto attachment=[&](MTLRenderPassAttachmentDescriptor *a,NmbPassAttachment &out)->bool {\n',
+ ''' if(gTelePasses.load()>0 && gTelePasses.fetch_sub(1)>0) {
+  NSMutableString *line=[NSMutableString stringWithFormat:@"tele pass cb%04lx",(unsigned long)(((uintptr_t)self>>4)&0xffff)];
+  for(unsigned i=0;i<4;i++) {
+   MTLRenderPassColorAttachmentDescriptor *c=d.colorAttachments[i];id<MTLTexture> t=c.texture;if(!t)continue;
+   [line appendFormat:@" c%u %lux%lu f%lu L%lu S%lu sm%lu %s",i,(unsigned long)t.width,(unsigned long)t.height,(unsigned long)t.pixelFormat,
+    (unsigned long)c.loadAction,(unsigned long)c.storeAction,(unsigned long)t.storageMode,t.iosurface?"surface":"own"];
+  }
+  if(d.depthAttachment.texture||d.stencilAttachment.texture)[line appendString:@" ds"];
+  nbConsole(line);
+ }
+ auto attachment=[&](MTLRenderPassAttachmentDescriptor *a,NmbPassAttachment &out)->bool {
+'''))
+tele_hooks.append((' unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeLock);kinds=(unsigned)gTelePipes.size();}\n nbConsole([NSString stringWithFormat:@"tele X pipes',
+ ' gTelePasses=16;\n unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeLock);kinds=(unsigned)gTelePipes.size();}\n nbConsole([NSString stringWithFormat:@"tele X pipes'))
 # (y212: CoreAnimation's own bitmaps -- glyphs, masks -- come through the private newLinearTextureWithDescriptor:...,
 # over its newBufferWithBytesNoCopy buffers; one image of one slice is the same texture)
 tele_hooks.append((' NmbTextureDescriptor descriptor;if(!textureDescriptor(d,&descriptor))return nil;\n NmbTexture *handle=nmb_texture_new_linear(',
