@@ -1006,7 +1006,7 @@ mtext=mtext.replace(old,old+'''static NSMutableArray<NBBuffer *> *gBegSurfaceKep
 static int begThin(void) {
  static int mode=-1;
  if(mode<0){char args[1024]="";size_t size=sizeof(args)-1;
-  mode=sysctlbyname("kern.bootargs",args,&size,NULL,0)==0?(strstr(args,"beg_thin=2")?2:strstr(args,"beg_thin=1")?1:0):0;}
+  mode=sysctlbyname("kern.bootargs",args,&size,NULL,0)==0?(strstr(args,"beg_thin=2")?2:strstr(args,"beg_thin=0")?0:1):1;}   // y310: on unless beg_thin=0 (y306, y307: the hashing 2.8 -> 1.5 ms a commit)
  if(mode!=2)return mode;
  struct timespec ts;clock_gettime(CLOCK_UPTIME_RAW,&ts);return (int)((ts.tv_sec/5)&1);
 }
