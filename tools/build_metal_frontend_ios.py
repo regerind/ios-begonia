@@ -622,6 +622,77 @@ tele_hooks.append(('static void completed(void *context);\nstatic void scheduled
 tele_hooks.append((' dispatch_group_wait(_schedulingHandlers,DISPATCH_TIME_FOREVER);\n',
  ' dispatch_group_wait(_schedulingHandlers,DISPATCH_TIME_FOREVER);\n'
  ' if(nbServerWaits() && encodedWork.passes>0 && !self.failedLocally)nmb_command_buffer_wait(_handle,0);\n'))
+# begonia (y207): textures over a buffer's bytes that are only read (CoreAnimation's glyph, mask and image bitmaps:
+# it writes the bitmap into an MTLBuffer and wraps a texture round it). PanVK's linear images need page-aligned
+# memory and their own row pitch, so the runtime "shadows" every such texture: an image of its own that it fills from
+# the buffer again before EVERY encoder that uses it, as it cannot know whether the CPU wrote the bytes -- two GPU
+# batches a texture (y206: ~56 of the window server's ~60 batches a frame, 4 frames a second). In backboardd such a
+# texture is instead an ordinary texture that mirrors the bytes: at each commit of a command buffer that uses it, its
+# bytes are hashed, and uploaded (replaceRegion) only when they changed. Kept to what cannot go wrong that way: 2D,
+# one level, one sample, a plain format, usage without RenderTarget/ShaderWrite, a buffer the CPU can read. Not seen:
+# a GPU write into the buffer's bytes (a blit) -- the mirror keeps the bytes the CPU last had. metal_mirror=0: off.
+tele_hooks.append(('@property(nonatomic) NSUInteger heapOffset;\n@end',
+ '@property(nonatomic) NSUInteger heapOffset;\n@property(nonatomic) BOOL mirror,mirrorFilled;\n@property(nonatomic) uint64_t mirrorHash;\n@property(nonatomic) uint32_t mirrorTexel;\n@end'))
+tele_hooks.append(('@implementation NBBuffer (Textures)\n- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d offset:(NSUInteger)offset bytesPerRow:(NSUInteger)row {\n',
+ '''static std::atomic<unsigned long long> gMirrorMade,gMirrorNot,gMirrorUploads,gMirrorSkips,gMirrorBytes,gMirrorHashUs;
+static bool nbMirrorOn() {
+ static int on=-1;
+ if(on<0){char args[1024]="";size_t size=sizeof(args)-1;
+  on=strcmp(getprogname(),"backboardd")==0 && !(sysctlbyname("kern.bootargs",args,&size,NULL,0)==0 && strstr(args,"metal_mirror=0")!=NULL);}
+ return on;
+}
+static uint32_t nbMirrorTexel(MTLPixelFormat format) {
+ switch((unsigned)format) {
+ case 1: case 10: case 11: case 13: return 1;                       // A8, R8
+ case 20: case 25: case 30: case 40: case 41: case 42: case 43: return 2;   // R16, RG8, the 16-bit packed ones
+ case 55: case 65: case 70: case 71: case 80: case 81: case 90: case 94: return 4;   // R32Float, RG16Float, RGBA8, BGRA8, the 10-bit ones
+ case 110: case 115: return 8;                                       // RGBA16
+ default: return 0;
+ }
+}
+// The texture's bytes in its buffer, hashed row by row (the texels only, not the bytes between rows), and uploaded
+// when they are not the ones last uploaded.
+static void nbMirrorSync(NBTexture *t) {
+ @synchronized(t) {
+  const uint8_t *base=(const uint8_t *)[t.buffer contents];if(!base)return;
+  base+=t.offset;
+  const uint64_t began=nowUs();
+  const size_t rowBytes=(size_t)t.descriptor.width*t.mirrorTexel,rows=(size_t)t.descriptor.height,pitch=t.rowBytes;
+  uint64_t h=0x9e3779b97f4a7c15ull;
+  for(size_t y=0;y<rows;y++) {
+   const uint8_t *p=base+y*pitch;size_t n=rowBytes;
+   for(;n>=8;n-=8,p+=8){uint64_t w;memcpy(&w,p,8);h=(h^w)*0xff51afd7ed558ccdull;h^=h>>29;}
+   uint64_t w=0;if(n)memcpy(&w,p,n);h=(h^w^(uint64_t)n)*0xc4ceb9fe1a85ec53ull;h^=h>>32;
+  }
+  gMirrorHashUs+=nowUs()-began;
+  if(t.mirrorFilled && h==t.mirrorHash){gMirrorSkips++;return;}
+  [(id<MTLTexture>)t replaceRegion:MTLRegionMake2D(0,0,t.descriptor.width,t.descriptor.height) mipmapLevel:0 slice:0 withBytes:base bytesPerRow:pitch bytesPerImage:pitch*rows];
+  t.mirrorHash=h;t.mirrorFilled=YES;gMirrorUploads++;gMirrorBytes+=rowBytes*rows;
+ }
+}
+@implementation NBBuffer (Textures)
+- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d offset:(NSUInteger)offset bytesPerRow:(NSUInteger)row {
+ if(nbMirrorOn() && d) {
+  const uint32_t texel=nbMirrorTexel(d.pixelFormat);
+  const bool plain=d.textureType==MTLTextureType2D && d.mipmapLevelCount<=1 && d.sampleCount<=1 && d.arrayLength<=1 && d.depth<=1;
+  const bool reads=d.usage!=MTLTextureUsageUnknown && !(d.usage&(MTLTextureUsageRenderTarget|MTLTextureUsageShaderWrite));
+  if(texel && plain && reads && row>=d.width*texel && [self contents] && offset+row*(d.height-1)+d.width*texel<=self.length) {
+   MTLTextureDescriptor *own=[d copy];
+   NBTexture *texture=(NBTexture *)[gDeviceObject newTextureWithDescriptor:own];
+   if([(id)texture isKindOfClass:[NBTexture class]]) {
+    texture.buffer=self;texture.offset=offset;texture.rowBytes=row;texture.mirror=YES;texture.mirrorTexel=texel;gMirrorMade++;
+    return (id<MTLTexture>)texture;
+   }
+  }
+  if(gMirrorNot++<8)nbConsole([NSString stringWithFormat:@"tele mirror not: format %lu %lux%lu type %lu levels %lu usage %#lx rows %lu texel %u",
+   (unsigned long)d.pixelFormat,(unsigned long)d.width,(unsigned long)d.height,(unsigned long)d.textureType,(unsigned long)d.mipmapLevelCount,(unsigned long)d.usage,(unsigned long)row,texel]);
+ }
+'''))
+tele_hooks.append((' self.committed=YES;\n self.committedUs=nowUs();\n nbTeleTick();',
+ ' self.committed=YES;\n self.committedUs=nowUs();\n nbTeleTick();\n'
+ ' if(nbMirrorOn() && !self.encodeFailure)for(id owner in [_resourceOwners copy])if([owner isKindOfClass:[NBTexture class]] && [(NBTexture *)owner mirror])nbMirrorSync((NBTexture *)owner);'))
+tele_hooks.append((' {char warning[700];if(nmb_last_warning(warning,sizeof warning))nbConsole([NSString stringWithFormat:@"tele WW %s",warning]);}\n',
+ ' nbConsole([NSString stringWithFormat:@"tele M mirror made %llu not %llu uploads %llu (%llu KB) unchanged %llu hashing %llu us",gMirrorMade.load(),gMirrorNot.load(),gMirrorUploads.load(),gMirrorBytes.load()>>10,gMirrorSkips.load(),gMirrorHashUs.load()]);\n'))
 for old,new in tele_hooks:
  assert mtext.count(old)==1,'telemetry hook does not fit: '+old[:90]
  mtext=mtext.replace(old,new)
