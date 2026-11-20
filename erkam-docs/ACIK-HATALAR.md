@@ -320,3 +320,18 @@ Aşağısı araştırmanın kaydı.
   (ölçülen pass süresi döngü modelinin 5-10 katı). Şüphe: bellek/doku tarafı (LINEAR ekran ve uygulama yüzeyleri), pass başına sabit maliyet. Durum: AÇIK.
 - **Bölüm 2b (jetsam):** p13'te de sürüyor; yeniden üretme: video izlerken ekrana dokunup ileri sarmak -> backboardd jetsam. Bellek tarafında bu turda hiçbir
   değişiklik yapılmadı. Durum: AÇIK.
+
+### 4 denemenin sonucu (y292-y295, 2026-11-20 gece): kaydırma takılması AÇIK
+- **Ölçülen durum (ana ekranda sağa/sola kaydırma):** ~15-20 fps, bütün kare aralıkları 35 ms üstü, GPU %88-95 meşgul. Kare başına ~50-60 ms GPU işi:
+  1041x1180 ara hedef ~16 ms (karede 1 iş), ekran yüzeyi ~11-17 ms (8.6 ms/iş), slot 1 (vertex/tiler/compute) ~17-26 ms.
+- **Kanıtlanan tek kazanç:** doğrudan indeksli çizim (PanVK 0021, `PANVK_DIRECT`): ~+%10 kare. p14'te açık.
+- **Kazanç vermeyenler (ölçüldü):** 0020 INTERSECT ön-yükleme; 20 us bekleme uykusu; pixel işi ile vertex/tiler zincirini iki slotta aynı anda koşturmak
+  (çiftler oluştu, resim doğru, kare sayısı aynı); şerit restart düzeltmesi (varsayım yanlıştı: şerit çizimi yok, çizim başına 6 köşe).
+- **Bulunan ama DÜZELTİLMEYEN asıl yük:** slot 1 süresince 4 çekirdeğin hepsi compute ile dolu (5 sn'de ~5.5 milyar çekirdek-döngüsü, 63M warp =
+  ~252M iş parçacığı; kare başına ~2.5M). Tiler'ın gördüğü üçgen yalnız ~36 bin/5 sn, çizim başına 6 köşe: yani yük çizimlerin vertex shader'ı değil.
+  metal2vulkan'ın compute dispatch sayacı aynı oturumda `mipmap_filter.rs` sitesinden 1818, `ycbcr.rs` sitesinden 1000 dispatch gösteriyor. En olası
+  kaynak: CoreAnimation'ın her karede istediği mip zinciri üretiminin (backdrop blur için) compute ile, piksel başına bir iş parçacığıyla yapılması.
+  Bu eşleştirme (dispatch sayısı <-> compute döngüsü) dolaylı; dispatch başına süre ölçülmedi.
+- **Sonraki adım (yapılmadı):** mip üretimini compute yerine render/blit ile yapmak ya da PanVK'da ucuzlatmak; ardından 1041x1180 blur pass'i (16 ms).
+- **Jetsam (2b):** bu dört koşuda görülmedi (YouTube/sarma yalnız y292'de koştu); bellek tarafında değişiklik yapılmadı. AÇIK.
+- **Araçlar kaldı:** çekirdekte `begonia_overlap=2` (dilimli istatistik + Mali donanım sayaçları + kalıcı `BEGONIA KEEP` metni), `begonia_prfcnt=1`.
