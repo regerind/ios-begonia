@@ -432,8 +432,7 @@ sample_window(int w, char hist[NS][4000])
 						oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " %.44s %u;", tot[say][best].name,
 						    pass ? tot[say][best].in : tot[say][best].leaf);
 					}
-					printf("%s
-", out);
+					puts(out);
 				}
 				char out[1500];
 				unsigned char used[MSGS];
@@ -452,8 +451,7 @@ sample_window(int w, char hist[NS][4000])
 					used[best] = 1;
 					oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " [%s] %u;", msgs[say][best].key, msgs[say][best].n);
 				}
-				printf("%s
-", out);
+				puts(out);
 			}
 		}
 		char line[700], brief[300];
