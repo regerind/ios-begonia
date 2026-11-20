@@ -41,7 +41,9 @@ static lck_grp_t *gpu_group;
 static lck_mtx_t *vm_lock;              /* the tables' memory and their dirty marks */
 static lck_mtx_t *queue_lock;           /* the queue, submitted, completed, failed */
 #define JOB_QUEUE 1024
-static struct {uint64_t chain,seq,queued;bool fragment;} queue[JOB_QUEUE];
+/* y294: pid, and halves: its PanVK gives consecutive batches the tiler heap's halves (a job of another kind of program
+ * is never paired with the same program's job before it) */
+static struct {uint64_t chain,seq,queued;bool fragment,halves;int pid;} queue[JOB_QUEUE];
 static uint64_t queue_head,queue_tail;
 /* what the GPU's time goes into, said every five seconds it has had work */
 static uint64_t stat_jobs,stat_fragment,stat_busy,stat_longest,stat_waited,stat_since;
@@ -707,8 +709,9 @@ static void job_thread(void *argument,wait_result_t result) {
    lck_mtx_lock(queue_lock);
    uint64_t chain2=queue[(queue_head+1)%JOB_QUEUE].chain,seq2=queue[(queue_head+1)%JOB_QUEUE].seq;
    bool fragment2=queue[(queue_head+1)%JOB_QUEUE].fragment;uint64_t queued2=queue[(queue_head+1)%JOB_QUEUE].queued;
+   bool may=queue[(queue_head+1)%JOB_QUEUE].halves || queue[(queue_head+1)%JOB_QUEUE].pid!=queue[queue_head%JOB_QUEUE].pid;
    lck_mtx_unlock(queue_lock);
-   if(!fragment2 && draws_only(chain2)) {
+   if(!fragment2 && may && draws_only(chain2)) {
     paired=true;
     success=run_pair(chain,seq,queued,chain2,seq2,queued2,depth);
     seq=seq2;
@@ -761,12 +764,16 @@ uint64_t hakios_mali_enqueue(uint64_t chain,bool fragment) {
   __atomic_store_n(&completed,seq,__ATOMIC_RELEASE);
   return success?seq:0;
  }
+ char who[20];who[0]=0;proc_selfname(who,sizeof who);
+ int pid=proc_selfpid();
+ bool halves=!strncmp(who,"backboardd",10) || !strncmp(who,"SpringBoard",11) || !strncmp(who,"com.apple.WebKit",16);
  lck_mtx_lock(queue_lock);
  while(queue_tail-queue_head>=JOB_QUEUE)
   (void)lck_mtx_sleep(queue_lock,LCK_SLEEP_DEFAULT,(event_t)&queue_head,THREAD_UNINT);
  uint64_t seq=++submitted;
  queue[queue_tail%JOB_QUEUE].chain=chain;queue[queue_tail%JOB_QUEUE].seq=seq;
  queue[queue_tail%JOB_QUEUE].fragment=fragment;queue[queue_tail%JOB_QUEUE].queued=mach_absolute_time();
+ queue[queue_tail%JOB_QUEUE].pid=pid;queue[queue_tail%JOB_QUEUE].halves=halves;
  queue_tail++;
  thread_wakeup((event_t)&queue_tail);
  lck_mtx_unlock(queue_lock);
