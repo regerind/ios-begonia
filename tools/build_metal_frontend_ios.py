@@ -835,13 +835,22 @@ static bool nbCapOff(const char *name,NSUInteger arg,bool hasArg) {
  if(list.find(std::string(",")+name+",")!=std::string::npos)return true;
  return hasArg && list.find(std::string(",")+name+":"+std::to_string((unsigned long)arg)+",")!=std::string::npos;
 }
+static std::mutex gCapHold;static std::vector<std::string> gCapLines;static std::unordered_map<std::string,int> gCapSeen;
+static void nbCapDump(void *) {
+ std::vector<std::string> lines;{std::lock_guard<std::mutex> guard(gCapHold);lines=gCapLines;}
+ for(auto &line:lines)nbConsole([NSString stringWithUTF8String:line.c_str()]);
+ dispatch_after(dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC),dispatch_get_global_queue(0,0),^{nbCapDump(NULL);});
+}
+static void nbCapAdd(const std::string &key,const std::string &line) {
+ std::lock_guard<std::mutex> guard(gCapHold);
+ if(!gCapSeen.emplace(key,1).second)return;
+ if(gCapLines.empty())dispatch_after(dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC),dispatch_get_global_queue(0,0),^{nbCapDump(NULL);});
+ gCapLines.push_back(line);
+}
 static void nbCapLog(const char *name,NSUInteger arg,bool hasArg,uint64_t value) {
  if(!nbCapsLogOn())return;
- static std::mutex hold;static std::unordered_map<std::string,int> seen;
- std::string key=std::string(name)+":"+std::to_string((unsigned long)arg);
- std::lock_guard<std::mutex> guard(hold);
- if(!seen.emplace(key,1).second)return;
- nbConsole([NSString stringWithFormat:@"caps %s%s%lu=%llu %s",name,hasArg?" ":" /",(unsigned long)arg,(unsigned long long)value,getprogname()]);
+ char line[100];snprintf(line,sizeof line,"caps %s%s%lu=%llu %s",name,hasArg?" ":" /",(unsigned long)arg,(unsigned long long)value,getprogname());
+ nbCapAdd(std::string(name)+":"+std::to_string((unsigned long)arg),line);
 }
 """))
 tele_hooks.append(('static NSUInteger countAnswer(id,SEL cmd) {return (NSUInteger)gAnswers.at(cmd);}\nstatic BOOL flagAnswer(id,SEL cmd) {return gAnswers.at(cmd)!=0;}\n',
@@ -850,7 +859,7 @@ tele_hooks.append(('static NSUInteger countAnswer(id,SEL cmd) {return (NSUIntege
 tele_hooks.append((' kept[cmd][arg]=value;\n return value;\n',
  ' if(nbCapOff(sel_getName(cmd),arg,true))value=0;\n nbCapLog(sel_getName(cmd),arg,true,value);\n kept[cmd][arg]=value;\n return value;\n'))
 tele_hooks.append(('   if(!strcmp(name,"supportsExtendedXR10Formats"))value=0;\n',
- '   if(!strcmp(name,"supportsExtendedXR10Formats"))value=0;\n   if(nbCapOff(name,0,false))value=0;\n   if(nbCapsLogOn())nbConsole([NSString stringWithFormat:@"caps installed %s=%llu",name,(unsigned long long)value]);\n'))
+ '   if(!strcmp(name,"supportsExtendedXR10Formats"))value=0;\n   if(nbCapOff(name,0,false))value=0;\n   if(nbCapsLogOn()){char line[100];snprintf(line,sizeof line,"caps installed %s=%llu",name,(unsigned long long)value);nbCapAdd(std::string("i:")+name,line);}\n'))
 for old,new in tele_hooks:
  assert mtext.count(old)==1,'telemetry hook does not fit: '+old[:90]
  mtext=mtext.replace(old,new)
