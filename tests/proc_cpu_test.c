@@ -332,7 +332,7 @@ sample_window(int w, char hist[NS][4000])
 			enum { TOT = 400 };
 			static struct { char name[48]; unsigned leaf, in; } tot[2][TOT];
 			static unsigned tot_n[2];
-			int t = w * 3, ph = t >= 85 ? 0 : t >= 58 && t < 72 ? 1 : -1;   /* y300's script: swipes from 85 s, the video and its seeks 58 to 72 */
+			int t = w * 3, ph = t >= 46 && t < 64 ? 0 : t >= 65 && t < 90 ? 1 : -1;   /* y301's script (its times are about 11 s behind this clock): swipes 34-52, the blurred transitions 54-76 */
 			if (ph >= 0) {
 				tot_n[ph] += samples[p];
 				for (int i = 0; i < SYMS; i++) {

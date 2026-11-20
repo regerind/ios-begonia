@@ -1,6 +1,6 @@
 --- a/crates/metal2vulkan-runtime/src/ycbcr.rs
 +++ b/crates/metal2vulkan-runtime/src/ycbcr.rs
-@@ -144,6 +144,117 @@
+@@ -144,6 +144,121 @@
  use metal2vulkan::metal::PixelFormat;
  use std::ops::Range;
  
@@ -112,13 +112,17 @@
 +            ));
 +        }
 +    }
++    if let Ok(note) = std::env::var("HAKIOS_CACHE_NOTE") {
++        line.push_str(" | ");
++        line.push_str(&note);
++    }
 +    eprintln!("{line}");
 +}
 +
  /// The CoreVideo surfaces a texture is made over (the module docs): the OSType, the bits of its
  /// codes and whether they are packed, which the format's must be, its range, and how its chroma
  /// plane is subsampled. `420v` and `420f` are 8-bit 4:2:0, `422v` and `422f` 4:2:2, `444v` and
-@@ -420,6 +531,12 @@
+@@ -420,6 +535,12 @@
      kernel: OwnedKernel,
      sets: OwnedSets,
      groups: [u32; 2],
@@ -131,7 +135,7 @@
  }
  
  impl YCbCrConversion {
-@@ -482,9 +599,19 @@
+@@ -482,9 +603,19 @@
              kernel,
              sets,
              groups,
@@ -151,7 +155,7 @@
      /// The planes it converts, and the bytes of their buffer they lie in.
      pub(super) fn source(&self) -> (YCbCrPlanes, Range<u64>) {
          (self.source.0, self.source.1.clone())
-@@ -544,6 +671,65 @@
+@@ -544,6 +675,65 @@
          command_buffer: vk::CommandBuffer,
          source: vk::Buffer,
      ) {
