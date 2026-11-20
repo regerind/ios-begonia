@@ -74,6 +74,18 @@ Her konu: belirti, kök neden, çözüm, ilgili dosyalar. Commit'ler ayrıntıy�
 - **Değişiklik kontrolü (y111):** Köprü, kopyalanan yüzeylerin belleğini her karede tarıyordu (~1 ms, 4–6 MB).
   IOSurface'ın seed sayacı 17.000 kontrolde yalnızca 1 değişikliği kaçırmıştı. Artık seed değişmediyse 30 karede bir
   bakılıyor (0048). Kare başına GL maliyeti 4,2 ms'den 3,3 ms'ye indi.
+- **YouTube'da 30 fps (y117–y143):**
+  - Teşhis: GPU'yu backboardd (CoreAnimation'ın GL yolu) dolduruyordu.
+    - Her bulanık arka plan, o ana kadar çizilmiş ekranı okuyor.
+    - CoreAnimation aynı geçici dokuları her bulanıklıkta yeniden kullanıyor.
+    - Mesa (panfrost) bu yüzden ana ekranı kare başına onlarca kez gönderip yeniden yüklüyordu.
+  - İki düzeltme, ikisi birlikte etkili:
+    1. Mesa 0009: okunmakta olan bir dokuya yazılacaksa, okuyan işi göndermek yerine dokuya yeni bellek verilir. panfrost bunu CPU yazmaları için zaten yapıyordu.
+    2. Köprü 0051: bulanık arka planlar önceki karenin kopyasından okunur.
+  - Sonuç: YouTube açıkken 60 fps'teki kareler %0–1'den %20–66'ya çıktı, karelerin yarısı ~18–20 ms. Sayfa, Denetim Merkezi ve ana ekran görüntülerde doğru.
+  - Kapatma anahtarları: `glbackdrop=0`, `PAN_RENAME=0`.
+  - Kalan: kare başına ~5 adet 1622×1525'lik arka plan yakalaması ve ana ekranın kendi ağır çizimi.
+  - Ölçüm araçları: Mesa 0008 gönderme nedenlerini ve büyük grupları sayıyor; köprü bunları özetinde yazıyor; çekirdek GPU işlerini süreç başına sayıyor.
 - **Kriptografi (y111):** Çekirdek, BCM2837 (Raspberry Pi 3) kart ayarıyla derlendiği için programlara "AES/SHA
   donanımı yok" diyordu. corecrypto ve boringssl yazılımda çalışıyordu: WebKit ağ sürecinin üçte biri TLS'teydi.
   Artık CPU'nun kendi ID_AA64ISAR0 yazmacından okunuyor (çekirdek yaması 0020). Etkisi henüz ayrıca ölçülmedi.
