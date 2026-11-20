@@ -168,3 +168,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y245 | 15:25 | y244 tekrarı (y244'te dokunuş sayısı 749: sahibi dokunmuş, iş yükü farklı) (`begonia_gpu_spin=2000`) | y244 tekrarı: backboardd yeniden başladı (backboardd[13]->[219], SpringBoard[256]); koşu geçersiz. |
 | y246 | 15:29 | taban (varsayılan spin) aynı betikle, y245 ile karşılaştırma (`begonia_gpu_spin=10`) | taban (spin=10): 6-8 kare/5 sn, GPU %50-55 meşgul, iş başına 574-592 us, kuyrukta 30 ms bekleme. spin etkisi hâlâ belirsiz. |
 | y247 | 15:33 | spin temiz A/B (taban y246) (`begonia_gpu_spin=2000`) | |
+| y248 | 15:37 | spin 3 ms (taban y246) (`begonia_gpu_spin=300`) | |
