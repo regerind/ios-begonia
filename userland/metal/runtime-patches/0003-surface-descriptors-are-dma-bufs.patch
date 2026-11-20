@@ -1,0 +1,20 @@
+--- a/crates/metal2vulkan-runtime/src/dma_buf.rs
++++ b/crates/metal2vulkan-runtime/src/dma_buf.rs
+@@ -334,10 +334,14 @@
+     u64::try_from(end).ok()
+ }
+ 
+-/// No file is a dma-buf on this system.
++/// begonia: off Linux no file is on a dma-buf file system, and every source's answer was refused
++/// here ("the chunks do not answer the request", y210). The descriptors this port's source gives are
++/// the transport's surface descriptors (hakios-native-surface-fd.c): files of the surface's size,
++/// which the driver's import knows by their identity. The bytes of such a descriptor are its file's.
+ #[cfg(not(target_os = "linux"))]
+-fn dma_buf_length(_fd: BorrowedFd<'_>) -> Option<u64> {
+-    None
++fn dma_buf_length(fd: BorrowedFd<'_>) -> Option<u64> {
++    let file = std::fs::File::from(fd.try_clone_to_owned().ok()?);
++    file.metadata().ok().map(|metadata| metadata.len())
+ }
+ 
+ /// How long one wait for the sparse binding lasts before it is asked again.
