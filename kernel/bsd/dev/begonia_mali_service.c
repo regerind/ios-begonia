@@ -54,6 +54,9 @@ static uint64_t stat_sizes[6],stat_size_us[6];
 /* y260: what the vertex/tiler slot's time is: chains with a compute job, chains of vertex/tiler jobs alone, others
  * (read-only: the jobs' type words are looked at, nothing is written). */
 static uint64_t s1_kind_jobs[3],s1_kind_us[3];
+/* y262: where the time outside a job goes: before it (the tables' flush, the locks) and between one job's end and the
+ * next one's entry while more jobs were queued behind it (the thread's loop: the queue's lock, the wake-ups). */
+static uint64_t gap_pre,gap_pre_n,gap_between,gap_between_n,gap_last_end;
 static uint64_t s1_types[16],s1_chain_len_sum;   /* y261: every job of slot 1's chains by type (4 compute, 5 vertex, 7 tiler, ...) */
 static unsigned fail_count,fail_slot;static uint32_t fail_irq,fail_mmu,fail_status;
 static uint64_t fail_seq,fail_head,fail_tail,fail_fault,fail_chain,fail_at,fail_took;
@@ -293,6 +296,10 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
   "geometry %llu, tiler %llu, fused %llu, other %llu\n",s1_chain_len_sum,s1_types[1],s1_types[2],s1_types[3],s1_types[4],
   s1_types[5],s1_types[6],s1_types[7],s1_types[8],
   s1_chain_len_sum-s1_types[1]-s1_types[2]-s1_types[3]-s1_types[4]-s1_types[5]-s1_types[6]-s1_types[7]-s1_types[8]);
+ { uint64_t pre,between;absolutetime_to_nanoseconds(gap_pre,&pre);absolutetime_to_nanoseconds(gap_between,&between);
+   printf("BEGONIA GPU GAPS: before a job (tables, locks) %llu us each over %llu jobs; between jobs with a queue behind "
+    "%llu us each over %llu\n",gap_pre_n?pre/1000/gap_pre_n:0,gap_pre_n,gap_between_n?between/1000/gap_between_n:0,gap_between_n);
+   gap_pre=gap_pre_n=gap_between=gap_between_n=0; }
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
@@ -340,12 +347,15 @@ static unsigned chain_kind(uint64_t chain) {
 }
 static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,unsigned depth) {
  int success=0;
+ uint64_t entered=mach_absolute_time();
+ if(gap_last_end && depth>1){gap_between+=entered-gap_last_end;gap_between_n++;}
  lck_mtx_lock(vm_lock);
  flush_tables();
  lck_mtx_unlock(vm_lock);
 
  unsigned slot=fragment?0:1,base=0x1800+slot*0x80;
  uint64_t began=mach_absolute_time();
+ gap_pre+=began-entered;gap_pre_n++;
  wr(0x2004,0xffffffff);wr(0x1008,0);wr(0x1004,0xffffffff);
  wr(base+0x40,(uint32_t)chain);wr(base+0x44,chain>>32);
  wr(base+0x50,15);wr(base+0x54,0);wr(base+0x58,(3u<<8)|(3u<<12)|(8u<<16));
@@ -367,7 +377,7 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
    printf("BEGONIA GPU SERVICE: hardware recovery failed\n");
   }
  }
- { uint64_t ended=mach_absolute_time();if(fragment && success)note_slow(chain,ended-began);
+ { uint64_t ended=mach_absolute_time();gap_last_end=ended;if(fragment && success)note_slow(chain,ended-began);
    if(!fragment && success){unsigned k=chain_kind(chain);uint64_t us;absolutetime_to_nanoseconds(ended-began,&us);s1_kind_jobs[k]++;s1_kind_us[k]+=us/1000;}
    job_stats(began,ended,fragment,queued,depth); }
  return success;
