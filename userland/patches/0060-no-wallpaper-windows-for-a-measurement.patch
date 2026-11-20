@@ -1,0 +1,75 @@
+--- a/userland/src/inject_sb.c	2026-11-21 00:50:42.551159721 +0300
++++ b/userland/src/inject_sb.c	2026-11-21 00:50:42.553122621 +0300
+@@ -2364,6 +2364,64 @@
+ 	say("hakios: SpringBoard: the main thread asked for processor %d: %s\n", cpu, failed == 0 ? "it has it" : strerror(errno));
+ }
+ 
++/*
++ * begonia, boot-arg sb_nowall=1 (a measurement the owner asked for, never a default): SpringBoard's wallpaper windows
++ * hidden, so that the window server has no wallpaper at all to compose. y306's beg_nw=1 only refused the window server
++ * the wallpaper's two-plane surface as a texture: the 1041x1180 pass went, but CoreAnimation drew the wallpaper another
++ * way and the shot still showed it. Here every window whose class is named after the wallpaper or the poster is hidden,
++ * every 3 s for the session's first minute (SpringBoard makes and shows them as it goes).
++ */
++static int nowall_rounds;
++
++static void
++nowall_hide(void *unused)
++{
++	Class window_class = objc_getClass("UIWindow");
++	SEL all = sel_registerName("allWindowsIncludingInternalWindows:onlyVisibleWindows:");
++	unsigned long count = 0, hidden = 0;
++	char names[400] = "";
++	size_t at = 0;
++	id windows = nil;
++
++	(void)unused;
++	if (window_class != Nil && class_getClassMethod(window_class, all) != NULL) {
++		windows = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)((id)window_class, all, YES, NO);
++	}
++	if (windows != nil) {
++		count = ((unsigned long (*)(id, SEL))objc_msgSend)(windows, sel_registerName("count"));
++	}
++	for (unsigned long i = 0; i < count; i++) {
++		id window = ((id (*)(id, SEL, unsigned long))objc_msgSend)(windows, sel_registerName("objectAtIndex:"), i);
++		const char *name = window != nil ? object_getClassName(window) : "";
++
++		if (nowall_rounds == 0 && at < sizeof(names) - 48) {
++			at += (size_t)snprintf(names + at, sizeof(names) - at, " %.40s", name);
++		}
++		if (strstr(name, "Wallpaper") != NULL || strstr(name, "Poster") != NULL) {
++			((void (*)(id, SEL, BOOL))objc_msgSend)(window, sel_registerName("setHidden:"), YES);
++			hidden++;
++		}
++	}
++	if (nowall_rounds == 0 || nowall_rounds == 6) {
++		say("hakios: SpringBoard: no wallpaper: %lu of %lu windows hidden%s%s\n", hidden, count, names[0] ? ";" : "", names);
++	}
++	if (++nowall_rounds < 20) {
++		dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 3 * (int64_t)NSEC_PER_SEC), dispatch_get_main_queue(), NULL, nowall_hide);
++	}
++}
++
++static void
++nowall(void)
++{
++	char arguments[1024] = "";
++	size_t size = sizeof(arguments) - 1;
++
++	if (sysctlbyname("kern.bootargs", arguments, &size, NULL, 0) != 0 || strstr(arguments, "sb_nowall=1") == NULL) {
++		return;
++	}
++	dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 4 * (int64_t)NSEC_PER_SEC), dispatch_get_main_queue(), NULL, nowall_hide);
++}
++
+ static void
+ caenv(void)
+ {
+@@ -2874,6 +2932,7 @@
+ 	}
+ 	caenv();
+ 	main_thread_cpu();
++	nowall();
+ 	display_link_rates();
+ 	torch_for_control_centre();
+ 	brightness_to_the_lcd();
