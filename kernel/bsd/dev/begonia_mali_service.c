@@ -51,6 +51,9 @@ static uint64_t stat_sleeps,stat_slept;
 static int32_t job_cpu=4;               /* x34: begonia_gpu_cpu (job_thread()) */
 static uint64_t stat_busy_fragment;
 static uint64_t stat_sizes[6],stat_size_us[6];
+/* y260: what the vertex/tiler slot's time is: chains with a compute job, chains of vertex/tiler jobs alone, others
+ * (read-only: the jobs' type words are looked at, nothing is written). */
+static uint64_t s1_kind_jobs[3],s1_kind_us[3];
 static unsigned fail_count,fail_slot;static uint32_t fail_irq,fail_mmu,fail_status;
 static uint64_t fail_seq,fail_head,fail_tail,fail_fault,fail_chain,fail_at,fail_took;
 static int job_bound=-1;
@@ -283,6 +286,9 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
   "GPU busy %llu%%; queued %llu us each before starting, queue up to %u deep; %s\n",stat_jobs,stat_fragment,
   ns/1000000,busy/1000/stat_jobs,longest/1000,busy*100/ns,waited/1000/stat_jobs,stat_deepest,
   async_jobs?"queued":"run in the submit");
+ printf("BEGONIA GPU SLOT1: chains with a compute job %llu, %llu ms; vertex/tiler only %llu, %llu ms; other %llu, %llu ms\n",
+  s1_kind_jobs[0],s1_kind_us[0]/1000,s1_kind_jobs[1],s1_kind_us[1]/1000,s1_kind_jobs[2],s1_kind_us[2]/1000);
+ for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
  say_submitters();
  if(slow_took) {
@@ -307,6 +313,23 @@ static void note_slow(uint64_t chain,uint64_t took) {
  }
  lck_mtx_unlock(vm_lock);
  slow_took=took;slow_fbd=fbd;
+}
+/* y260: 0 a compute job (type 4) in the chain, 1 vertex/tiler jobs alone (5, 6, 7, 8) and writes/flushes (2, 3), 2 else.
+ * Job header: word 4 bits 1..7 the type, words 6 and 7 the next job. */
+static unsigned chain_kind(uint64_t chain) {
+ unsigned kind=1;
+ lck_mtx_lock(vm_lock);
+ for(unsigned n=0;chain && n<64;n++) {
+  uint64_t at=beg_gpu_vm_translate(&space,chain);
+  if(!at){kind=2;break;}
+  unsigned type=(ml_phys_read_word_64(at+16)>>1)&0x7f;
+  uint64_t next=ml_phys_read_word_64(at+24)|((uint64_t)ml_phys_read_word_64(at+28)<<32);
+  if(type==4){kind=0;break;}
+  if(type!=2 && type!=3 && type!=5 && type!=6 && type!=7 && type!=8)kind=2;
+  chain=next;
+ }
+ lck_mtx_unlock(vm_lock);
+ return kind;
 }
 static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,unsigned depth) {
  int success=0;
@@ -337,7 +360,9 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
    printf("BEGONIA GPU SERVICE: hardware recovery failed\n");
   }
  }
- { uint64_t ended=mach_absolute_time();if(fragment && success)note_slow(chain,ended-began);job_stats(began,ended,fragment,queued,depth); }
+ { uint64_t ended=mach_absolute_time();if(fragment && success)note_slow(chain,ended-began);
+   if(!fragment && success){unsigned k=chain_kind(chain);uint64_t us;absolutetime_to_nanoseconds(ended-began,&us);s1_kind_jobs[k]++;s1_kind_us[k]+=us/1000;}
+   job_stats(began,ended,fragment,queued,depth); }
  return success;
 }
 /*
