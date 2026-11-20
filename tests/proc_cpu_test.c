@@ -325,14 +325,14 @@ sample_window(int w, char hist[NS][4000])
 			samples[p] = 0;
 			continue;
 		}
-		/* y300: backboardd's profile over a whole phase of the session, not a window's top two: the script's swipes (t 36 to
-		 * 57 s: phase A) and what comes after (from 60 s: phase B, the blurred transitions), each the 22 places most often
+		/* y300: backboardd's profile over a whole phase of the session, not a window's top two: the script's swipes (phase A)
+		 * and its video with seeks (phase B), each the 22 places most often
 		 * running and the 14 most often on the stack, in samples, said again with every window (the log keeps its end). */
 		if (p == 1) {
 			enum { TOT = 400 };
 			static struct { char name[48]; unsigned leaf, in; } tot[2][TOT];
 			static unsigned tot_n[2];
-			int t = w * 3, ph = t >= 36 && t < 57 ? 0 : t >= 60 ? 1 : -1;
+			int t = w * 3, ph = t >= 85 ? 0 : t >= 58 && t < 72 ? 1 : -1;   /* y300's script: swipes from 85 s, the video and its seeks 58 to 72 */
 			if (ph >= 0) {
 				tot_n[ph] += samples[p];
 				for (int i = 0; i < SYMS; i++) {
