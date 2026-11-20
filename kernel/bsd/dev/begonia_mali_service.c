@@ -420,8 +420,7 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
      printf("%s\n",line); } }
  { /* y292: what the pages are: file-backed and anonymous pageable ones, and what the compressor holds */
    extern unsigned int vm_page_pageable_internal_count,vm_page_pageable_external_count;extern int32_t c_segment_pages_compressed;
-   printf("BEGONIA MEM KINDS: pageable anonymous %u, file-backed %u, held compressed %d (pages of 16 KB)
-",
+   printf("BEGONIA MEM KINDS: pageable anonymous %u, file-backed %u, held compressed %d (pages of 16 KB)\n",
     vm_page_pageable_internal_count,vm_page_pageable_external_count,c_segment_pages_compressed); }
  prf_say();
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
