@@ -76,7 +76,10 @@ ya da onay gerekiyor). En üstteki en önemlisi.
 - **Durum:** beklemede (ekran görüntüsüyle bakılacak).
 
 ## 8. Safari geçmiş servisi sürekli çöküyor
-- **Kanıt (y101):** `com.apple.Safari.History` SIGABRT, art arda 5 kez.
+- **Kanıt (y101, y117):** `com.apple.Safari.History` SIGABRT, art arda 5 kez. Neden:
+  `-[NSURL initFileURLWithPath:isDirectory:]: nil string parameter`. Servis bir dosya yolu istiyor ve boş yol alıyor.
+- **Şüphe:** Uygulama grubu konteynerinin yolu bulunamıyor (containermanagerd / `/var/mobile/Containers/Shared/AppGroup`).
+  App Store gibi Apple servislerinin bağlanamamasıyla (açık hata 10b) aynı kökten olabilir.
 - **Durum:** beklemede.
 
 ## 9. Freeform
