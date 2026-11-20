@@ -54,6 +54,10 @@ text=text.replace('tried = true;','tried = true;\n\t\tsetenv("PAN_I_WANT_A_BROKE
  # (y299: what y294-y298 measured as gains is on without a boot-arg -- the boot line has no room for their names: PanVK's direct
  #  indexed draws (0021) and exact fragment prepass (0022), the runtime's unchanged YCbCr planes not converted again and YCbCr
  #  textures through the device's filter (runtime 0010). beg_old=1: none of them, as p14.)
+ # (y300: with the kernel's measuring mode, begonia_overlap=2, the programs' own measuring too -- their names do not fit the boot
+ #  line: PanVK's pass composition, the runtime's pipeline creation lines (counted by slice) and mipmaps by blit in slices 2, 3)
+ '\t\t\tif (strstr(bootArgs, "begonia_overlap=2") != NULL) {\n'
+ '\t\t\t\tsetenv("PANVK_SAID", "1", 0); setenv("METAL2VULKAN_LOG_PIPELINES", "1", 0); setenv("M2V_MIPBLIT_S", "1", 0);\n\t\t\t}\n'
  '\t\t\tif (strstr(bootArgs, "beg_old=1") == NULL) {\n'
  '\t\t\t\tsetenv("PANVK_DIRECT", "1", 0); setenv("PANVK_PREPASS", "1", 0); setenv("M2V_YSKIP", "1", 0); setenv("M2V_YNATIVE", "1", 0);\n\t\t\t}\n'
  # (y234: ca_env=NAME,NAME -- each CoreAnimation switch (CA_DISABLE_INPLACE_SHADERS ...) set to 1 in every process shown the device)

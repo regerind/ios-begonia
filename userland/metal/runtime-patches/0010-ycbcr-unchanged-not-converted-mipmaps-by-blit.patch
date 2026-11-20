@@ -1,6 +1,6 @@
 --- a/crates/metal2vulkan-runtime/src/ycbcr.rs
 +++ b/crates/metal2vulkan-runtime/src/ycbcr.rs
-@@ -144,6 +144,66 @@
+@@ -144,6 +144,117 @@
  use metal2vulkan::metal::PixelFormat;
  use std::ops::Range;
  
@@ -64,10 +64,61 @@
 +static BEGONIA_YCBCR: [std::sync::atomic::AtomicU64; 4] =
 +    [const { std::sync::atomic::AtomicU64::new(0) }; 4];
 +
++/// begonia (y300): the render pipelines made, by 5-second slice of the time since boot: how many,
++/// the time making them took in all and at most, and what they waited for a turn (with
++/// `METAL2VULKAN_LOG_PIPELINES`; `pipeline/creation_log.rs`). A pipeline made at a draw holds its
++/// command buffer's batch back until it exists: the stutter of everything done for the first time.
++/// Said whole now and then (`begonia_pipes_say`), for a log that keeps only its end.
++static BEGONIA_PIPES: [[std::sync::atomic::AtomicU64; 4]; 32] =
++    [const { [const { std::sync::atomic::AtomicU64::new(0) }; 4] }; 32];
++
++fn begonia_slice() -> usize {
++    let mut ts = libc::timespec {
++        tv_sec: 0,
++        tv_nsec: 0,
++    };
++    #[cfg(target_vendor = "apple")]
++    let clock = libc::CLOCK_UPTIME_RAW;
++    #[cfg(not(target_vendor = "apple"))]
++    let clock = libc::CLOCK_MONOTONIC;
++    // SAFETY: `ts` is a timespec of this frame's.
++    unsafe {
++        libc::clock_gettime(clock, &mut ts);
++    }
++    (ts.tv_sec as usize / 5) & 31
++}
++
++pub(crate) fn begonia_pipe(made: std::time::Duration, waited: std::time::Duration) {
++    use std::sync::atomic::Ordering::Relaxed;
++    let row = &BEGONIA_PIPES[begonia_slice()];
++    let us = made.as_micros() as u64;
++    row[0].fetch_add(1, Relaxed);
++    row[1].fetch_add(us, Relaxed);
++    row[2].fetch_max(us, Relaxed);
++    row[3].fetch_add(waited.as_micros() as u64, Relaxed);
++}
++
++pub(crate) fn begonia_pipes_say() {
++    use std::sync::atomic::Ordering::Relaxed;
++    let mut line = String::from("m2v: begonia: pipelines by slice (n/ms/max ms/waited ms):");
++    for (slice, row) in BEGONIA_PIPES.iter().enumerate() {
++        let n = row[0].load(Relaxed);
++        if n != 0 {
++            line.push_str(&format!(
++                " s{slice} {n}/{}/{}/{};",
++                row[1].load(Relaxed) / 1000,
++                row[2].load(Relaxed) / 1000,
++                row[3].load(Relaxed) / 1000
++            ));
++        }
++    }
++    eprintln!("{line}");
++}
++
  /// The CoreVideo surfaces a texture is made over (the module docs): the OSType, the bits of its
  /// codes and whether they are packed, which the format's must be, its range, and how its chroma
  /// plane is subsampled. `420v` and `420f` are 8-bit 4:2:0, `422v` and `422f` 4:2:2, `444v` and
-@@ -420,6 +480,12 @@
+@@ -420,6 +531,12 @@
      kernel: OwnedKernel,
      sets: OwnedSets,
      groups: [u32; 2],
@@ -80,7 +131,7 @@
  }
  
  impl YCbCrConversion {
-@@ -482,9 +548,19 @@
+@@ -482,9 +599,19 @@
              kernel,
              sets,
              groups,
@@ -100,7 +151,7 @@
      /// The planes it converts, and the bytes of their buffer they lie in.
      pub(super) fn source(&self) -> (YCbCrPlanes, Range<u64>) {
          (self.source.0, self.source.1.clone())
-@@ -544,6 +620,62 @@
+@@ -544,6 +671,65 @@
          command_buffer: vk::CommandBuffer,
          source: vk::Buffer,
      ) {
@@ -124,6 +175,9 @@
 +                    let hash = unsafe { begonia_sparse_hash(base.as_ptr().add(start), end.saturating_sub(start), phase) };
 +                    let looked = BEGONIA_YCBCR[2].fetch_add(began.elapsed().as_nanos() as u64, Relaxed);
 +                    let looks = BEGONIA_YCBCR[3].fetch_add(1, Relaxed) + 1;
++                    if looks % 128 == 0 {
++                        begonia_pipes_say();
++                    }
 +                    if looks % 256 == 0 {
 +                        eprintln!(
 +                            "m2v: begonia: ycbcr looked at {looks} times, {} us in all; not recorded {}, recorded {}; planes {} bytes, groups {:?}",
@@ -236,3 +290,13 @@
          ImageRef::Heap { .. } => Ok(false),
      }
  }
+--- a/crates/metal2vulkan-runtime/src/pipeline/creation_log.rs
++++ b/crates/metal2vulkan-runtime/src/pipeline/creation_log.rs
+@@ -200,6 +200,7 @@
+         let turn = super::budget::take_waited();
+         let elapsed = start.elapsed().saturating_sub(turn);
+         let waited = queued + turn;
++        crate::ycbcr::begonia_pipe(elapsed, waited);
+         let overlapped = overlapped || BEGUN.load(Ordering::SeqCst) != begun + 1;
+         IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+         let after = statistics.as_ref().and_then(MoltenVk::read);
