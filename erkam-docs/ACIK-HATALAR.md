@@ -21,6 +21,14 @@ ya da onay gerekiyor). En üstteki en önemlisi.
   panel donması için önbellek çözümü şimdilik işe yaramadı; profiler sonucu bekleniyor.
 - Profiler (proc_cpu_test, örnekleyici) SpringBoard'ın ne yaptığını fonksiyon adlarıyla gösterecek; y103/y104'te
   çalışmadı (y104: eski test ikilisi pakete girdi).
+- **y164/y170 (2026-11-20 gece):** Açılıştan hemen sonra (kilit açılır açılmaz, 29. sn) Uygulama Arşivi'ne gidip gelmek:
+  bir 5 sn penceresinde 14 kare 35 ms üstü (en uzun 84 ms), sonra düzeliyor. Donma yok. Daha geç (34+ sn) gidince
+  takılma yok (en uzun 47 ms). İlk 20 sn'de tüm çekirdekler dolu (toplam %450–640): SpringBoard %93–192, coreduetd %93,
+  chronod %80, CalendarWidgetExtension %89, healthd, dasd. SpringBoard'ın örnekleri (sembollendi): dyld'nin
+  JustInTimeLoader bağlamaları (`trieWalk`, `forEachBindTarget`) ve ObjC başlatma. Bu açılışta bir kerelik bir iş.
+  Şüphe: SpringBoard'a eklenen kütüphanemiz (DYLD_INSERT_LIBRARIES) dyld'nin hazır başlatma kapanışını
+  kullanmasını engelliyor ve her sembol tek tek bağlanıyor. Bugün paneli otomasyonla açılamıyor (enjekte sağa kaydırma
+  sayfa değiştirmiyor), o yüzden en sol panel test edilemedi.
 
 ## 1b. Ekran kilitlenmiyor
 - **Belirti (kullanıcı, y106 civarı):** Ekranı kilitlemeye çalışınca kilitlenmiyor.
@@ -50,11 +58,22 @@ ya da onay gerekiyor). En üstteki en önemlisi.
   - GPU servisinin yoklama gecikmesi değil (y122, 500 µs yoklama: fark yok).
   - Çağrı izi alınamadı (y120/y121).
 - **Denenen:** backboardd'yi Metal'e almak (y123): backboardd çöktü, yenisi kare üretemedi.
-- **Durum:** büyük ölçüde düzeldi (y136–y153), bkz. COZULEN-HATALAR. y153: 53 kare/sn, karelerin %46'sı 18 ms altında.
-  Kalan: kare başına ~5 bulanık arka plan yakalama (1622×1525) ve ekranın ~3 kez yeniden yüklenmesi. Henüz tam 60 değil.
+- **Durum:** büyük ölçüde düzeldi (y136–y162), bkz. COZULEN-HATALAR. Doğru kurulumla y161: 47–51 kare/sn, karelerin
+  %27'si 18 ms altında. Henüz tam 60 değil.
+- **Kalan en büyük GPU masrafı (y166–y169):** kare başına ~9 tam 1622×1525 geçiş. CoreAnimation havuzdaki büyük bir
+  dokuya (program 5, kopya) makassız tek küçük dörtgen çiziyor; sonuç çoğunlukla saydam. Panfrost geçişin alanını görüş
+  alanından aldığı için her biri 2,47 Mpx. Denenenler: temizliği görüş alanına sınırlamak (0056, görüş alanı zaten dokunun
+  %100'ü: işe yaramadı); otomatik makas (0050): bu geçişler 1800 → 1000 ama kare sürelerinde fark yok. Sıradaki fikir:
+  dokunun daha önce temizlenmiş, boş kalan kısmını takip edip temizliği ve çizimi yalnızca dolu bölgeye sınırlamak.
 - **Önceki kanıt (y102):** WebKit.Networking 100–134%, WebContent 80–128%, backboardd 85–93%, mediaserverd ~50%. y111'den
   beri AES/SHA donanımı programlara bildiriliyor; MP4 indirirken ağ süreci %20–33.
 - **MediaRemoteUI:** Video başlarken %93–100 CPU (y117); bakılmadı.
+- **WebKit.Networking (y171–y172, sarma testi):** video yüklenirken ve sarılırken %102–119; bunun ~%40'ı çekirdekte
+  (k41–45). En sık örnekler: tek bir WebKit fonksiyonu (`WebKit!3311b0`, 111 örnek; paylaşılan önbellekte yerel sembol
+  yok, adı bulunamadı), iş parçacığı havuzu (`__workq_kernreturn`, 70), `__sendmsg` (27), dosya yazma
+  (`guarded_pwrite_np`, ağ önbelleği/sqlite), memmove. Şüpheler: (a) çekirdek payı: Wi-Fi alma yolumuz paket başına
+  pahalı (halka yoklamalı, her paket kopyalanıyor) ya da TCP/mbuf yolu; (b) kullanıcı payı: WebKit'in disk önbelleğine
+  medya yazması. Sıradaki: veri hızını ölçmek (kaç MB/s'ye bu kadar CPU), Wi-Fi alma yolunun maliyeti.
 
 ## 5. Ekranı birleştiren katmanın (backboardd) CPU masrafı
 - **İyileşti (y110–y111):** Video kareleri artık kopyalanmıyor (backboardd videoda %85–93'ten %20–50'ye). Değişiklik
