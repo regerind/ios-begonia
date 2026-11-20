@@ -1,0 +1,18 @@
+--- a/NativeMetalObjects.rs	2026-11-20 11:59:30.290767895 +0300
++++ b/NativeMetalObjects.rs	2026-11-20 11:59:30.291565472 +0300
+@@ -190,6 +190,15 @@
+         // shaders (com.apple.coreanimation.draw.*, CoreGraphics into an IOSurface: WebKit's page tiles) read the destination
+         // and were refused ("Unsupported FramebufferFetch"), so curved paths, SVG icons and strokes never drew (y67-y69).
+         options.policy.framebuffer_fetch = metal2vulkan::device::FramebufferFetchPolicy::AcceptUnordered;
++        // begonia (y220, an experiment): NMB_UNCONTAINED in the environment (the plug-in sets it from boot-arg
++        // metal_contain=0): no in-shader containment of accesses and no guest isolation, as on Metal itself, where an
++        // access outside a resource is the program's own fault. The default policy is the translator's for untrusted
++        // guests; on this device (PanVK v7 has no robustness features) it is checks emitted into every shader, and the
++        // window server's fragment shaders came out at 3.2 KB each on average (y219), a full-screen job at 30 ms.
++        if std::env::var_os("NMB_UNCONTAINED").is_some() {
++            options.policy.containment = metal2vulkan::device::ContainmentPolicy::UnsafeOff;
++            options.policy.isolation = metal2vulkan::device::GuestIsolation::Off;
++        }
+         // Every texture given a shadow image is announced with why no image aliases its bytes (`shadow.log`).
+         options.announce_each.insert(metal2vulkan_runtime::Degradation::ShadowedTexture);
+         let _ = SHADOW_LOG.set(PathBuf::from(cache.to_string_lossy().into_owned()).join("shadow.log"));
