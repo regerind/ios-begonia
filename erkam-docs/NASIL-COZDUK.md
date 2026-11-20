@@ -180,3 +180,19 @@ bekleyip kareyi gösterir (SWAP_GPU_MS=500). Ön yüzün CPU beklemesi `metal_sw
 YouTube (y256 -> y266): 44-56 -> 55-67 kare, GPU %85. Control Center (y265), YouTube (y266), Today (y267) resimleri doğru, "shown as it is" yok.
 **Kalan şüphe:** swap'ın beklediği numara SwapEnd anındaki global son iş; başka bir sürecin (WebKit) işleri de beklenir (sıralı kuyruk, zarar yok
 ama gecikme). Süreç dışında yüzey işaretlemesi yapılmadı. Sürücü GPU'ya 500 ms'den fazla cevap vermezse kare "olduğu gibi" gösterilir.
+
+## Indexed draw başına 3 fazladan GPU işi: PanVK indeks min/max'ı CPU'ya (2026-11-20, y268-y280)
+**Sorun:** Slot 1 zincirlerinde her draw için `[write, compute, compute, vertex, tiler]` (iş türleri 2 4 4 5 7) vardı; 5 sn'de ~15000 compute + ~7000 write.
+Desc kopyası değildi (PanVK 0017: GPU'ya giden kopya işi 0; 0014 CPU kopyası 116k çağrıda %100 başarılı). Runtime'ın kendi dispatch'leri de değildi
+(0009: 80 sn'de ~1500).
+**Kök neden:** PanVK JM `CmdDrawIndexed`, bir `VkDrawIndexedIndirectCommand` yazıp `panvk_cmd_draw_indirect`'e gidiyor. O yol, indeks aralığını bulmak için
+HER indexed draw'da (1) bir WRITE_VALUE işi, (2) tüm indeks tamponunu tarayan bir min/max compute işi ve (3) vertex/tiler işlerini yamalayan indirect-helper
+compute işi çalıştırıyor. CoreAnimation draw'larının çoğu indexed (quad).
+**Çözüm:** `userland/vulkan/patches/0018-panvk-cpu-index-minmax.patch`: tampon bir belleğe bağlıysa ve o bellek CPU'ya eşlenmişse (`mem->addr.host`) ve
+indexCount <= 8192 ise, `CmdDrawIndexed` en küçük/en büyük indeksi (primitive restart değerini atlayarak) CPU'da bulup min/max sonuç alanına yazar;
+write ve search işleri hiç eklenmez, yalnız helper compute kalır (5 iş -> 3). Kapatma: `PANVK_CPU_INDEX_MINMAX=0`. Eşlenmemiş bellekte eski GPU yolu.
+**Doğrulama:** log (zincir örüntüsü `4 5 7`, write 0; seek betiği 5 sn'de 57-60 -> 78-110 kare, ~11 -> 15-20 fps) + ekran görüntüsü (Control Center y276,
+Today y278, YouTube y280 doğru). YouTube 5 sn'de 50-71 kare (y266: 55-67; GPU %83-87, orada GPU darboğaz).
+**Kalan şüphe:** min/max KAYIT anında okunuyor; indeks verisi kayıttan sonra, GPU çalışmadan önce değişirse (Metal'de CPU commit'e kadar yazabilir)
+yanlış vertex aralığı olur (eksik/çöp köşe). Şu ana kadar resimde bozulma görülmedi. y272 ve y274'te backboardd SIGKILL (status 0x9) ile yeniden
+başladı (y245'te de olmuştu); tekrar koşuda (y273, y275) olmadı, yamayla ilişkisi KANITLANMADI ama dışlanmadı: ~16 koşuda 2 kez.

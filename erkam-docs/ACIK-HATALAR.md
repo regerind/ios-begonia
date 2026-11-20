@@ -287,3 +287,7 @@ Aşağısı araştırmanın kaydı.
     y262 bu boşluğun iş öncesi hazırlıkta mı, işler arası döngüde mi olduğunu ölçüyor.
   - **Güncelleme (y264-y267):** CPU/GPU sıralılığı giderildi (`fb_gpuseq=1 metal_swapwait=0`, bkz. NASIL-COZDUK). Seek betiği 6-8 -> 11-12 fps, YouTube
     ~11-13 fps. GPU artık %75-85 meşgul: kalan darboğaz GPU işi (tam ekran blur/backdrop pass'leri 12-19 ms). GL yolunun 45-60 fps'ine hâlâ uzak.
+  - **Güncelleme (y275-y280):** PanVK 0018 ile seek betiği 5 sn'de 78-110 kare (15-20 fps), YouTube 50-71 kare (10-14 fps, GPU %83-87). Draw başına
+    iş 5 -> 3. Kalan: GPU'nun kendi işi (tam ekran blur/backdrop pass'leri 12-19 ms) ve draw başına kalan 1 compute (indirect helper).
+  - **AÇIK: backboardd aralıklı SIGKILL (status 0x9)**: y245, y272, y274 (son iki yeni ayarlarla: fb_gpuseq=1 metal_swapwait=0, 0009/0018). Neden bilinmiyor;
+    birkaç koşuda tekrarlanmadı. İzlenecek: kill'i kim yolluyor (jetsam? launchd/CA watchdog?).
