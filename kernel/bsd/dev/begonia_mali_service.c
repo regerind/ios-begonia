@@ -174,9 +174,26 @@ bool hakios_mali_parameter(uint32_t which,uint64_t *value) {
  if(which==42) {*value=13000000;return true;}
  return false;
 }
+/* y290: the GPU address space each process holds (allocated minus unmapped by the same process), said with BEGONIA MEM: the
+ * wired memory the window server's kills are about is mostly buffers and surfaces the GPU maps. Approximate (a free by
+ * another process counts for that one). */
+extern int proc_selfpid(void);extern void proc_selfname(char *buf,int size);
+static struct {int pid;char name[20];int64_t net;} va_proc[8];
+static int64_t va_live;
+static void va_account(int64_t delta) {
+ int pid=proc_selfpid(),slot=-1,least=0;
+ for(int i=0;i<8;i++) {
+  if(va_proc[i].pid==pid){slot=i;break;}
+  if(va_proc[i].net<va_proc[least].net)least=i;
+ }
+ if(slot<0){slot=least;va_proc[slot].pid=pid;va_proc[slot].net=0;proc_selfname(va_proc[slot].name,sizeof(va_proc[slot].name));}
+ va_proc[slot].net+=delta;va_live+=delta;
+}
 uint64_t hakios_mali_address(uint64_t size,bool executable) {
  if(!hakios_mali_ready() || !size || size>(512ull<<20) || (executable && size>MALI_VA_EXEC_LINE))return 0;
- return mali_va_alloc(&addresses,size,executable);
+ uint64_t address=mali_va_alloc(&addresses,size,executable);
+ if(address)va_account((int64_t)size);
+ return address;
 }
 bool hakios_mali_map(uint64_t address,uint64_t physical) {
  if(!hakios_mali_ready()) {
@@ -252,6 +269,7 @@ void hakios_mali_mapped(void) {
 }
 void hakios_mali_unmap(uint64_t address,uint64_t size) {
  if(!hakios_mali_ready() || !size || address<MALI_VA_FIRST || address>=MALI_VA_END || size>MALI_VA_END-address)return;
+ va_account(-(int64_t)size);
  lck_mtx_lock(vm_lock);
  for(uint64_t off=0;off<size;off+=4096)(void)beg_gpu_vm_unmap(&space,address+off);
  lck_mtx_unlock(vm_lock);
@@ -325,7 +343,11 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
     vm_page_free_count,vm_page_active_count,vm_page_inactive_count,vm_page_wire_count);
    mem_min_free=~0u;
    memn=0;memp[0]=0;proc_iterate(1,mem_proc_cb,NULL,NULL,NULL);
-   printf("BEGONIA MEM PROCS:%s\n",memp); }
+   printf("BEGONIA MEM PROCS:%s\n",memp);
+   { char line[300];int o=snprintf(line,sizeof line,"BEGONIA GPU VA: live %lld MB;",(long long)(va_live>>20));
+     for(int i=0;i<8;i++)if(va_proc[i].net>=(1<<20) && o<(int)sizeof(line)-50)
+      o+=snprintf(line+o,sizeof(line)-o," %s[%d] %lld MB;",va_proc[i].name,va_proc[i].pid,(long long)(va_proc[i].net>>20));
+     printf("%s\n",line); } }
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
