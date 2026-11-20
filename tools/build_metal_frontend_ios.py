@@ -748,6 +748,20 @@ tele_hooks.append((' if(self.stub)return;\n gDraws++;self.commandBuffer->encoded
  ' if(self.stub || nbNoDraw())return;\n gDraws++;self.commandBuffer->encodedWork.draws++;\n [self check:nmb_render_draw('))
 tele_hooks.append((' if(self.stub)return;\n if(![(id)b isKindOfClass:[NBBuffer class]]){[self.commandBuffer refuse:@"foreign index buffer"];return;}',
  ' if(self.stub || nbNoDraw())return;\n if(![(id)b isKindOfClass:[NBBuffer class]]){[self.commandBuffer refuse:@"foreign index buffer"];return;}'))
+# (y223, measurement: at each 5 s line three of the window server's pipeline keys whole, in pieces of 60 characters --
+# the "tele pipe" lines are cut by the console before the fragment function's constants end)
+tele_hooks.append((' gTelePasses=16;\n',
+ ''' gTelePasses=16;
+ {
+  static unsigned turn;std::vector<std::string> keys;
+  {std::lock_guard<std::mutex> lock(gTelePipeLock);for(const auto &entry:gTelePipes)keys.push_back(entry.first);}
+  for(unsigned k=0;k<3 && !keys.empty();k++) {
+   const unsigned which=turn++%keys.size();const std::string &key=keys[which];
+   for(size_t at=0,piece=0;at<key.size() && piece<24;at+=60,piece++)
+    nbConsole([NSString stringWithFormat:@"tele k%03u.%02zu %.60s",which,piece,key.c_str()+at]);
+  }
+ }
+'''))
 # (y212: CoreAnimation's own bitmaps -- glyphs, masks -- come through the private newLinearTextureWithDescriptor:...,
 # over its newBufferWithBytesNoCopy buffers; one image of one slice is the same texture)
 tele_hooks.append((' NmbTextureDescriptor descriptor;if(!textureDescriptor(d,&descriptor))return nil;\n NmbTexture *handle=nmb_texture_new_linear(',
