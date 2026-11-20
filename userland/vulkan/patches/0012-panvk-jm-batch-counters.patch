@@ -8,7 +8,7 @@
  
  static VkResult
  panvk_cmd_prepare_fragment_job(struct panvk_cmd_buffer *cmdbuf, uint64_t fbd)
-@@ -65,6 +66,41 @@
+@@ -65,6 +66,47 @@
     return VK_SUCCESS;
  }
  
@@ -21,6 +21,7 @@
 +#include <stdlib.h>
 +#include <unistd.h>
 +uint32_t panvk_per_arch(begonia_stats)[8];
++uint32_t panvk_per_arch(begonia_fs_sizes)[4];
 +
 +static void
 +begonia_note_batch(const struct panvk_batch *batch)
@@ -44,13 +45,18 @@
 +                       s[0], s[1], s[2], s[3], s[4], s[5], s[6]);
 +      if (n > 0)
 +         (void)!write(fd, line, n);
++      const uint32_t *f = panvk_per_arch(begonia_fs_sizes);
++      n = snprintf(line, sizeof(line), "panvk: fragment shaders %u, %u bytes in all, the largest %u, over 2048 bytes %u\n",
++                   f[0], f[1], f[2], f[3]);
++      if (n > 0)
++         (void)!write(fd, line, n);
 +   }
 +}
 +
  void
  panvk_per_arch(cmd_close_batch)(struct panvk_cmd_buffer *cmdbuf)
  {
-@@ -73,6 +109,8 @@
+@@ -73,6 +115,8 @@
     if (!batch)
        return;
  
@@ -59,7 +65,7 @@
     assert(batch);
  
     if (!batch->fb.desc.gpu && !batch->vtc_jc.first_job) {
-@@ -334,6 +372,7 @@
+@@ -334,6 +378,7 @@
  {
     VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
  
@@ -67,7 +73,7 @@
     panvk_per_arch(cmd_close_batch)(cmdbuf);
  
     panvk_pool_flush_maps(&cmdbuf->desc_pool);
-@@ -354,6 +393,7 @@
+@@ -354,6 +399,7 @@
      * barrier flag set to true.
      */
     if (cmdbuf->cur_batch) {
@@ -94,3 +100,33 @@
  
     /* When resuming from a suspended pass, the state should be unchanged. */
     if (resuming && cmdbuf->cur_batch) {
+--- a/src/panfrost/vulkan/panvk_vX_shader.c
++++ b/src/panfrost/vulkan/panvk_vX_shader.c
+@@ -37,6 +37,7 @@
+ 
+ #include "compiler/bifrost/bifrost_nir.h"
+ #include "compiler/bifrost/bifrost_compile.h"
++#include "util/u_atomic.h"
+ #include "compiler/pan_compiler.h"
+ #include "compiler/pan_nir.h"
+ #include "pan_shader.h"
+@@ -1039,6 +1040,19 @@
+ 
+       memcpy(data, bin_ptr, bin_size);
+       shader->bin_size = bin_size;
++      /* begonia: how big the fragment shaders are (y218: a full-screen pixel job of the window
++       * server takes 30 ms whatever is drawn): their count, bytes in all, the largest and the
++       * count of those over 2048 bytes, said with the batch counters (jm/panvk_vX_cmd_buffer.c). */
++      if (nir->info.stage == MESA_SHADER_FRAGMENT) {
++         extern uint32_t panvk_per_arch(begonia_fs_sizes)[4];
++         uint32_t *sizes = panvk_per_arch(begonia_fs_sizes);
++         p_atomic_inc(&sizes[0]);
++         p_atomic_add(&sizes[1], bin_size);
++         if (bin_size > sizes[2])
++            sizes[2] = bin_size;
++         if (bin_size > 2048)
++            p_atomic_inc(&sizes[3]);
++      }
+       shader->bin_ptr = data;
+    }
+    util_dynarray_fini(&binary);
