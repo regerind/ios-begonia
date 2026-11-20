@@ -45,7 +45,7 @@
 +			GLint x1 = view[0] + view[2] + 2 > width ? width : view[0] + view[2] + 2;
 +			GLint y1 = view[1] + view[3] + 2 > height ? height : view[1] + view[3] + 2;
 +
-+			e->unclear_boxed = GL_TRUE;
++			e->unclear_boxed = 1;
 +			e->unclear_box[0] = x0;
 +			e->unclear_box[1] = y0;
 +			e->unclear_box[2] = x1 - x0;
