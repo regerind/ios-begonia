@@ -1,0 +1,118 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -262,6 +262,7 @@
+ 	bool wrapped;                   /* the surface is memory of somebody's with a surface made around it */
+ 	bool alpha_first;               /* its pixels are opacity, blue, green, red in memory: see my_attachImage() */
+ 	bool painted;                   /* something has been drawn into it (it is a target in fact, not only in name) */
++	bool clear_due;                 /* begonia (y152): new and to be cleared, in the batch that first draws into it */
+ 	unsigned looked;                /* ... the frame in which that memory was last looked at, */
+ 	uint64_t sum;                   /* ... and what it added up to */
+ 	unsigned unchanged;             /* ... and how many looks in a row found it the same (surface_changed()) */
+@@ -1204,6 +1205,31 @@
+  */
+ static int fill_fresh;
+ static unsigned fresh_clears;
++static int clear_late;                  /* boot-arg glclearlate=1 (y152) */
++static unsigned late_clears, late_shown;
++
++/* begonia (y152): a new target cleared in the framebuffer bound now (its own, or ours: clear_due) */
++static void
++clear_bound(void)
++{
++	GLfloat colour[4] = { 0, 0, 0, 0 };
++	GLboolean mask[4] = { 1, 1, 1, 1 }, scissor;
++
++	glGetFloatv(0x0c22 /* GL_COLOR_CLEAR_VALUE */, colour);
++	glGetBooleanv(0x0c23 /* GL_COLOR_WRITEMASK */, mask);
++	scissor = glIsEnabled(GL_SCISSOR_TEST);
++	if (scissor) {
++		glDisable(GL_SCISSOR_TEST);
++	}
++	glColorMask(1, 1, 1, 1);
++	glClearColor(0, 0, 0, 0);
++	glClear(GL_COLOR_BUFFER_BIT);
++	glClearColor(colour[0], colour[1], colour[2], colour[3]);
++	glColorMask(mask[0], mask[1], mask[2], mask[3]);
++	if (scissor) {
++		glEnable(GL_SCISSOR_TEST);
++	}
++}
+ 
+ static void
+ target_cleared(struct eagl *e, struct image *image)
+@@ -1224,6 +1250,23 @@
+ 		glBindBuffer(0x88ec, (GLuint)unpack);
+ 	}
+ 	glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
++	/*
++	 * begonia (y152): cleared through a framebuffer of its own, the new target was a batch of its own every frame: the
++	 * whole 1080x2340 written with nothing drawn ("cleared ... 0 draws"), then read back in by the batch that draws into
++	 * it. Boot-arg glclearlate=1: a display-size target is cleared by that batch instead, as the first thing it does
++	 * (drawing()): the tiles start cleared, nothing written or read twice. A target shown before anything is drawn into
++	 * it is cleared the old way first (target_to_surface()).
++	 */
++	if (clear_late && image->width >= 1000 && image->height >= 2000) {
++		image->clear_due = true;
++		image->seed = IOSurfaceGetSeed(image->surface);
++		if (fresh_clears++ < 4 || fresh_clears % 500 == 0) {
++			say("hakios-gl: target %u of the new surface %u to be cleared where it is first drawn into (%d x %d), %u so far\n",
++			    image->texture, IOSurfaceGetID(image->surface), image->width, image->height, fresh_clears);
++		}
++		return;
++	}
++	image->clear_due = false;
+ 	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+ 	glGetFloatv(0x0c22 /* GL_COLOR_CLEAR_VALUE */, colour);
+ 	glGetBooleanv(0x0c23 /* GL_COLOR_WRITEMASK */, mask);
+@@ -1302,6 +1345,20 @@
+ 	size_t row = IOSurfaceGetBytesPerRow(surface);
+ 	uint8_t *base;
+ 
++	if (image->clear_due) {
++		GLint draw = 0;
++
++		image->clear_due = false;
++		late_shown++;
++		glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
++		if (e->writer == 0) {
++			glGenFramebuffers(1, &e->writer);
++		}
++		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, e->writer);
++		glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image->texture, 0);
++		clear_bound();
++		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)draw);
++	}
+ 	backdrop_keep(e, image);
+ 	image->drawn = false;
+ 	if (image->mirror != 0) {
+@@ -1939,6 +1996,14 @@
+ 
+ 	frame_begin(e);
+ 	if (e->framebuffer != 0 && e->colour != 0 && (image = image_of(e, e->colour)) != NULL && image->target) {
++		if (image->clear_due) {
++			image->clear_due = false;
++			clear_bound();
++			if (late_clears++ < 4 || late_clears % 500 == 0) {
++				say("hakios-gl: target %u cleared where it is first drawn into, %u so far (%u shown before that)\n",
++				    image->texture, late_clears, late_shown);
++			}
++		}
+ 		image->drawn = image->painted = true;
+ 		if (frame_lines && image->width >= 1000 && image->height >= 2000) {
+ 			/* the display's picture (a surface of its size): where this frame first draws into it */
+@@ -5327,6 +5392,7 @@
+ 	 * around, to be shown): a texture that is not the surface's memory starts with what the surface holds.
+ 	 */
+ 	began = now_us();
++	image->clear_due = false;
+ 	if (surface_mirrored(e, image)) {
+ 		if (!fill_fresh && IOSurfaceGetSeed(surface) <= 1) {
+ 			target_cleared(e, image);       /* begonia (x45): nothing in it yet */
+@@ -5514,6 +5580,7 @@
+ 		sync_frames = strstr(arguments, "glsync=1") != NULL;
+ 		hash_wrapped = strstr(arguments, "glwraphash=1") != NULL;
+ 		fill_fresh = strstr(arguments, "glfill=1") != NULL;
++		clear_late = strstr(arguments, "glclearlate=1") != NULL;
+ 		if (strstr(arguments, "glwait=0") != NULL || (strstr(arguments, "glwait=1") == NULL && display_waits())) {
+ 			wait_for_frames = 0;
+ 		}
