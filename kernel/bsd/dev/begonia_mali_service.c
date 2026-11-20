@@ -104,7 +104,7 @@ static int wait(unsigned o,uint32_t mask,uint32_t value) {
 /* y293: boot-arg begonia_slices=1: the 5-second statistics follow slices of the time since boot (5 s each, numbered), and
  * experiments switch by the slice's number -- here bit 1: the nap of the wait for a job 20 us instead of 50. The
  * programs' own experiments read the same clock (PanVK: bit 0). */
-static uint32_t slices_on;
+static uint32_t slices_on;static unsigned pair_n;
 static unsigned slice_now(void) {uint64_t ns;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return (unsigned)(ns/5000000000ull);}
 static uint32_t spin_looks=10;
 static int wait_job(unsigned o,uint32_t mask,uint32_t value) {
@@ -316,7 +316,8 @@ static void prf_program(void) {
 }
 static void prf_start(void) {
  prf_state=-1;
- if(!PE_parse_boot_argn("begonia_prfcnt",&prf_on,sizeof prf_on) || !prf_on)return;
+ (void)PE_parse_boot_argn("begonia_prfcnt",&prf_on,sizeof prf_on);
+ if(!prf_on)return;
  if(kmem_alloc(kernel_map,&prf_page,PAGE_SIZE,KMA_KOBJECT|KMA_ZERO|KMA_DATA,VM_KERN_MEMORY_DIAG)!=KERN_SUCCESS)return;
  prf_phys=kvtophys(prf_page);
  if(PAGE_SIZE<16384 || prf_phys<0x100000000ull || prf_phys>=0x1b7e00000ull-16384){keep("PRF page at %llx, not used",prf_phys);return;}
@@ -346,6 +347,8 @@ static void prf_sample(void) {
  }
  FlushPoC_DcacheRegion(prf_page,16384);
  wr(0x24,1u<<16);
+ wr(0x60,(uint32_t)prf_va);wr(0x64,(uint32_t)(prf_va>>32));   /* y294: the GPU moves it on after every sample (y292, y293: the
+                                                                * second and the tenth sample wrote past the pages) */
  wr(0x30,4);
  unsigned i;
  for(i=0;i<2000;i++){if((rd(0x20)&(1u<<16)) || rd(0x241c))break;delay(5);}
@@ -386,6 +389,9 @@ static void prf_say(unsigned slice) {
   slice,prf_samples,present,j[6]>>20,j[10]>>20,j[18]>>20,j[63]>>10,t[4]>>20,s[4]>>20,s[11]>>20,s[26]>>20,s[28]>>20,s[43]>>20,
   (s[44]+s[45])>>20,s[55]>>20,s[57]>>20,s[58]>>20,s[59]>>20,s[62]>>20,m[32]>>20,m[33]>>20,m[37]>>10,m[38]>>10,m[39]>>10,
   m[40]>>10,m[41]>>10,m[47]>>20,m[48]>>20);
+ /* kept, in thousands: slot 0 jobs(1), waits flush/read/issue/depend/finish; slot 1 the same; compute active */
+ keep("W s%u js0 %llu %llu/%llu/%llu/%llu/%llu js1 %llu %llu/%llu/%llu/%llu/%llu ca%llu",slice,j[8],j[11]>>10,j[12]>>10,j[13]>>10,
+  j[14]>>10,j[15]>>10,j[16],j[19]>>10,j[20]>>10,j[21]>>10,j[22]>>10,j[23]>>10,s[22]>>10);
  static const char names[4]={'J','T','M','S'};
  for(unsigned b=0;b<4;b++)for(unsigned c=4;c<64;c+=12) {
   const uint64_t *v=(b<3?prf_sum[b]:s)+c;
@@ -502,9 +508,9 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
     vm_page_pageable_internal_count,vm_page_pageable_external_count,c_segment_pages_compressed); }
  { extern unsigned int vm_page_free_count,vm_page_wire_count;long long bb=0;
    for(int i=0;i<8;i++)if(!strncmp(va_proc[i].name,"backboardd",10))bb=va_proc[i].net>>20;
-   keep("R s%u %llums fr%u j%llu f%llu busy%llu V%lld b%lld free%u wired%u",stat_slice,ns/1000000,keep_frames,stat_jobs,
-    stat_fragment,busy*100/ns,(long long)(va_live>>20),bb,vm_page_free_count,vm_page_wire_count);
-   keep_frames=0; }
+   keep("R s%u m%u %llums fr%u j%llu f%llu pairs%u busy%llu V%lld b%lld free%u wired%u",stat_slice,stat_slice&3,ns/1000000,keep_frames,
+    stat_jobs,stat_fragment,pair_n,busy*100/ns,(long long)(va_live>>20),bb,vm_page_free_count,vm_page_wire_count);
+   keep_frames=0;pair_n=0; }
  frag_say(stat_slice);prf_say(stat_slice);keep_say();
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
@@ -597,10 +603,96 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
  * drawing thread off its processor most of the time (x32 glprof). Boot-arg begonia_gpu_cpu=N: this thread on
  * processor N; default 4, an A55 (XNU's 5 and 6 are the A76s); -1: wherever the scheduler puts it.
  */
+/*
+ * y294: a pixel job and the next pass's vertex and tiler jobs at once. The service ran one job at a time; y293 (home
+ * screen swiped, 15 frames a second, the GPU 90% busy): of 60 ms a frame 26 are vertex/tiler chains and 33 pixel jobs,
+ * each waiting for the other though the GPU has a slot for each. What forbade it: every batch of a PanVK device begins
+ * its polygon lists at the same place of one tiler heap (the pixel job of pass N still reads them while pass N+1's
+ * tiler would write), and an indirect draw's varyings come from one buffer of the device. PanVK now gives consecutive
+ * batches the heap's halves in turn (PANVK_HALVES) and draws indexed draws directly (PANVK_DIRECT), so a chain of
+ * vertex and tiler jobs alone depends on nothing the pixel job before it uses. Such a chain, when it is next in the
+ * queue behind a pixel job, starts with it (never two chains ahead: the pair ends before the next job starts).
+ * Boot-arg begonia_overlap: 1 always; 2: by 5-second slices of the time since boot (the slice's number modulo 4: 2 and
+ * 3 on, and in 3 the chain's caches are not flushed at its end), with the slices' statistics and the counters.
+ */
+static uint32_t overlap_on;
+static bool overlap_now(void) {return overlap_on==1 || (overlap_on==2 && (slice_now()&3)>=2);}
+static bool draws_only(uint64_t chain) {
+ bool tiler=false;
+ lck_mtx_lock(vm_lock);
+ for(unsigned n=0;chain && n<96;n++) {
+  uint64_t at=beg_gpu_vm_translate(&space,chain);
+  if(!at)break;
+  unsigned type=(ml_phys_read_word_64(at+16)>>1)&0x7f;
+  if(type==7)tiler=true;
+  else if(type!=5){lck_mtx_unlock(vm_lock);return false;}
+  chain=ml_phys_read_word_64(at+24)|((uint64_t)ml_phys_read_word_64(at+28)<<32);
+ }
+ lck_mtx_unlock(vm_lock);
+ return tiler && !chain;
+}
+static void start_slot(unsigned slot,uint64_t chain,uint32_t config) {
+ unsigned base=0x1800+slot*0x80;
+ wr(base+0x40,(uint32_t)chain);wr(base+0x44,(uint32_t)(chain>>32));
+ wr(base+0x50,15);wr(base+0x54,0);wr(base+0x58,config);
+ wr(base+0x60,1);
+}
+static int run_pair(uint64_t fchain,uint64_t fseq,uint64_t fqueued,uint64_t vchain,uint64_t vseq,uint64_t vqueued,unsigned depth) {
+ uint64_t entered=mach_absolute_time();
+ if(gap_last_end && depth>1){gap_between+=entered-gap_last_end;gap_between_n++;}
+ lck_mtx_lock(vm_lock);
+ flush_tables();
+ lck_mtx_unlock(vm_lock);
+ uint64_t began=mach_absolute_time(),end0=0,end1=0,deadline,now;
+ gap_pre+=began-entered;gap_pre_n++;
+ wr(0x2004,0xffffffff);wr(0x1008,0);wr(0x1004,0xffffffff);
+ start_slot(0,fchain,(3u<<8)|(3u<<12)|(8u<<16));
+ start_slot(1,vchain,(3u<<8)|(((overlap_on==2 && (slice_now()&3)==3)?0u:3u)<<12)|(8u<<16));
+ nanoseconds_to_absolutetime(150*NSEC_PER_MSEC,&deadline);
+ deadline+=began;
+ unsigned looks=0;uint32_t irq;
+ for(;;) {
+  irq=rd(0x1000);now=mach_absolute_time();
+  if(!end0 && (irq&0x00010001))end0=now;
+  if(!end1 && (irq&0x00020002))end1=now;
+  if((end0 && end1) || (irq&0x00030000) || now>deadline)break;
+  if(looks++<spin_looks)delay(10);
+  else {assert_wait_timeout((event_t)&wait_job,THREAD_UNINT,50,NSEC_PER_USEC);thread_block(THREAD_CONTINUE_NULL);}
+ }
+ int success=end0 && end1 && !(irq&0x00030000) && !rd(0x241c);
+ uint64_t ended=mach_absolute_time();
+ if(!end0)end0=ended;
+ if(!end1)end1=ended;
+ if(!success) {
+  static unsigned failures;
+  unsigned slot=(irq&0x00020000) || (end0 && !(irq&0x00010000))?1:0,base=0x1800+slot*0x80;
+  fail_count+=1;fail_seq=slot?vseq:fseq;fail_slot=slot;fail_irq=irq;fail_mmu=rd(0x241c);fail_status=rd(base+0x24);
+  fail_head=rd(base)|((uint64_t)rd(base+4)<<32);fail_tail=rd(base+8)|((uint64_t)rd(base+12)<<32);
+  fail_fault=rd(0x2420)|((uint64_t)rd(0x2424)<<32);fail_chain=slot?vchain:fchain;
+  absolutetime_to_nanoseconds(ended,&fail_at);absolutetime_to_nanoseconds(ended-began,&fail_took);
+  if(failures++<6)keep("PAIR FAILED %u: slot%u irq %x mmu %x at %llx status %x after %llu us",failures,slot,irq,fail_mmu,fail_fault,
+   fail_status,fail_took/1000);
+  printf("BEGONIA GPU SERVICE: pair job%llu+%llu irq=%x mmu=%x FAILED; recovering\n",fseq,vseq,irq,rd(0x241c));
+  if(reset() || init_gpu_hardware())printf("BEGONIA GPU SERVICE: hardware recovery failed\n");
+ }
+ gap_last_end=ended;
+ { extern unsigned int vm_page_free_count;unsigned f=vm_page_free_count;if(f<mem_min_free)mem_min_free=f; }
+ if(success) {
+  note_slow(fchain,end0-began);frag_class(fchain,end0-began);
+  unsigned k=chain_kind(vchain);uint64_t us;absolutetime_to_nanoseconds(end1-began,&us);s1_kind_jobs[k]++;s1_kind_us[k]+=us/1000;
+  pair_n++;
+ }
+ job_stats(began,end1,false,vqueued,depth);
+ job_stats(began,end0,true,fqueued,depth);
+ prf_sample();
+ return success;
+}
 extern kern_return_t sysctl_thread_bind_cpuid(int32_t cpuid);
 static void job_thread(void *argument,wait_result_t result) {
  (void)argument;(void)result;
  (void)PE_parse_boot_argn("begonia_gpu_cpu",&job_cpu,sizeof job_cpu);
+ (void)PE_parse_boot_argn("begonia_overlap",&overlap_on,sizeof overlap_on);
+ if(overlap_on==2){slices_on=1;prf_on=1;}
  if(job_cpu>=0)job_bound=sysctl_thread_bind_cpuid(job_cpu)==KERN_SUCCESS;
  for(;;) {
   lck_mtx_lock(queue_lock);
@@ -610,9 +702,21 @@ static void job_thread(void *argument,wait_result_t result) {
   bool fragment=queue[queue_head%JOB_QUEUE].fragment;uint64_t queued=queue[queue_head%JOB_QUEUE].queued;
   unsigned depth=(unsigned)(queue_tail-queue_head);
   lck_mtx_unlock(queue_lock);
-  int success=run_job(chain,fragment,seq,queued,depth);
+  int success;bool paired=false;
+  if(fragment && depth>=2 && overlap_now()) {      /* y294: with the chain of vertex and tiler jobs behind it */
+   lck_mtx_lock(queue_lock);
+   uint64_t chain2=queue[(queue_head+1)%JOB_QUEUE].chain,seq2=queue[(queue_head+1)%JOB_QUEUE].seq;
+   bool fragment2=queue[(queue_head+1)%JOB_QUEUE].fragment;uint64_t queued2=queue[(queue_head+1)%JOB_QUEUE].queued;
+   lck_mtx_unlock(queue_lock);
+   if(!fragment2 && draws_only(chain2)) {
+    paired=true;
+    success=run_pair(chain,seq,queued,chain2,seq2,queued2,depth);
+    seq=seq2;
+   }
+  }
+  if(!paired)success=run_job(chain,fragment,seq,queued,depth);
   lck_mtx_lock(queue_lock);
-  queue_head++;
+  queue_head+=paired?2:1;
   if(!success)__atomic_store_n(&failed,seq,__ATOMIC_RELEASE);
   __atomic_store_n(&completed,seq,__ATOMIC_RELEASE);
   thread_wakeup((event_t)&completed);
