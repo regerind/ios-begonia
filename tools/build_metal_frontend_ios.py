@@ -119,6 +119,7 @@ hakiosCacheCount(const char *path, unsigned candidate)
 {
 	snprintf(gHakiosCacheNote, sizeof(gHakiosCacheNote), "cache %s (candidate %u), %u entries when opened by %s[%d] uid %d", path,
 	    candidate, hakiosCacheEntries(path, 0), getprogname(), (int)getpid(), (int)getuid());
+	setenv("HAKIOS_CACHE_NOTE", gHakiosCacheNote, 1);
 }
 static bool
 cacheDirectory(char *path, size_t size)
@@ -701,7 +702,6 @@ static void nbTeleTick() {
  }
  {char warning[700];if(nmb_last_warning(warning,sizeof warning))nbConsole([NSString stringWithFormat:@"tele WW %s",warning]);}
  unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeLock);kinds=(unsigned)gTelePipes.size();}
- {extern "C" const char *hakiosCacheNote(void);nbConsole([NSString stringWithFormat:@"tele XC %s",hakiosCacheNote()]);}
  nbConsole([NSString stringWithFormat:@"tele X pipes asked %llu kinds %u not-ok %llu warns %llu libs %llu | handlers scheduled n=%llu %lluus max %llu, completed n=%llu %lluus max %llu",
   gTelePipeAsked.load(),kinds,gTelePipeStubs.load(),gTeleWarns.load(),gTeleLibraries.load(),
   (unsigned long long)gTeleScheduled.count.load(),(unsigned long long)gTeleScheduled.total.load(),(unsigned long long)gTeleScheduled.slowest.load(),
