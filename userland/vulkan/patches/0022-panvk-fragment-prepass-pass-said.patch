@@ -15,7 +15,7 @@
 + *
 + * Measured on the host (tests/bifrost_stats.c, Bifrost v7), instructions: the 3-tap blur 130 -> 88, the 7-tap 142 ->
 + * 86, the 14-tap 345 -> 162, a plain image layer 85 -> 63. The decoding's identity holds for every one of the 65536
-+ * halves (NaN payloads aside), checked by computing it. PANVK_FRAG_PREPASS turns it on. */
++ * halves (NaN payloads aside), checked by computing it. PANVK_PREPASS turns it on. */
 +static nir_alu_instr *
 +begonia_alu(nir_def *def, nir_op op)
 +{
@@ -149,7 +149,7 @@
 +   {
 +      static int prepass = -1;
 +      if (prepass < 0)
-+         prepass = getenv("PANVK_FRAG_PREPASS") != NULL;
++         prepass = getenv("PANVK_PREPASS") != NULL;
 +      if (prepass)
 +         begonia_fragment_prepass(nir);
 +   }
@@ -165,7 +165,7 @@
  
 +   /* begonia: what a pass is made of, said now and then: the render target's size, its draws and the fragment
 +    * shaders' code sizes with their draw counts (a code size names the CoreAnimation shader: tests/bifrost_stats.c
-+    * gives the sizes on the host). PANVK_PASS_SAID. One pass in 48 of the big ones that are not the screen, one in
++    * gives the sizes on the host). PANVK_SAID. One pass in 48 of the big ones that are not the screen, one in
 +    * 96 of the screen's. */
 +   {
 +      static int said = -1;
@@ -176,7 +176,7 @@
 +      } pass;
 +      static uint32_t big, screen;
 +      if (said < 0)
-+         said = getenv("PANVK_PASS_SAID") != NULL;
++         said = getenv("PANVK_SAID") != NULL;
 +      if (said) {
 +         if (pass.batch != (void *)cmdbuf->cur_batch) {
 +            const bool is_screen = pass.w >= 1080 && pass.h >= 2200;
