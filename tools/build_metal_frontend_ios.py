@@ -51,6 +51,11 @@ text=text.replace('tried = true;','tried = true;\n\t\tsetenv("PAN_I_WANT_A_BROKE
  '\t\t\t\t\tif (n < sizeof(value)) { memcpy(value, bd + 14, n); value[n] = 0; setenv("BIFROST_MESA_DEBUG", value, 1); } } }\n'
  # (y220: metal_contain=0 -- the translator emits no containment checks into shaders: bridge patch 0004)
  '\t\t\tif (strstr(bootArgs, "metal_contain=0") != NULL) setenv("NMB_UNCONTAINED", "1", 1);\n'
+ # (y299: what y294-y298 measured as gains is on without a boot-arg -- the boot line has no room for their names: PanVK's direct
+ #  indexed draws (0021) and exact fragment prepass (0022), the runtime's unchanged YCbCr planes not converted again and YCbCr
+ #  textures through the device's filter (runtime 0010). beg_old=1: none of them, as p14.)
+ '\t\t\tif (strstr(bootArgs, "beg_old=1") == NULL) {\n'
+ '\t\t\t\tsetenv("PANVK_DIRECT", "1", 0); setenv("PANVK_PREPASS", "1", 0); setenv("M2V_YSKIP", "1", 0); setenv("M2V_YNATIVE", "1", 0);\n\t\t\t}\n'
  # (y234: ca_env=NAME,NAME -- each CoreAnimation switch (CA_DISABLE_INPLACE_SHADERS ...) set to 1 in every process shown the device)
  '\t\t\tconst char *caEnv = strstr(bootArgs, "ca_env=");\n\t\t\tif (caEnv != NULL) {\n\t\t\t\tchar names[200]; size_t n = strcspn(caEnv + 7, " ");\n'
  '\t\t\t\tif (n < sizeof(names)) { memcpy(names, caEnv + 7, n); names[n] = 0;\n'

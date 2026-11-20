@@ -407,7 +407,7 @@ static void probe_say(unsigned slice) {
   /* jobs sampled, their ms; in thousands: fragment-active cycles, quads, warps, instructions, texture filter operations,
    * load/store reads, beats read for textures / of them from outside, load/store beats from outside, beats written from
    * the tile buffer, quads killed (early ZS, forward kill) */
-  if(cls_n[k])keep("C s%u %c n%u %llums fa%llu q%llu w%llu i%llu t%llu l%llu T%llu/%llu L%llu W%llu k%llu/%llu",slice,"FOMS"[k],cls_n[k],
+  if(cls_n[k] && k<3)keep("C s%u %c n%u %llums fa%llu q%llu w%llu i%llu t%llu l%llu T%llu/%llu L%llu W%llu k%llu/%llu",slice,"FOMS"[k],cls_n[k],
    cls_us[k]/1000,c[4]>>10,c[11]>>10,c[9]>>10,c[28]>>10,c[43]>>10,(c[44]+c[45])>>10,c[58]>>10,c[59]>>10,c[57]>>10,c[62]>>10,
    c[14]>>10,c[20]>>10);
   for(unsigned i=0;i<64;i++)cls_sum[k][i]=0;
@@ -429,13 +429,15 @@ static void prf_say(unsigned slice) {
   * active, cache flushes; tiler active; fragment active, quads, core active, instructions, texture filter operations,
   * load/store reads; beats read fetch-external, load/store-external, texture, texture-external, written tile buffer; L2
   * external read beats, AR stalls, responses by latency class, write beats, W stalls */
- keep("P s%u n%u blk%llx g%llu j%llu/%llu c%llu ta%llu f%llu q%llu x%llu i%llu t%llu l%llu F%llu L%llu T%llu/%llu W%llu R%llu a%llu h%llu/%llu/%llu/%llu/%llu w%llu ws%llu",
+  printf("BEGONIA PRF P s%u n%u blk%llx g%llu j%llu/%llu c%llu ta%llu f%llu q%llu x%llu i%llu t%llu l%llu F%llu L%llu T%llu/%llu W%llu R%llu a%llu h%llu/%llu/%llu/%llu/%llu w%llu ws%llu",
   slice,prf_samples,present,j[6]>>20,j[10]>>20,j[18]>>20,j[63]>>10,t[4]>>20,s[4]>>20,s[11]>>20,s[26]>>20,s[28]>>20,s[43]>>20,
   (s[44]+s[45])>>20,s[55]>>20,s[57]>>20,s[58]>>20,s[59]>>20,s[62]>>20,m[32]>>20,m[33]>>20,m[37]>>10,m[38]>>10,m[39]>>10,
-  m[40]>>10,m[41]>>10,m[47]>>20,m[48]>>20);
+  m[40]>>10,m[41]>>10,m[47]>>20,m[48]>>20);printf("
+");
  /* kept, in thousands: slot 0 jobs(1), waits flush/read/issue/depend/finish; slot 1 the same; compute active */
- keep("W s%u js0 %llu %llu/%llu/%llu/%llu/%llu js1 %llu %llu/%llu/%llu/%llu/%llu ca%llu",slice,j[8],j[11]>>10,j[12]>>10,j[13]>>10,
-  j[14]>>10,j[15]>>10,j[16],j[19]>>10,j[20]>>10,j[21]>>10,j[22]>>10,j[23]>>10,s[22]>>10);
+  printf("BEGONIA PRF W s%u js0 %llu %llu/%llu/%llu/%llu/%llu js1 %llu %llu/%llu/%llu/%llu/%llu ca%llu",slice,j[8],j[11]>>10,j[12]>>10,j[13]>>10,
+  j[14]>>10,j[15]>>10,j[16],j[19]>>10,j[20]>>10,j[21]>>10,j[22]>>10,j[23]>>10,s[22]>>10);printf("
+");
  static const char names[4]={'J','T','M','S'};
  for(unsigned b=0;b<4;b++)for(unsigned c=4;c<64;c+=12) {
   const uint64_t *v=(b<3?prf_sum[b]:s)+c;
