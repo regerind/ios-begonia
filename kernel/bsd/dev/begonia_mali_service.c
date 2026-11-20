@@ -157,6 +157,12 @@ static int allocate_table(void *context,struct beg_gpu_vm_table *table) {
  return 0;
 }
 bool hakios_mali_ready(void) {return __atomic_load_n(&ready,__ATOMIC_ACQUIRE)!=0;}
+/* y302: calls into the service and the time in them (0 address, 1 map, 2 unmap, 3 mapped, 4 enqueue): the window server spends a
+ * quarter of its processor time in the kernel while it draws, and a tenth to a fifth of its samples are in mach_msg2_trap. */
+static uint64_t io_n[5],io_t[5];
+static void io_took(unsigned which,uint64_t began) {
+ __atomic_fetch_add(&io_n[which],1,__ATOMIC_RELAXED);__atomic_fetch_add(&io_t[which],mach_absolute_time()-began,__ATOMIC_RELAXED);
+}
 void hakios_keep(const char *format,...) __printflike(1,2);
 void hakios_keep(const char *format,...) {
  char line[384];va_list args;va_start(args,format);vsnprintf(line,sizeof line,format,args);va_end(args);
@@ -198,8 +204,10 @@ static void va_account(int64_t delta) {
 }
 uint64_t hakios_mali_address(uint64_t size,bool executable) {
  if(!hakios_mali_ready() || !size || size>(512ull<<20) || (executable && size>MALI_VA_EXEC_LINE))return 0;
+ uint64_t io_began=mach_absolute_time();
  uint64_t address=mali_va_alloc(&addresses,size,executable);
  if(address)va_account((int64_t)size);
+ io_took(0,io_began);
  return address;
 }
 bool hakios_mali_map(uint64_t address,uint64_t physical) {
@@ -220,9 +228,11 @@ bool hakios_mali_map(uint64_t address,uint64_t physical) {
   printf("HakiosMali: map failed: !pmap_valid_address(0x%llx)\n", physical);
   return false;
  }
+ uint64_t io_began=mach_absolute_time();
  lck_mtx_lock(vm_lock);
  int err = beg_gpu_vm_map(&space,address,physical);
  lck_mtx_unlock(vm_lock);
+ io_took(1,io_began);
  if(err != 0) {
   printf("HakiosMali: map failed: beg_gpu_vm_map(va=0x%llx, pa=0x%llx) err=%d tables=%u/%u\n",
          address, physical, err, space.count, space.limit);
@@ -269,18 +279,20 @@ static void flush_tables(void) {
 }
 void hakios_mali_mapped(void) {
  /* queued jobs: the thread that runs them does this before each one (run_job) */
- if(async_jobs)return;
+ if(async_jobs){__atomic_fetch_add(&io_n[3],1,__ATOMIC_RELAXED);return;}
  lck_mtx_lock(vm_lock);
  flush_tables();
  lck_mtx_unlock(vm_lock);
 }
 void hakios_mali_unmap(uint64_t address,uint64_t size) {
  if(!hakios_mali_ready() || !size || address<MALI_VA_FIRST || address>=MALI_VA_END || size>MALI_VA_END-address)return;
+ uint64_t io_began=mach_absolute_time();
  va_account(-(int64_t)size);
  lck_mtx_lock(vm_lock);
  for(uint64_t off=0;off<size;off+=4096)(void)beg_gpu_vm_unmap(&space,address+off);
  lck_mtx_unlock(vm_lock);
  mali_va_free(&addresses,address,size);
+ io_took(2,io_began);
 }
 void hakios_mali_tag(uint64_t address,uint32_t kind,uint32_t width,uint32_t height,uint32_t row,
  uint32_t format,uint32_t offset) {
@@ -512,6 +524,11 @@ static void wait_say(unsigned slice) {
  }
  keep("%s",line);
  keep("Iv s%u %u/%u/%u/%u",slice,show_gaps[0],show_gaps[1],show_gaps[2],show_gaps[3]);
+ { uint64_t us[5];for(int k=0;k<5;k++){absolutetime_to_nanoseconds(__atomic_exchange_n(&io_t[k],0,__ATOMIC_RELAXED),&us[k]);us[k]/=1000;}
+   keep("Io s%u address %llu/%lluus map %llu/%lluus unmap %llu/%lluus mapped %llu enqueue %llu/%lluus",slice,
+    __atomic_exchange_n(&io_n[0],0,__ATOMIC_RELAXED),us[0],__atomic_exchange_n(&io_n[1],0,__ATOMIC_RELAXED),us[1],
+    __atomic_exchange_n(&io_n[2],0,__ATOMIC_RELAXED),us[2],__atomic_exchange_n(&io_n[3],0,__ATOMIC_RELAXED),
+    __atomic_exchange_n(&io_n[4],0,__ATOMIC_RELAXED),us[4]); }
  for(int k=0;k<6;k++)submit_tids[k]=0;
  for(int k=0;k<4;k++)show_gaps[k]=0;
 }
@@ -864,6 +881,7 @@ static void say_submitters(void) {
 }
 uint64_t hakios_mali_enqueue(uint64_t chain,bool fragment) {
  if(!hakios_mali_ready() || !space.count || !chain || (chain&63))return 0;
+ uint64_t io_began=mach_absolute_time();
  count_submitter(fragment);
  lck_mtx_lock(vm_lock);
  uint64_t mapped=beg_gpu_vm_translate(&space,chain);
@@ -890,6 +908,7 @@ uint64_t hakios_mali_enqueue(uint64_t chain,bool fragment) {
  queue_tail++;
  thread_wakeup((event_t)&queue_tail);
  lck_mtx_unlock(queue_lock);
+ io_took(4,io_began);
  return seq;
 }
 uint32_t hakios_mali_submit(uint64_t chain,bool fragment) {return (uint32_t)hakios_mali_enqueue(chain,fragment);}
