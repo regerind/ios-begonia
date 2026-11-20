@@ -194,3 +194,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y271 | 18:23 | PanVK 0017: desc kopya çağrılarından kaçı GPU işi? (draw başına 2 compute nereden?) + SLOT1 örnekleri (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0 ca_env=PANVK_CPU_DESC_COPY_STATS`) | |
 | y272 | 18:31 | metal2vulkan 0009: her cmd_dispatch noktası sayılıyor (m2v: disp sites): draw başına 2 compute nereden? (tablo erkam-docs/dispatch-sites.txt) (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
 | y273 | 18:34 | y272 tekrarı (y272'de backboardd SIGKILL ile yeniden başladı, koşu geçersiz): her cmd_dispatch noktası sayılıyor (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
+| y274 | 18:41 | PanVK 0018: indexed draw'ın en küçük/en büyük indeksi CPU'da bulunur (draw başına write + minmax compute işi kalkar); y273/y264 ile aynı betik (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
