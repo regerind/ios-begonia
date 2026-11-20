@@ -755,10 +755,10 @@ tele_hooks.append((' gTelePasses=16;\n',
  {
   static unsigned turn;std::vector<std::string> keys;
   {std::lock_guard<std::mutex> lock(gTelePipeLock);for(const auto &entry:gTelePipes)keys.push_back(entry.first);}
-  for(unsigned k=0;k<3 && !keys.empty();k++) {
+  for(unsigned k=0;k<2 && !keys.empty();k++) {
    const unsigned which=turn++%keys.size();const std::string &key=keys[which];
-   for(size_t at=0,piece=0;at<key.size() && piece<24;at+=60,piece++)
-    nbConsole([NSString stringWithFormat:@"tele k%03u.%02zu %.60s",which,piece,key.c_str()+at]);
+   for(size_t at=0,piece=0;at<key.size() && piece<56;at+=40,piece++)
+    nbConsole([NSString stringWithFormat:@"tele k%03u.%02zu %.40s",which,piece,key.c_str()+at]);
   }
  }
 '''))
