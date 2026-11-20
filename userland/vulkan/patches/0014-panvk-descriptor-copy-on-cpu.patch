@@ -165,7 +165,7 @@
 +   }
 +   stat[0]++;
 +   calls++;
-+   if ((calls & 1023) == 0)
++   if ((calls & 1023) == 0 && getenv("PANVK_CPU_DESC_COPY_STATS"))
 +      goto report_ok;
 +   return true;
 +report_ok:
@@ -174,7 +174,7 @@
 +   return true;
 +report:
 +   calls++;
-+   if ((calls & 1023) == 0 || stat[1] + stat[2] + stat[3] + stat[4] == 1)
++   if (getenv("PANVK_CPU_DESC_COPY_STATS") && ((calls & 1023) == 0 || stat[1] + stat[2] + stat[3] + stat[4] == 1))
 +      fprintf(stderr, "panvk cpu desc copy: done %u, no handles %u, no cpu table %u, bad set %u, set without host %u\n",
 +              stat[0], stat[1], stat[2], stat[3], stat[4]);
 +   return false;
