@@ -59,7 +59,7 @@ static uint64_t s1_kind_jobs[3],s1_kind_us[3];
 static uint64_t gap_pre,gap_pre_n,gap_between,gap_between_n,gap_last_end;
 /* y285: which process holds the wired memory (callback of proc_iterate: processes with 8 MB wired or 64 MB footprint) */
 extern void proc_iterate(unsigned int flags,int (*callout)(void *,void *),void *arg,int (*filterfn)(void *,void *),void *filterarg);
-extern void *proc_task(void *);extern int proc_pid(void *);extern char *proc_name_address(void *);
+extern void *proc_task(void *);extern char *proc_name_address(void *);
 extern uint64_t get_task_wired_mem(void *);extern uint64_t get_task_phys_footprint(void *);
 static char memp[360];static unsigned memn;
 static int mem_proc_cb(void *p,void *arg) {
