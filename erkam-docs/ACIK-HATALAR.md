@@ -230,3 +230,12 @@ Aşağısı araştırmanın kaydı.
     dyld cache'te .27.dylddata 0x24a9c8'de (isim işaretçisi); kodu bulunmadı.
   - Kalan şüpheler: yarım duyarlık (supportsNativeHardwareFP16=0 olduğundan OpFConvert'ler), ekran dolduran backdrop/blur geçişleri
     (en uzun iş 23 ms), iş başına bellek bant genişliği.
+
+  Geçiş başına süre (y238, PanVK 0015, `panvk_debug=passtime`): toplam vurucu "1080x2340, 2 renk eki BGRA8, rt0 yüklü / rt1 temiz ve
+  saklanmayan, çok çizimli" geçişler. Toplam fragment süresine göre sıralama: j122 (2221 ms, 238 geçiş, ort. 9.3 ms), j101 (2165 ms, 156 geçiş,
+  13.9 ms), j49 (1585 ms, 5.4 ms), j45 (1545 ms, 5.8 ms), 1622x1525 ara geçiş j10 (1436 ms, 4.9 ms), j126 (1350 ms, 15.3 ms). En uzun tek iş:
+  j238/j263, 26-27 ms. İş sayısı çizim sayısıyla orantılı değil: j15 bile 5 ms (tam ekran bir katman ~1 ms), j101 14 ms. Yani maliyet
+  "tam ekranı kaplayan çizim sayısı x ağır CA fragment shader'ı" ve her kare 4+ tam ekran geçiş (her biri tüm kareyi yükleyip saklıyor).
+  Kısa 64x64 geçişlerde bile vertex/tiler beklemesi 5-9 ms: uyku beklemesinin uyanma gecikmesi; boru hattı akarken değil, seri beklemede görünüyor.
+  Tek seferde müdahale adayları: (1) tam ekran geçişlerin sayısını azaltmak (CA'nın backdrop/grup geçişleri), (2) tam ekran çizimlerin
+  fragment maliyetini düşürmek (yarım duyarlık OpFConvert'leri, blend yolu), (3) rt1'in (temiz, saklanmayan) bırakılması.
