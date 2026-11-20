@@ -70,17 +70,18 @@
                  })?;
              pages.memories.push(memory);
              imported.push((memory, type_index));
-@@ -601,6 +616,19 @@
+@@ -601,6 +616,20 @@
      }
  }
  
 +/// begonia: why the dma-buf route refused a no-copy buffer or a texture's image, on the console (the
-+/// first 16): the refusal itself is `Unsupported(HostMemory)` whatever the step, and the caller then
++/// first 4, then every 40th: a session's log keeps its end only): the refusal itself is `Unsupported(HostMemory)` whatever the step, and the caller then
 +/// takes a buffer that copies the bytes, without a word.
 +pub(super) fn begonia_say(what: &str) {
 +    use std::io::Write;
 +    static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-+    if SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 16 {
++    let said = SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++    if said < 4 || said % 40 == 0 {
 +        if let Ok(mut console) = std::fs::OpenOptions::new().write(true).open("/dev/console") {
 +            let _ = writeln!(console, "m2v: dma-buf route: {what}");
 +        }
