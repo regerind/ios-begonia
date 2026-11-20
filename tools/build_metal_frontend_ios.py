@@ -532,7 +532,92 @@ for old,new in hooks:
 # reaches no kept log)
 assert mtext.count('NSLog(@"[BegoniaMetal] WARNING: ')>0
 mtext=mtext.replace('NSLog(@"[BegoniaMetal] WARNING: ','NBWARN(@"')
-mtext=mtext.replace('#define NBLOG(','#define NBWARN(...) do{NSString *nbWarning=[NSString stringWithFormat:__VA_ARGS__];NSLog(@"[BegoniaMetal] WARNING: %@",nbWarning);nbConsole(nbWarning);}while(0)\n#define NBLOG(',1)
+# (y204: counted, and on the console only the first 40 and then every 1000th -- a warning in every frame would push
+# everything else out of the session's log ring)
+mtext=mtext.replace('#define NBLOG(','static std::atomic<unsigned long long> gTeleWarns;\n#define NBWARN(...) do{NSString *nbWarning=[NSString stringWithFormat:__VA_ARGS__];NSLog(@"[BegoniaMetal] WARNING: %@",nbWarning);const unsigned long long nbWarned=gTeleWarns++;if(nbWarned<40||nbWarned%1000==0)nbConsole(nbWarning);}while(0)\n#define NBLOG(',1)
+
+# begonia (y204): boot-arg metal_tele=1 -- the window server's (backboardd's) own counters on the console every 5 s:
+# the telemetry table's rows (commits, pipelines, times, waits, surfaces, the runtime's VkPipelines and caches), how
+# many render pipelines were asked for and how many of them were different ones (CoreAnimation asking for the same
+# pipeline again and again is hypothesis A of handoff/FABLE2-BACKBOARDD-METAL.md), each new one's names, and the time
+# spent inside the command buffers' scheduled and completed handlers (hypothesis B). Measurement only.
+tele_hooks=[
+ ('static void completed(void *context);\nstatic void scheduled(void *context);',
+  'static void completed(void *context);\nstatic void scheduled(void *context);\nstatic void nbTeleTick();\nstatic Timed gTeleScheduled,gTeleCompleted;'),
+ (' self.committed=YES;\n self.committedUs=nowUs();', ' self.committed=YES;\n self.committedUs=nowUs();\n nbTeleTick();'),
+ ('  for(MTLCommandBufferHandler block in handlers)block((id<MTLCommandBuffer>)self);\n  dispatch_group_leave(self->_schedulingHandlers);',
+  '  const uint64_t teleBegan=nowUs();\n  for(MTLCommandBufferHandler block in handlers)block((id<MTLCommandBuffer>)self);\n  if(handlers.count)gTeleScheduled.add(teleBegan);\n  dispatch_group_leave(self->_schedulingHandlers);'),
+ ('  for(MTLCommandBufferHandler block in completedHandlers)block((id<MTLCommandBuffer>)self);\n  dispatch_group_leave(self->_handlers);',
+  '  const uint64_t teleBegan=nowUs();\n  for(MTLCommandBufferHandler block in completedHandlers)block((id<MTLCommandBuffer>)self);\n  if(completedHandlers.count)gTeleCompleted.add(teleBegan);\n  dispatch_group_leave(self->_handlers);'),
+ ('// A render pipeline descriptor in the bridge\'s form; false, with the error, for a function of another device.\n',
+  '''static int nbTeleOn() {
+ static int on=-1;
+ if(on<0){char args[1024]="";size_t size=sizeof(args)-1;
+  on=sysctlbyname("kern.bootargs",args,&size,NULL,0)==0 && strstr(args,"metal_tele=1")!=NULL && strcmp(getprogname(),"backboardd")==0;}
+ return on;
+}
+static std::mutex gTelePipeLock;
+static std::unordered_map<std::string,unsigned> gTelePipes;
+static std::atomic<unsigned long long> gTelePipeAsked,gTelePipeStubs,gTeleLibraries;
+static void nbTelePipe(MTLRenderPipelineDescriptor *d,uint64_t began,const char *outcome) {
+ gTelePipeAsked++;if(strcmp(outcome,"ok")!=0)gTelePipeStubs++;
+ if(!nbTeleOn())return;
+ NBFunction *vf=[(id)d.vertexFunction isKindOfClass:[NBFunction class]]?(NBFunction *)d.vertexFunction:nil;
+ NBFunction *ff=[(id)d.fragmentFunction isKindOfClass:[NBFunction class]]?(NBFunction *)d.fragmentFunction:nil;
+ MTLRenderPipelineColorAttachmentDescriptor *a=d.colorAttachments[0];
+ char head[160];snprintf(head,sizeof head,"c0=%lu:%d:%lu:%lu:%lu:%lu ds=%lu/%lu s=%lu vd=%d ",(unsigned long)a.pixelFormat,(int)a.blendingEnabled,
+     (unsigned long)a.sourceRGBBlendFactor,(unsigned long)a.destinationRGBBlendFactor,(unsigned long)a.sourceAlphaBlendFactor,(unsigned long)a.destinationAlphaBlendFactor,
+     (unsigned long)d.depthAttachmentPixelFormat,(unsigned long)d.stencilAttachmentPixelFormat,(unsigned long)d.rasterSampleCount,d.vertexDescriptor?1:0);
+ std::string key=head;key+=d.label.length?d.label.UTF8String:"-";
+ key+=" v ";key+=vf?vf.name.UTF8String:"-";key+=vf&&vf.handle?"":"(stub)";key+=" [";key+=vf?vf.constantsText:"";
+ key+="] f ";key+=ff?ff.name.UTF8String:"-";key+=ff&&ff.handle?"":"(stub)";key+=" [";key+=ff?ff.constantsText:"";key+="]";
+ unsigned times,kinds;
+ {std::lock_guard<std::mutex> lock(gTelePipeLock);times=++gTelePipes[key];kinds=(unsigned)gTelePipes.size();}
+ if((times==1 && kinds<=60) || times==2 || times==20 || times==200 || times==2000)
+  nbConsole([NSString stringWithFormat:@"tele pipe #%u x%u %s %lluus: %.420s",kinds,times,outcome,(unsigned long long)(nowUs()-began),key.c_str()]);
+}
+static void nbTeleTick() {
+ if(!nbTeleOn())return;
+ static std::atomic<uint64_t> next{0};
+ const uint64_t now=nowUs();uint64_t due=next.load();
+ if(now<due || !next.compare_exchange_strong(due,now+5000000))return;
+ static char table[8192];
+ native_bridge_metal_telemetry(table,sizeof table);
+ for(char *line=table,*end;*line;line=end) {
+  end=strchr(line,'\\n');if(end)*end++=0;else end=line+strlen(line);
+  if(!strchr("STGJNVLWFP",line[0]) || strlen(line)<5 || (line[0]=='S' && line[1]=='R'))continue;
+  nbConsole([NSString stringWithFormat:@"tele %s",line]);
+ }
+ unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeLock);kinds=(unsigned)gTelePipes.size();}
+ nbConsole([NSString stringWithFormat:@"tele X pipes asked %llu kinds %u not-ok %llu warns %llu libs %llu | handlers scheduled n=%llu %lluus max %llu, completed n=%llu %lluus max %llu",
+  gTelePipeAsked.load(),kinds,gTelePipeStubs.load(),gTeleWarns.load(),gTeleLibraries.load(),
+  (unsigned long long)gTeleScheduled.count.load(),(unsigned long long)gTeleScheduled.total.load(),(unsigned long long)gTeleScheduled.slowest.load(),
+  (unsigned long long)gTeleCompleted.count.load(),(unsigned long long)gTeleCompleted.total.load(),(unsigned long long)gTeleCompleted.slowest.load()]);
+}
+// A render pipeline descriptor in the bridge's form; false, with the error, for a function of another device.
+'''),
+ # (every outcome of a render pipeline's creation is counted; the descriptor is still alive at each)
+ ('  NBWARN(@"renderDescriptor failed for \'%@\', returning stub pipeline", d.label);','  NBWARN(@"renderDescriptor failed for \'%@\', returning stub pipeline", d.label);nbTelePipe(d,nowUs(),"stub-descriptor");'),
+ ('  NBWARN(@"vertex handle is null for \'%@\', returning stub pipeline", d.label);','  NBWARN(@"vertex handle is null for \'%@\', returning stub pipeline", d.label);nbTelePipe(d,nowUs(),"stub-vertex");'),
+ ('  NBWARN(@"fragment handle is null for \'%@\', returning stub pipeline", d.label);','  NBWARN(@"fragment handle is null for \'%@\', returning stub pipeline", d.label);nbTelePipe(d,nowUs(),"stub-fragment");'),
+ ('  NBWARN(@"pipelineArchives failed for \'%@\', returning stub pipeline", d.label);','  NBWARN(@"pipelineArchives failed for \'%@\', returning stub pipeline", d.label);nbTelePipe(d,nowUs(),"stub-archives");'),
+ ('  NBWARN(@"nmb_render_pipeline_new_with_options failed (%s) for \'%@\', returning stub pipeline", nmb_last_error(), d.label);',
+  '  NBWARN(@"nmb_render_pipeline_new_with_options failed (%s) for \'%@\', returning stub pipeline", nmb_last_error(), d.label);nbTelePipe(d,pipelineBegan,"stub-refused");'),
+ (' NBRenderPipeline *state=[NBRenderPipeline new];state.handle=handle;state.label=d.label;gPipelines++;if(error)*error=nil;return (id<MTLRenderPipelineState>)state;\n}',
+  ' nbTelePipe(d,pipelineBegan,"ok");\n NBRenderPipeline *state=[NBRenderPipeline new];state.handle=handle;state.label=d.label;gPipelines++;if(error)*error=nil;return (id<MTLRenderPipelineState>)state;\n}'),
+ # (which shader libraries the window server opens, and whether they opened)
+ (' NmbLibrary *handle=nmb_library_new(gDevice,bytes.bytes,bytes.length,false);gTimeLibrary.add(libraryBegan);\n',
+  ' NmbLibrary *handle=nmb_library_new(gDevice,bytes.bytes,bytes.length,false);gTimeLibrary.add(libraryBegan);\n'
+  ' if(gTeleLibraries++<12)nbConsole([NSString stringWithFormat:@"tele library %@ (%lu bytes): %s",path,(unsigned long)bytes.length,handle?"opened":nmb_last_error()]);\n'),
+]
+for old,new in tele_hooks:
+ assert mtext.count(old)==1,'telemetry hook does not fit: '+old[:90]
+ mtext=mtext.replace(old,new)
+mtext=mtext.replace('#include <atomic>\n','#include <atomic>\n#include <unordered_map>\n#include <string>\n#include <mutex>\n',1)
+if not a.quartzcore:
+ old_refusal=' if(error)*error=nbError([NSString stringWithFormat:@"no pipeline library on this GPU: %@",path.lastPathComponent]);\n return nil;\n'
+ assert mtext.count(old_refusal)==1
+ mtext=mtext.replace(old_refusal,' {static std::atomic<unsigned> said{0};if(said++<4)nbConsole([NSString stringWithFormat:@"tele pipeline library refused: %@",path]);}\n'+old_refusal)
 
 frontend = mtext
 if a.quartzcore:
