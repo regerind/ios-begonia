@@ -393,3 +393,16 @@ Aşağısı araştırmanın kaydı.
   imaja eklenmesi isteniyor. Doğrulanmadığı için p17'de YOK; bir y koşusu gerekiyor.
 - **Hâlâ ölçülmeyen eski kalemler:** videoda ileri sarma (0.5-1 kare/sn), jetsam, Ayarlar > Duvar Kağıdı > özelleştir
   ekranındaki mor bozuk görüntü (kullanıcı bildirdi, bakılmadı).
+
+### y312-y313 ve p18 (2026-11-21): y311'in nedeni bulundu; duvar kağıtsız ~51-53 kare/sn
+
+- **y311 neden açılmadı (ÇÖZÜLDÜ, bkz. COZULEN-HATALAR):** önyükleyicide 32 MiB payload sınırı; kext ya da kütüphane değil.
+- **Durum:** duvar kağıdıyla ~46-48 kare/sn (y312), duvar kağıtsız ~51-53 (y313; 18 ms altı kareler %86). p18 duvar
+  kağıtsız kuruldu (kullanıcının isteği). Kullanıcının p18 değerlendirmesi bekleniyor.
+- **Duvar kağıdının maliyeti artık ölçülü:** tam ekran parça işi 8 ms -> 3.5 ms, GPU meşguliyeti %58-61 -> %26-28,
+  1041×1180 geçişi yok. Duvar kağıdı açıkken 50-60'a çıkmak için bu GPU yükü (YCbCr duvar kağıdının her kare ara
+  geçişten geçmesi + kare başına ikinci tam ekran geçişi) çözülmeli: AÇIK.
+- **Boot bölümünde yer kalmadı:** p18 imajı 64 MiB'lik bölümün sonuna ~55 KB kalıyor; büyüyen her şey sığmayacak. Tam hız
+  çalışma zamanı (`M2V_OPT=3`, 18.2 MB) için kullanıcının onayladığı sistem bölümü yolu hâlâ kullanılmadı.
+- **Bakılmadı:** videoda ileri sarma, jetsam, Ayarlar > Duvar Kağıdı'ndaki mor görüntü; `sb_nowall` ile kilit ekranı ve
+  uygulama geçişlerinin görünümü denenmedi (yalnız ana ekran çekimi var).
