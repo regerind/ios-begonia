@@ -291,3 +291,15 @@ Aşağısı araştırmanın kaydı.
     iş 5 -> 3. Kalan: GPU'nun kendi işi (tam ekran blur/backdrop pass'leri 12-19 ms) ve draw başına kalan 1 compute (indirect helper).
   - **AÇIK: backboardd aralıklı SIGKILL (status 0x9)**: y245, y272, y274 (son iki yeni ayarlarla: fb_gpuseq=1 metal_swapwait=0, 0009/0018). Neden bilinmiyor;
     birkaç koşuda tekrarlanmadı. İzlenecek: kill'i kim yolluyor (jetsam? launchd/CA watchdog?).
+
+## 2b. (GERİ GELDİ) backboardd'in jetsam ile öldürülmesi: pencere sunucusu yeniden başlıyor
+- **Belirti:** Bazı koşularda backboardd[13] ve SpringBoard yeniden başlıyor (pid değişir, "processes:" satırında iki pid).
+  y245 (`status 0x9 reason 1/0x5` = JETSAM_REASON_MEMORY_PROCTHRASHING), y272 (`reason 1/0x4` = MEMORY_VMPAGESHORTAGE), y274 (aynı 0x9). Yaklaşık
+  35 koşuda 3 kez (2026-11-20 akşamı).
+- **Kanıt:** konsol çıkış notu `exit: backboardd[13] status 0x9 reason 1/0x4`; namespace 1 = JETSAM. Rastgele SIGKILL değil, bellek baskısı.
+- **Eski çözüm neden yetmedi:** y146-y148'de `kern.vm_compressor = 2` eklenmişti (COZULEN-HATALAR "Videoda ileri/geri sarınca..."). O satırda "çok
+  uzun oturumlarda bellek yine dolabilir" şüphesi yazılıydı. Şimdi 60 sn'lik koşularda bile oluyor; Metal yolu (backboardd Metal, PanVK/CPU
+  tabloları, 10 MB'lık yüzeyler, aynı anda daha fazla uçuştaki kare: `fb_gpuseq=1 metal_swapwait=0`) belleği artırmış olabilir. Doğrulanmadı.
+- **Şüphe/sonraki adım:** backboardd ve diğer Metal istemcilerinin bellek kullanımını koşu boyunca izlemek (footprint büyüyor mu), uçuştaki kare
+  sayısını sınırlamak (fb_queue), jetsam öncesi serbest sayfa sayısını loglamak.
+- **Durum:** AÇIK. p12 kriteri "backboardd aynı pid'de kalır" bu yüzden garantilenemiyor.
