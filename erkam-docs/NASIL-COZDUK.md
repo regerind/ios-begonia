@@ -104,3 +104,40 @@ Her konu: belirti, kök neden, çözüm, ilgili dosyalar. Commit'ler ayrıntıy�
 ## Tap-to-wake (y95)
 - Karanlık ekranda dokunuşlar yutuluyor; ekranı yalnızca güç tuşu açıyor (0044).
 - Ekran karanlıkken dokunmatik 500 ms'de bir okunuyor (`begonia_touch.c`, `begonia_backlight_dark()`).
+
+## backboardd'yi Metal'e taşıma: tek GPU yolu (2026-11-20, y204–y219, devam ediyor)
+
+Hedef: ekranı birleştiren süreç (backboardd) de Metal ile çizsin; GL köprüsü devreden çıksın. Başlangıçta (y202/y203)
+siyah ekran ve 0–1 kare/sn vardı. Sırayla bulunan nedenler ve çözümler:
+
+1. **Kurulum: `metal=3` değil `metal=1` + istemci listesinde backboardd.** `metal=3` mediaserverd'a da Metal veriyor;
+   o da çöküp yeniden başlayarak hem logu dolduruyor hem sistemi yavaşlatıyordu. "0–1 kare/sn"nin çoğu buydu (y204:
+   7–8 kare/sn).
+2. **Siyah ekran: takas GPU bitmeden gidiyordu.** CoreAnimation `waitUntilScheduled`'dan hemen sonra yüzeyi ekrana
+   veriyor; Apple GPU'larında çekirdek GPU'nun bitmesini bekletir, bizde beklemiyordu ve her kare yeni bir yüzeyde
+   olduğu için hep boş yüzey kopyalanıyordu. Çözüm (ön yüz): backboardd'de çizim yapan komut arabelleği için
+   `waitUntilScheduled` GPU'nun tamamlanmasını bekliyor (`metal_swapwait=0` kapatır). y205: görüntü geldi.
+3. **Framebuffer-fetch üçgen üçgen bölünüyordu.** CA'nın bütün gölgelendiricileri hedefi okuyor (programlanabilir
+   karıştırma). PanVK v7 "sıralı ek erişimi"ni bildirmediği için köprü her üçgeni ayrı geçişe bölüyordu (karede ~180
+   GPU işi). PanVK giriş eklerini zaten karo arabelleğinden okuyor; yama 0011 özelliği v7'de de bildiriyor.
+4. **Her IOSurface kopyalanıyordu (asıl büyük maliyet).** PanVK `VK_EXT_external_memory_host` sunmadığı için çalışma
+   zamanı her yüzeyi kendi belleğinde bir kopya olarak tutuyor, her komut arabelleğinde CPU ile içeri/dışarı
+   kopyalıyor, üstündeki dokuları da her kullanımdan önce GPU ile "gölge" görüntüye yeniden kopyalıyordu (bir tanesi
+   9 MB'lik duvar kâğıdı). Çözüm üç parça: PanVK 0013 (uzantıyı listeler, her işaretçiyi reddeder → çalışma zamanı
+   dma-buf yoluna geçer); köprüde `nmb_buffer_new_no_copy_surface` (taşıma katmanının yüzey tanımlayıcılarını —
+   çekirdeğin GL yolunda da kullandığı "yüzey → GPU tamponu" isteği — dma-buf kaynağı olarak verir); çalışma zamanı
+   yaması 0003 (Linux dışında tanımlayıcıyı dosya boyutuyla kabul eder; yoksa her yanıt sessizce reddediliyordu).
+   `metal_surfaces=0/1/2` (kapalı / yalnızca backboardd / hepsi; varsayılan 1). y211: 8 kare/sn, Denetim Merkezi doğru.
+5. **CA'nın kendi bitmapleri.** Glif/maske/görüntü bitmapleri özel `newLinearTextureWithDescriptor:` çağrısıyla
+   tampon üstü doku oluyor ve yine her karede gölgeye kopyalanıyordu. Çözüm (ön yüz, yalnızca backboardd): "ayna doku"
+   — sıradan bir doku; commit'te baytların özeti alınır, yalnızca değiştiyse yüklenir. Özet büyük dokularda dönüşümlü
+   olarak satırların sekizde birini kontrol eder (`metal_mirror=0` kapatır). Bilinen sınır: bir bitmap yerinde
+   değişirse en geç 8 commit sonra görülür; tampona GPU ile yazılan değişiklik görülmez.
+
+Doğrulama (çekimler): ana ekran (y205), Denetim Merkezi (y211, y218), Ayarlar (y212), Bugün paneli (y215) doğru
+çiziliyor; backboardd hiçbir oturumda çökmedi, çökme döngüsü yok.
+
+**Açık kalan: hız.** 5–10 kare/sn (GL yolunda animasyonlarda 45–60). Darboğaz artık GPU: her tam ekran geçiş, içerikten
+bağımsız ~30 ms sürüyor (GL yolunda ≤3 ms), ayrıca PanVK her çizim için 2 ek "tanımlayıcı kopyalama" işi çıkarıyor
+(karede ~23 ms). Elenenler: boru hattı yeniden derleme (yok), işleyicilerde kopya (yok), AFBC ve ön-kare
+gölgelendiricisi (`panvk_debug=noafbc` ile kalkıyor ama süre değişmiyor). Ayrıntı: ACIK-HATALAR 12.

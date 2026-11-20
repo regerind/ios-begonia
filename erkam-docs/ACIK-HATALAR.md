@@ -174,3 +174,24 @@ Aşağısı araştırmanın kaydı.
 - **Kamera:** Hat ve saat değişiklikleri için onay gerekiyor.
 - **Kalıcı imaj (p7):** Kullanıcı henüz istemedi ("not yet").
 - **Hoparlör koruması:** TFA9874 DSP'siz çalışıyor, yani hoparlör koruması yok. Hoparlör -6 dB'de sınırlı.
+
+## 12. backboardd Metal'de (tek GPU yolu): görüntü doğru, hız yetersiz
+- **Durum (y219, 2026-11-20):** Deneysel; varsayılan hâlâ GL yolu. p12 derlenmedi (hız ölçütü tutmuyor).
+- **Çalışan:** ana ekran, Denetim Merkezi, Bugün paneli, Ayarlar Metal üzerinden doğru çiziliyor (çekimler y205, y211,
+  y212, y215, y218); backboardd 60 sn'lik oturumlarda hiç çökmedi; çökme döngüsü yok. Kurulum ve çözümler:
+  NASIL-COZDUK "backboardd'yi Metal'e taşıma".
+- **Belirti:** 5–10 kare/sn (GL yolu: animasyonlarda 45–60, YouTube 41–51). YouTube'da 5–6 kare/sn (y216).
+- **Kanıt:** GPU %65–71 meşgul, backboardd CPU'su tek çekirdeğin ~%37'si (y214). Karede 2 tam ekran fragment işi,
+  her biri ~30 ms (1080x2340) / ~16 ms (1041x1180) — içerikten bağımsız, piksel sayısıyla orantılı (Ayarlar'ın
+  koyu ekranında da aynı). GL yolunda en uzun fragment işi ~3 ms. Vertex/tiler zincirleri karede ~23 ms: PanVK JM
+  her çizimde tanımlayıcıları GPU'da kopyalayan 2 ek compute işi çıkarıyor (çizim başına 4 iş; GL'de 2).
+- **Şüphe:** (a) CoreAnimation'ın Metal gölgelendiricileri (programlanabilir karıştırma, 2 renk ekli — ikincisi
+  belleksiz) Mali'de piksel başına pahalı; (b) karo arabelleğinden okuma (framebuffer fetch) her çizimde; (c) PanVK'nın
+  çizim başı tanımlayıcı kopyalama işleri. AFBC/ön-kare gölgelendiricisi elendi (y218).
+- **Sonraki adım:** fragment gölgelendirici boyutlarını ölç (y219); tek bir tam ekran çizimin süresini ayır; PanVK'da
+  tanımlayıcı kopyalamayı CPU'ya al; gerekirse CA gölgelendiricisinin çevrilmiş SPIR-V'sini makinede incele.
+- **Yan bulgular:** çekimlerde zaman zaman renkli pikselli ince yatay çizgi (y212, y218) — çekim aktarımı mı, yerinde
+  yüzeylerde önbellek tutarlılığı mı belirsiz; kullanıcının gözle bakması gerek. `metal=3` mediaserverd'ı Metal'e alıp
+  çökertiyor (MTLResourceOptions 0x80020 ve eksik `newFunctionWithName:constantValues:pipelineLibrary:error:`):
+  `metal=1` + liste kullan. Boru hatları her açılışta yeniden derleniyor (önbellek isabeti 0): ilk açılan her yeni
+  görünümde ~100 ms'lik takılmalar.
