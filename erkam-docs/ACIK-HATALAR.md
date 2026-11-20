@@ -154,6 +154,18 @@ Aşağısı araştırmanın kaydı.
 - **Durum:** açık. Sıradaki: program 63'ün gölgelendirici metnini almak (y185/y186'da zamanlama tutmadı: panel
   açılmadan iz alındı); `gltrace_place` + daha geç `gltrace_at` ya da `glshaders=1`.
 
+## 10f. p9'da çok sayıda görsel hata (kullanıcı, 2026-11-20 sabah)
+- **Belirti:** Denetim Merkezi siyah geliyor; Bugün görünümünde siyah kutular kalıyor; üst panel (Bildirim Merkezi)
+  çekilince ekran simsiyah oluyor; saydamlık tamamen bozuk. YouTube oynatma belirgin yavaş. Sistem akıcılığı iyi.
+- **Şüphe (en güçlü):** köprü 0057–0059 (ekranın 1:1 kopyaları bu kareden). Bu yol ekran resmini kare ortasında
+  okutuyor; Mesa 0009 o sırada ekrana yeni bellek verirse kare kayboluyor (y187/y188'deki siyah ekranın aynısı). glFlush
+  bunu her durumda önlemiyor gibi. Denetim Merkezi ve Bildirim Merkezi 0057'den sonra hiç test edilmedi (son doğru
+  test y163, 0057'den önce). y193/y199'daki "temiz" Bugün çekimlerinde ilk widget koyu bir kutuydu: yanlış okundu.
+  YouTube yavaşlığı canlı kopyaların bedeli (y194: 41–44 kare/sn).
+- **Ders:** bir görüntü düzeltmesinden sonra Bugün, Denetim Merkezi, Bildirim Merkezi ve YouTube çekimleriyle tam tur
+  yapılmadan kalıcı imaja konmamalı.
+- **Durum:** p10 hazır (p9 + `gllivecopy=0`, SHA256 96022caf…de47); kullanıcının onayını bekliyor.
+
 ## 11. Diğerleri
 - **Bluetooth:** Denetleyici canlı (WMT açık, HCI reset OK); iOS tarafı yok. Kullanıcı tarafından hiç denenmedi;
   büyük ihtimalle çalışmıyor.
