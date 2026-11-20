@@ -302,6 +302,10 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
     "%llu us each over %llu\n",gap_pre_n?pre/1000/gap_pre_n:0,gap_pre_n,gap_between_n?between/1000/gap_between_n:0,gap_between_n);
    gap_pre=gap_pre_n=gap_between=gap_between_n=0; }
  printf("BEGONIA GPU SLOT1 SAMPLES: [%s] [%s] [%s] [%s]\n",s1_sample[0],s1_sample[1],s1_sample[2],s1_sample[3]);
+ { /* y281: the memory the window server's kills are about (pages of 16 KB: free, active, inactive, wired, speculative, purgeable) */
+   extern unsigned int vm_page_free_count,vm_page_active_count,vm_page_inactive_count,vm_page_wire_count,vm_page_speculative_count,vm_page_purgeable_count;
+   printf("BEGONIA MEM: pages free %u active %u inactive %u wired %u speculative %u purgeable %u\n",vm_page_free_count,vm_page_active_count,
+    vm_page_inactive_count,vm_page_wire_count,vm_page_speculative_count,vm_page_purgeable_count); }
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
