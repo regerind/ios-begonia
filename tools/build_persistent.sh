@@ -5,7 +5,7 @@
 #   tools/build_persistent.sh TAG            e.g.  tools/build_persistent.sh p19
 #
 # Output: out/ios16-TAG.img (flash it with tools/flash_boot.sh TAG). The boot line is the one of p18 (see
-# docs/erkam-docs/BUILD-LOG.md). Set EXTRA_ARGS to change it; set NO_WALLPAPER=0 for a build that keeps the wallpaper.
+# docs/regerind-docs/BUILD-LOG.md). Set EXTRA_ARGS to change it; set NO_WALLPAPER=0 for a build that keeps the wallpaper.
 # Derived from the working auto_build.sh of the project's owner, minus the git reset and the test-session parts.
 set -e -o pipefail
 TAG=${1:?usage: build_persistent.sh TAG}

@@ -2,7 +2,7 @@
 
 For someone with a Redmi Note 8 Pro (begonia, MT6785) and a new checkout. This is the shortest path that is known to
 work; the reasons behind each step are in [PROCESS.md](PROCESS.md) and [history/LEARNED-2026-11-19.md](history/LEARNED-2026-11-19.md).
-The newest numbers and the build log are in [erkam-docs/](erkam-docs/README.md) (Turkish).
+The newest numbers and the build log are in [regerind-docs/](regerind-docs/README.md) (Turkish).
 
 > **This replaces Android on the phone's userdata.** The iOS system and data volumes live in raw `userdata`. Back
 > everything up first. Only `boot` and `misc` are ever flashed; the IMEI partitions (nvram, nvdata, protect1/2,
@@ -118,7 +118,7 @@ For test images (with a 60 s session, a log pulled over serial, scripted touches
 - Redmi logo and nothing else: the loader's fallback. Either you flashed a test image that already ran (rebuild
   under a new tag), or the payload was refused (over 48 MiB, or the boot partition is full).
 - iOS starts, the screen stays still, no touch: backboardd's virtual touch screen; see TOUCH.md.
-- Anything else: [erkam-docs/ACIK-HATALAR.md](erkam-docs/ACIK-HATALAR.md) lists the known open problems.
+- Anything else: [regerind-docs/ACIK-HATALAR.md](regerind-docs/ACIK-HATALAR.md) lists the known open problems.
 
 ## Not verified here
 

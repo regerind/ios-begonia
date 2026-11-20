@@ -47,11 +47,11 @@ goal:    everything ─ Metal ─ HakiosMetal ─ metal2vulkan ─ panvk ─ ker
 
 ## 3. Documentation duties (the owner reads these; write them in **Turkish**)
 
-- Before or as each build starts, add its row to `erkam-docs/BUILD-LOG.md` (tag, time, what changed); fill in the
+- Before or as each build starts, add its row to `regerind-docs/BUILD-LOG.md` (tag, time, what changed); fill in the
   result after reading the log (numbers where possible). Use `date +%H:%M` for the time — do not guess.
-- Open problems → `erkam-docs/ACIK-HATALAR.md`; solved → `erkam-docs/COZULEN-HATALAR.md` (with build, how fixed,
+- Open problems → `regerind-docs/ACIK-HATALAR.md`; solved → `regerind-docs/COZULEN-HATALAR.md` (with build, how fixed,
   how verified, remaining doubt — a "fix" may only hide the symptom; say so).
-- Big root causes → `erkam-docs/NASIL-COZDUK.md`. Commit docs as you go (`git commit`, never push).
+- Big root causes → `regerind-docs/NASIL-COZDUK.md`. Commit docs as you go (`git commit`, never push).
 - Commit message trailer: `Co-Authored-By: <your model> <noreply@anthropic.com>` if your harness requires one.
 
 ---
@@ -211,7 +211,7 @@ the cache has no local symbols. `C:\begonia-private\sh\samples_sym.py LOG TAG` s
    `CAMetalLayer`/drawables are implemented in the frontend (present path, IOSurface-backed drawables, copies).
 6. Get the four screenshots of §1 right; then frame rate; then the seek test.
 7. Handle mediaserverd (§6.3).
-8. Build **p12** (§4.4), write the summary in Turkish in `erkam-docs/` (BUILD-LOG rows, NASIL-COZDUK entry), and
+8. Build **p12** (§4.4), write the summary in Turkish in `regerind-docs/` (BUILD-LOG rows, NASIL-COZDUK entry), and
    tell the owner what changed, what was verified (log / screenshot), and what remains uncertain.
 
 If the single path cannot reach §1 in your session, do not ship a broken p12: leave the GL path as the default,
