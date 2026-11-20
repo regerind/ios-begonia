@@ -325,6 +325,66 @@ sample_window(int w, char hist[NS][4000])
 			samples[p] = 0;
 			continue;
 		}
+		/* y300: backboardd's profile over a whole phase of the session, not a window's top two: the script's swipes (t 36 to
+		 * 57 s: phase A) and what comes after (from 60 s: phase B, the blurred transitions), each the 22 places most often
+		 * running and the 14 most often on the stack, in samples, said again with every window (the log keeps its end). */
+		if (p == 1) {
+			enum { TOT = 400 };
+			static struct { char name[48]; unsigned leaf, in; } tot[2][TOT];
+			static unsigned tot_n[2];
+			int t = w * 3, ph = t >= 36 && t < 57 ? 0 : t >= 60 ? 1 : -1;
+			if (ph >= 0) {
+				tot_n[ph] += samples[p];
+				for (int i = 0; i < SYMS; i++) {
+					struct sym *s = &syms[p][i];
+					if (!s->key || !(s->leaf | s->in)) {
+						continue;
+					}
+					int at = -1, free_at = -1;
+					for (int k = 0; k < TOT; k++) {
+						if (tot[ph][k].name[0] == 0) {
+							free_at = free_at < 0 ? k : free_at;
+							break;
+						}
+						if (strncmp(tot[ph][k].name, s->name, sizeof(s->name)) == 0) {
+							at = k;
+							break;
+						}
+					}
+					if (at < 0 && free_at >= 0) {
+						at = free_at;
+						memcpy(tot[ph][at].name, s->name, sizeof(s->name));
+						tot[ph][at].name[47] = 0;
+					}
+					if (at >= 0) {
+						tot[ph][at].leaf += s->leaf;
+						tot[ph][at].in += s->in;
+					}
+				}
+				for (int pass = 0; pass < 2; pass++) {
+					char out[1500];
+					unsigned char used[TOT];
+					int oo = snprintf(out, sizeof(out), "PROFILE BB %c %s n=%u:", "AB"[ph], pass ? "IN" : "LEAF", tot_n[ph]);
+					memset(used, 0, sizeof(used));
+					for (int k = 0; k < (pass ? 14 : 22); k++) {
+						int best = -1;
+						for (int i = 0; i < TOT && tot[ph][i].name[0]; i++) {
+							unsigned v = pass ? tot[ph][i].in : tot[ph][i].leaf;
+							if (!used[i] && v && (best < 0 || v > (pass ? tot[ph][best].in : tot[ph][best].leaf))) {
+								best = i;
+							}
+						}
+						if (best < 0 || oo > (int)sizeof(out) - 64) {
+							break;
+						}
+						used[best] = 1;
+						oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " %.44s %u;", tot[ph][best].name,
+						    pass ? tot[ph][best].in : tot[ph][best].leaf);
+					}
+					printf("%s\n", out);
+				}
+			}
+		}
 		char line[700], brief[300];
 		int o = snprintf(line, sizeof(line), "t=%d n=%u LEAF", w * 3, samples[p]);
 		int bo = snprintf(brief, sizeof(brief), "t=%d:", w * 3);
