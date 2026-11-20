@@ -70,3 +70,45 @@ Bu belge y249-y288 ölçümlerinin bütününe bakar. Telefon şarjdayken cihaza
   hedefe yazan encoder çifti çok az. API düzeyinde birleştirme kazancı ~0 beklenir; B'yi A'nın arkasına bırakmak doğru.
 - İndexed draw'da kalan 1 compute (indirect helper) CPU'ya alınabilir ama direct yol indeks desteklemiyor (tiler `indices`, vertex aralığı, öznitelik yamaları
   libpan'daki `panlib_patch_draw` mantığı); tahmini kazanç %5-8, çalışma büyük: sonraya.
+
+## 9. Host ölçümü: gerçek Bifrost sayıları ve ilk shader kazancı (2026-11-20, ~20:15, cihaz yok)
+Araç: `tests/bifrost_stats.c` (+ `tests/claim.inc`, `tools/build_bifrost_stats_linux.sh`). CA pipeline anahtarı -> `qc_from_key.py` (metal2vulkan CLI) -> SPIR-V ->
+Mesa'nın `spirv_to_nir` + Bifrost v7 derleyicisi (host), `BIFROST_MESA_DEBUG=shaderdb`. Descriptor'lar kabaca indirgenir: sayılar komut/döngü saymak içindir.
+Sınırlar: 79 anahtarın bir kısmı araçta derlenmiyor (input attachment/framebuffer fetch yolu indirgenmedi), sampler specialization sabitleri varsayılan
+değerde (0) alındı; yani tablo blur ailesi için güvenilir, `fixed_frag` varyantları için değil.
+
+**Bulgu (kök neden, A kaldıracı):** metal2vulkan bir Metal buffer'ını `uint` dizisi olarak okuyor ve ofseti push-constant'tan alıyor: adres = `(pc_kelime & ~3) + sabit`.
+NIR ofsetin 16'nın katı olduğunu bilemiyor, Bifrost her yüklemenin kendi boyutuna hizalı olmasını istiyor (`mem_vectorize_cb`), bu yüzden her float AYRI bir yükleme
+oluyor. 14 örnekli blur'da 22 yükleme var ve shader yükleme (ldst) ile sınırlı:
+
+| Shader | önce (komut / döngü / arith / ldst) | 16 hizalı (0019) |
+|---|---|---|
+| `single_pass_blur_3` (Tsb3) | 142 / 12.0 / 3.5 / 12 | 130 / **6.0** / 3.4 / 6 |
+| `narrow_blur_7` (Tnb7) | 148 / 8.0 / 3.8 / 8 | 142 / **5.0** / 3.8 / 5 |
+| `narrow_blur_27` (Tn27) | 371 / 21.0 / 9.9 / 21 | 345 / **9.6** / 9.6 / 8 |
+| `fixed_frag` Timg (sıradan resim) | 85 / 3.0 / 2.0 / 3 | 85 / 3.0 / 2.0 / 3 (değişmedi) |
+
+Yani en ağır tam ekran shader'larında derleyicinin döngü tahmini 1.6-2.2x düşüyor. Bu derleyici tahmini; cihazdaki süre doku/bellek ile de sınırlı olabilir, ÖLÇÜLMEDİ.
+
+**Yama:** `userland/vulkan/patches/0019-panvk-uniform-loads-16-aligned.patch`. Yalnız fragment shader; yalnız "push-constant kelimesi & ~3 (+ sabit)" kalıbı; yüklemeye
+`align 16` yazılır, Mesa'nın kendi vektörleştiricisi komşuları 16 baytlık tek yüklemeye toplar (adres değişmez). Dayanak: Metal, buffer ofsetinin veri tipine
+hizalı olmasını ister; CA'nın 16 kullandığı VARSAYILDI, kanıtlanmadı. Bu yüzden çizimde denetim var: kelime 16'nın katı değilse `panvk: begonia: buffer offset word
+... not a multiple of 16` satırı basılır (ilk 16). `PANVK_NO_UBO_ALIGN16` ortam değişkeni (boot: `ca_env=PANVK_NO_UBO_ALIGN16`) hepsini kapatır.
+Risk: hizasız ofset gelirse o çizimin uniform'ları yanlış okunabilir (yanlış renk/blur), çökme beklenmez.
+
+## 10. Doku düzeni (kod okuması, cihazda doğrulanmadı)
+- CA'nın kendi dokuları (1082x2244 "own", ara hedefler, ayna dokuları): `VK_IMAGE_TILING_OPTIMAL` -> v7'de U-interleaved (AFBC değil: sRGB ikizli format listesi
+  `MUTABLE_FORMAT` getiriyor, PanVK v7'de bunu AFBC'den dışlıyor).
+- IOSurface dokuları (1080x2340 ekran yüzeyi ve derleyicinin örneklediği uygulama yüzeyleri): dma-buf, açıkça `DRM_FORMAT_MOD_LINEAR`, yerinde. Yani her karede
+  tam ekran LINEAR hedefe çiziliyor ve LINEAR kaynaklardan örnekleniyor. Blur'ların hangisini okuduğu bilinmiyor.
+- Forward pixel kill, shader yazdığı eki okuyorsa kapanıyor; bütün CA pipeline'larında `fc_framebuffer_fetch=1`. CRC/transaction elimination PanVK'da hiç açık değil.
+- Bunları değiştirmek (ekranı kendi U-interleaved dokuya çizip karede bir kez linear yüzeye kopyalamak; own dokularda AFBC) ayrı işler: YAZILMADI.
+
+## 11. Dört katmanlı planın durumu (dürüst döküm)
+| Katman | Durum |
+|---|---|
+| 1. Shader | 0019 yazıldı, host'ta ölçüldü (yukarıda). CA cihaz profili (A9/A10) incelenmedi. half<->float / bölme sadeleştirmeleri yazılmadı. |
+| 2. Pass birleştirme / OPTIMAL yüzey önbelleği / [vertex,tiler] zinciri | Yazılmadı. Pass birleştirme için loglar düşük potansiyel gösteriyor (bölüm 8). |
+| 3. Kare sırası | `fb_queue=2` çekirdekte zaten var (0023 ile birlikte); ayrıca ölçülmedi, yeni kod yok. |
+| 4. Bellek/jetsam, boş kare atlama | Yazılmadı. Kaynak dökümü için y290'ın GPU VA sayacı hâlâ koşulmadı. |
+Host'ta iz yeniden oynatma (trace replay) ve ASan bellek testi YOK: elde yakalanmış kare izi ve Vulkan'ı cihazsız koşturan bir düzenek yok.
