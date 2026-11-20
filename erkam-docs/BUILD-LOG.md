@@ -136,3 +136,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y214 | 11:30 | Ölçüm: y213 kodu + CPU örnekleyici (`proc_cpu_test`): backboardd Metal'de commit başına ~50 ms CPU nerede? | |
 | y215 | 11:35 | Ön yüz: ayna dokuların özeti seyrek ve dönüşümlü (32 KiB'tan büyük dokuda commit başına satırların sekizde biri; değişiklik en geç 8 commit'te görülür). Bugün paneli (`y_script_today4`) + çekim | |
 | y216 | 11:39 | y215 kodu, YouTube (`y_script_youtube`), 80. sn çekim | |
+| y217 | 11:43 | Ölçüm (çekirdek): her 5 sn'nin en yavaş fragment işinin çerçeve arabelleği tanımlayıcısı ham olarak yazdırılıyor (`BEGONIA GPU FBD`), GPU'nun kendi tabloları üzerinden yalnızca okunarak. Soru: tam ekran işler neden 10–24 ms (GL yolunda ≤3 ms)? Denetim Merkezi | |
