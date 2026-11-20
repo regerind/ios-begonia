@@ -670,8 +670,7 @@ static void nbMirrorSync(NBTexture *t) {
   t.mirrorHash=h;t.mirrorFilled=YES;gMirrorUploads++;gMirrorBytes+=rowBytes*rows;
  }
 }
-@implementation NBBuffer (Textures)
-- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d offset:(NSUInteger)offset bytesPerRow:(NSUInteger)row {
+static NBTexture *nbMirrorTexture(NBBuffer *self,MTLTextureDescriptor *d,NSUInteger offset,NSUInteger row) {
  if(nbMirrorOn() && d) {
   const uint32_t texel=nbMirrorTexel(d.pixelFormat);
   const bool plain=d.textureType==MTLTextureType2D && d.mipmapLevelCount<=1 && d.sampleCount<=1 && d.arrayLength<=1 && d.depth<=1;
@@ -687,7 +686,17 @@ static void nbMirrorSync(NBTexture *t) {
   if(gMirrorNot++<8)nbConsole([NSString stringWithFormat:@"tele mirror not: format %lu %lux%lu type %lu levels %lu usage %#lx rows %lu texel %u",
    (unsigned long)d.pixelFormat,(unsigned long)d.width,(unsigned long)d.height,(unsigned long)d.textureType,(unsigned long)d.mipmapLevelCount,(unsigned long)d.usage,(unsigned long)row,texel]);
  }
+ return nil;
+}
+@implementation NBBuffer (Textures)
+- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d offset:(NSUInteger)offset bytesPerRow:(NSUInteger)row {
+ if(NBTexture *mirror=nbMirrorTexture(self,d,offset,row))return (id<MTLTexture>)mirror;
 '''))
+# (y212: CoreAnimation's own bitmaps -- glyphs, masks -- come through the private newLinearTextureWithDescriptor:...,
+# over its newBufferWithBytesNoCopy buffers; one image of one slice is the same texture)
+tele_hooks.append((' NmbTextureDescriptor descriptor;if(!textureDescriptor(d,&descriptor))return nil;\n NmbTexture *handle=nmb_texture_new_linear(',
+ ' if(d && d.depth<=1 && d.arrayLength<=1)if(NBTexture *mirror=nbMirrorTexture(self,d,offset,row))return (id<MTLTexture>)mirror;\n'
+ ' NmbTextureDescriptor descriptor;if(!textureDescriptor(d,&descriptor))return nil;\n NmbTexture *handle=nmb_texture_new_linear('))
 tele_hooks.append((' self.committed=YES;\n self.committedUs=nowUs();\n nbTeleTick();',
  ' self.committed=YES;\n self.committedUs=nowUs();\n nbTeleTick();\n'
  ' if(nbMirrorOn() && !self.encodeFailure)for(id owner in [_resourceOwners copy])if([owner isKindOfClass:[NBTexture class]] && [(NBTexture *)owner mirror])nbMirrorSync((NBTexture *)owner);'))
