@@ -362,6 +362,7 @@ sample_window(int w, char hist[NS][4000])
 {
 	pthread_mutex_lock(&sym_lock);
 	for (int p = 0; p < NS; p++) {
+		if (p == 1 && w % 8 == 0)
 		printf("SAMPLEDBG %s pid %d tfp %d: calls %u threads %u infos %u running %u states %u; kr %x %x %x; samples %u\n",
 		    stag[p], dbg_pid[p], dbg_tfp[p], dbg[p][0], dbg[p][1], dbg[p][2], dbg[p][3], dbg[p][4], dbg_kr[p][0],
 		    dbg_kr[p][1], dbg_kr[p][2], samples[p]);
@@ -377,7 +378,7 @@ sample_window(int w, char hist[NS][4000])
 			enum { TOT = 400 };
 			static struct { char name[48]; unsigned leaf, in; } tot[2][TOT];
 			static unsigned tot_n[2];
-			int t = w * 3, ph = t >= 40 && t < 52 ? 0 : t >= 76 ? 1 : -1;   /* y301's script (its times are about 11 s behind this clock): swipes 34-52, the blurred transitions 54-76 */
+			int t = w * 3, ph = t >= 78 ? 0 : t >= 64 && t < 76 ? 1 : -1;   /* y303: the video and its seeks (B), then the swipes (A) */   /* y301's script (its times are about 11 s behind this clock): swipes 34-52, the blurred transitions 54-76 */
 			if (ph >= 0) {
 				tot_n[ph] += samples[p];
 				for (int i = 0; i < SYMS; i++) {
@@ -491,7 +492,10 @@ sample_window(int w, char hist[NS][4000])
 			strcat(hist[p], " | ");
 			strcat(hist[p], brief);
 		}
-		printf("SAMPLES %s%s\n", stag[p], hist[p]);
+		if (p == 1) {                           /* y303: the window server's alone, its last windows: the log's room */
+			size_t hl = strlen(hist[p]);
+			printf("SAMPLES %s%s\n", stag[p], hist[p] + (hl > 500 ? hl - 500 : 0));
+		}
 		memset(syms[p], 0, sizeof(syms[p]));
 		samples[p] = 0;
 	}
