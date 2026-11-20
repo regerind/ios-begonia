@@ -60,7 +60,12 @@ def build(qemu=False,extents=None,identity=None,touch_firmware=None,data_extents
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
     ]
-    return node('device-tree', root_props, [chosen,node('defaults'),node('options'),cpus,armio,node('pram',[('reg',u64(base+size,0x100000))])]+extra)
+    # begonia (y147): the VM compressor in core, no swap (VM_PAGER_COMPRESSOR_NO_SWAP, as iPhones have it): without it
+    # nothing was compressed and jetsam killed the window server when memory ran short (seeking a YouTube video, y145:
+    # "backboardd status 0x9 reason 1/0x4", VM page shortage); with it ~170 MB were held compressed and nothing was killed.
+    # A boot-arg vm_compressor=N still wins (osfmk/vm/vm_fault.c).
+    defaults=node('defaults',[('kern.vm_compressor',u32(2))])
+    return node('device-tree', root_props, [chosen,defaults,node('options'),cpus,armio,node('pram',[('reg',u64(base+size,0x100000))])]+extra)
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('output',type=pathlib.Path);p.add_argument('--qemu',action='store_true');p.add_argument('--extents',type=pathlib.Path);p.add_argument('--identity',type=pathlib.Path);p.add_argument('--touch-firmware',type=pathlib.Path);p.add_argument('--data-extents',type=pathlib.Path);a=p.parse_args()
     a.output.write_bytes(build(qemu=a.qemu,extents=a.extents.read_bytes() if a.extents else None,identity=a.identity.read_bytes() if a.identity else None,touch_firmware=a.touch_firmware.read_bytes() if a.touch_firmware else None,data_extents=a.data_extents.read_bytes() if a.data_extents else None));print(a.output)
