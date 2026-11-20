@@ -250,3 +250,15 @@ Aşağısı araştırmanın kaydı.
     (dokunuş sayısı değişti, bir koşuda backboardd yeniden başladı) kare hızına etkisi ölçülemedi. Sıradaki: aynı betikle temiz A/B.
   - Küçük geçişler (64x64, 406x34 vb.) çok sayıda: kare başına ~50; her biri en az bir gönderim. Geçiş sayısını azaltmak (CA'nın küçük
     bitmap/glyph geçişlerini birleştirmek) asıl kazanç olabilir.
+
+  Kare kırılımı (y243 geçiş günlüğü + y246 çekirdek istatistiği; ~130 kare, 6793 fragment geçişi, ~50 geçiş/kare):
+  - Geçişlerin %31'i >=3 ms (2120): 1760 tanesi 1080x2340 (2xBGRA8, rt0 yüklü, rt1 temiz+saklanmayan, tile 16x16), 300 tanesi 1622x1525 ara geçiş (4.8 ms).
+    Kare başına ~13 tam ekran geçiş. >=5 ms olanlar kare başına 4.6 (toplam ~48 ms): j126 14.7 ms, j101 13.9, j131 14.0, j238 19-27; 3-5 ms olanlar
+    kare başına 9.1 (~44 ms): j45/j49/j15 ~5 ms, j111 ~3 ms. Tam ekran geçişin sabit maliyeti ~1.5-2 ms (boş geçiş 1-2 ms), üstüne çizimler.
+  - <3 ms geçişler: 4673 (kare başına ~35); GPU süreleri önemsiz, maliyetleri gönderim/uyanma boşluğunda.
+  - Çekirdek: kare başına ~120-128 iş gönderimi, iş başına ~580 us, GPU %50-55 meşgul (kare 143-150 ms, GPU işi ~70-76 ms), kuyrukta 31-44 ms bekleme
+    (y246). Seri koşuda (y243) kuyruk 0.1 ms ama GPU yine %43-46: boşluk kuyruk eksikliği değil, iş başına ~0.5 ms ölü zaman.
+  - PanVK BeginRendering (fragment batch) 9147 / ön uç render encoder R5651 (y231) ~ 1.6x: bir Metal geçişi birden fazla PanVK geçişine bölünüyor
+    olabilir (doğrulanmadı).
+  - Ölçüm sınırı: passtime f değeri bekleme gecikmesini içerir (toplam f 12.5 sn > çekirdeğin GPU süresi ~9 sn).
+  - y247: begonia_gpu_spin=2000 kalıcı kazanç vermedi (7-8 kare/5 sn).
