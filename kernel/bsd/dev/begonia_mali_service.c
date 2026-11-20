@@ -59,15 +59,15 @@ static uint64_t s1_kind_jobs[3],s1_kind_us[3];
 static uint64_t gap_pre,gap_pre_n,gap_between,gap_between_n,gap_last_end;
 /* y285: which process holds the wired memory (callback of proc_iterate: processes with 8 MB wired or 64 MB footprint) */
 extern void proc_iterate(unsigned int flags,int (*callout)(void *,void *),void *arg,int (*filterfn)(void *,void *),void *filterarg);
-extern void *proc_task(void *);extern char *proc_name_address(void *);
+
 extern uint64_t get_task_wired_mem(void *);extern uint64_t get_task_phys_footprint(void *);
 static char memp[360];static unsigned memn;
 static int mem_proc_cb(void *p,void *arg) {
  (void)arg;
- void *t=proc_task(p);
+ void *t=(void *)proc_task((proc_t)p);
  if(!t)return 0;
  uint64_t w=get_task_wired_mem(t)>>20,f=get_task_phys_footprint(t)>>20;
- if((w>=8||f>=64) && memn<sizeof memp-48)memn+=(unsigned)snprintf(memp+memn,sizeof memp-memn," %s[%d] w%lluM f%lluM",proc_name_address(p),proc_pid(p),w,f);
+ if((w>=8||f>=64) && memn<sizeof memp-48){char nm[20];proc_name(proc_pid((proc_t)p),nm,sizeof nm);memn+=(unsigned)snprintf(memp+memn,sizeof memp-memn," %s[%d] w%lluM f%lluM",nm,proc_pid((proc_t)p),w,f);}
  return 0;
 }
 static unsigned mem_min_free=~0u;   /* y282: the fewest free pages seen at any job's end since the last report */
