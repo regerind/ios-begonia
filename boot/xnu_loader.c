@@ -49,7 +49,14 @@ static void zero(void *to,uint64_t n) {
 int xnu_main(void) {
     volatile uint32_t *mark=(volatile uint32_t *)BEGONIA_REQUEST_ADDR;
     uint64_t offset=*(uint64_t *)(_head+40), total=*(uint64_t *)(_head+48);
-    if(offset<0x10000 || total<0x2a8 || total>0x2000000) return 0;
+    /* y312: 48 MiB, not 32: y311's payload was 33 621 560 bytes (y310's 33 216 008) and was turned away here without a
+     * word -- the fallback kernel came up after 20 s and the session's log was the one before. Where the payload lies in
+     * memory and that it fits the boot partition are pack_chain.py's checks; where it is copied to are the ones below.
+     * tools/make_native_payload.py refuses a payload over this limit when it is built (PAYLOAD_LIMIT there). */
+    if(offset<0x10000 || total<0x2a8 || total>0x3000000) {
+        if(total>0x3000000)begonia_emit_text("BEGONIA XNU: payload over 48 MiB; chaining fallback kernel\n");
+        return 0;
+    }
     const struct payload *p=(const struct payload *)(_head+offset);
     const char *magic="SWEETXNU";
     for(int i=0;i<8;i++)if(p->magic[i]!=magic[i])return 0;

@@ -58,4 +58,10 @@ boot_args=align(align(phys+end-virt)+len(blob))
 if align(boot_args+736)>phys+0x08000000:
     a.output.unlink()
     p.error('kernel/support/ADT/boot arguments overlap the loader dummy RAM disk')
+# boot/xnu_loader.c turns a payload over this many bytes away and chains the fallback kernel, without a word in the log
+# of the session (y311: 33 621 560 bytes against the 32 MiB of then; the phone was on the fallback kernel after 20 s).
+PAYLOAD_LIMIT=0x3000000
+if a.output.stat().st_size>PAYLOAD_LIMIT:
+    size=a.output.stat().st_size;a.output.unlink()
+    p.error(f'payload of {size} bytes is over the loader\'s limit of {PAYLOAD_LIMIT} (boot/xnu_loader.c)')
 print('Native file-root payload built, mini support volume mapped as md1.')
