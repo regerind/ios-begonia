@@ -1,0 +1,13 @@
+--- a/src/panfrost/vulkan/panvk_vX_physical_device.c
++++ b/src/panfrost/vulkan/panvk_vX_physical_device.c
+@@ -386,7 +386,9 @@
+       .storagePushConstant8 = true,
+       .shaderBufferInt64Atomics = PAN_ARCH >= 9,
+       .shaderSharedInt64Atomics = PAN_ARCH >= 9,
+-      .shaderFloat16 = PAN_ARCH >= 10,
++      /* begonia: Bifrost v7 (Mali-G76) runs 16-bit float natively; the Metal runtime's translator then does `half`
++       * arithmetic in 16 bits instead of converting every operation through 32 bits. */
++      .shaderFloat16 = PAN_ARCH >= 10 || PAN_ARCH == 7,
+       .shaderInt8 = true,
+       /* In theory, update-after-bind is supported on bifrost, but the
+        * descriptor limits would be too low for the descriptorIndexing feature.
