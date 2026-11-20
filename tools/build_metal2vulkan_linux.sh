@@ -50,7 +50,9 @@ printf '#!/bin/bash\nexec "%s" -arch arm64 -isysroot "%s" "$@"\n' "$CC" "$SDK" >
 # Built for size by default (out/metal2vulkan-target-ios-small): the boot partition has no room for the faster
 # build (y21 did not fit). M2V_FULL=1: the faster one, into out/metal2vulkan-target-ios.
 if [ "${M2V_FULL:-0}" = 1 ]; then T=$R/out/metal2vulkan-target-ios; else
-	T=$R/out/metal2vulkan-target-ios-small${M2V_OPT:+-o$M2V_OPT}
+	# M2V_HOT=1 (y311): the runtime's own crate alone for speed (opt-level 3), everything else still for size: the whole
+	# at 3 is 18.2 MB and does not fit (y308); the runtime's code is where the window server's time is (y307: 31%).
+	T=$R/out/metal2vulkan-target-ios-small${M2V_OPT:+-o$M2V_OPT}${M2V_HOT:+-hot}
 	export CARGO_PROFILE_RELEASE_OPT_LEVEL=${M2V_OPT:-s} CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 fi
 export CARGO_TARGET_DIR=$T SDKROOT=$SDK IPHONEOS_DEPLOYMENT_TARGET=16.5
@@ -58,6 +60,7 @@ export CARGO_TARGET_AARCH64_APPLE_IOS_LINKER=$linker CC_aarch64_apple_ios=$linke
 export RUSTFLAGS=-Dwarnings M2V_INSTALL_NAME=@rpath/libmetal2vulkan.dylib M2V_RUNTIME_ID=begonia-720ef1ce-s9-2d092398-dba02deb
 echo "m2v: building (log: $R/out/metal2vulkan-ios-bridge-build.log)"
 "$CARGO_HOME/bin/cargo" build --manifest-path "$bridge/Cargo.toml" --target aarch64-apple-ios --release \
+	${M2V_HOT:+--config profile.release.package.metal2vulkan-runtime.opt-level=3} \
 	> "$R/out/metal2vulkan-ios-bridge-build.log" 2>&1 ||
 	{ grep -E "^error" -A12 "$R/out/metal2vulkan-ios-bridge-build.log" | head -60; exit 1; }
 lib=$CARGO_TARGET_DIR/aarch64-apple-ios/release/libmetal2vulkan_bridge.dylib
