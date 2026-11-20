@@ -740,10 +740,10 @@ tele_hooks.append((' unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeL
  ' gTelePasses=16;\n unsigned kinds;{std::lock_guard<std::mutex> lock(gTelePipeLock);kinds=(unsigned)gTelePipes.size();}\n nbConsole([NSString stringWithFormat:@"tele X pipes'))
 # (y221, an experiment: boot-arg metal_nodraw=1 -- the window server's draws are dropped, its passes kept: what a
 # full-screen pass costs with nothing drawn in it. The screen stays as the passes clear it.)
-tele_hooks.append(('static void completed(void *context);\nstatic void scheduled(void *context);\n',
- 'static void completed(void *context);\nstatic void scheduled(void *context);\n'
+tele_hooks.append(('@interface NBRenderEncoder : NBEncoder\n',
  'static bool nbNoDraw() {\n static int on=-1;\n if(on<0){char args[1024]="";size_t size=sizeof(args)-1;\n'
- '  on=strcmp(getprogname(),"backboardd")==0 && sysctlbyname("kern.bootargs",args,&size,NULL,0)==0 && strstr(args,"metal_nodraw=1")!=NULL;}\n return on;\n}\n'))
+ '  on=strcmp(getprogname(),"backboardd")==0 && sysctlbyname("kern.bootargs",args,&size,NULL,0)==0 && strstr(args,"metal_nodraw=1")!=NULL;}\n return on;\n}\n'
+ '@interface NBRenderEncoder : NBEncoder\n'))
 tele_hooks.append((' if(self.stub)return;\n gDraws++;self.commandBuffer->encodedWork.draws++;\n [self check:nmb_render_draw(',
  ' if(self.stub || nbNoDraw())return;\n gDraws++;self.commandBuffer->encodedWork.draws++;\n [self check:nmb_render_draw('))
 tele_hooks.append((' if(self.stub)return;\n if(![(id)b isKindOfClass:[NBBuffer class]]){[self.commandBuffer refuse:@"foreign index buffer"];return;}',
