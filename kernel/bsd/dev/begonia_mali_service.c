@@ -903,7 +903,7 @@ bool hakios_mali_wait(uint64_t seq,uint64_t timeout) {
   uint64_t now=mach_absolute_time(),ns=0;
   if(show_last)absolutetime_to_nanoseconds(now-show_last,&ns);
   show_last=now;
-  if(ns)show_gaps[ns<=20000000ull?0:ns<=36000000ull?1:ns<=52000000ull?2:3]++;
+  if(ns>2000000ull)show_gaps[ns<=20000000ull?0:ns<=36000000ull?1:ns<=52000000ull?2:3]++;
  }
  if(!hakios_mali_ready())return false;
  if(async_jobs && timeout && seq>__atomic_load_n(&completed,__ATOMIC_ACQUIRE)) {
