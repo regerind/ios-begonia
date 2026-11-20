@@ -134,6 +134,17 @@ ya da onay gerekiyor). En üstteki en önemlisi.
   (y163, 0054 açık) kaydırıcı var. Kayıp büyük olasılıkla o kuruluma özgü.
 - **Durum:** gözleniyor (doğru kurulumda görülmedi). Kullanıcı elle görürse yeniden açılır.
 
+## 10e. Bugün panelinde widget köşelerinde renkli işaretler
+- **Belirti (y177, otomasyonla ilk kez açılan Bugün paneli):** Her widget'ın köşelerinde küçük renkli L işaretleri:
+  sol üst yeşil, sağ üst mavi, sağ alt kırmızı, sol alt beyaz. Yuvarlatılmış köşenin dışında kalan, saydam olması
+  gereken pikseller renkli çiziliyor gibi.
+- **Elenenler:** köprü 0054 (y178, kapalıyken de var), maske yüzeyi paylaşımı (y179, `glmask=0`), opaklık dokularının
+  kırmızı okunması (y180, `glalpha=0`), SpringBoard'ın Metal yolu (y181, SpringBoard Metal istemcisi değilken de var).
+- **Şüphe:** İşaretler widget görüntülerinin kendisinde olabilir (chronod ve widget uzantılarının çizdiği yüzeyler), ya
+  da köşeleri dört kanalda tutan bir maske dokusunun yanlış biçimde (renk olarak) okunması.
+- **Durum:** açık. Sıradaki: widget uzantılarını Metal listesinden çıkarmak; köşe çizen çağrının izini almak
+  (`gltrace_place` ile köşe bölgesi).
+
 ## 11. Diğerleri
 - **Bluetooth:** Denetleyici canlı (WMT açık, HCI reset OK); iOS tarafı yok. Kullanıcı tarafından hiç denenmedi;
   büyük ihtimalle çalışmıyor.
