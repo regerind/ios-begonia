@@ -31,10 +31,8 @@ ya da onay gerekiyor). En üstteki en önemlisi.
 - **Durum:** inceleniyor (y107'de kullanıcı güç tuşuyla bir kez kilitleyip açacak).
 
 ## 2. Videoda ileri/geri sarınca donma, SpringBoard çökmesi
-- **Belirti:** YouTube (Safari) videosunda sarınca telefon kilitleniyor, SpringBoard çöküyor; bir kez çökmeden video
-  kapandı ve devam etmedi.
-- **Kanıt:** Henüz yakalanmadı; çökme 1 dakikalık oturumun dışında kaldı.
-- **Durum:** inceleniyor.
+- **Çözüldü sayılıyor (y146–y148)**, ayrıntı [COZULEN-HATALAR.md](COZULEN-HATALAR.md)'de: jetsam belleği tükenen
+  sistemde backboardd'yi öldürüyordu; bellek sıkıştırıcı açıldı. Kullanıcının elle doğrulaması bekleniyor.
 
 ## 3. YouTube kontrol katmanı (overlay) hızla yanıp sönüyor
 - **Belirti:** Dokununca kontroller görünüp kayboluyor, çok hızlı; altyazı açıkken de öyle. Kullanıcı tam ekran
