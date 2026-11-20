@@ -1,0 +1,324 @@
+--- a/crates/metal2vulkan-runtime/src/compressed_blit.rs
++++ b/crates/metal2vulkan-runtime/src/compressed_blit.rs
+@@ -418,6 +418,7 @@
+                         std::slice::from_ref(set),
+                         &[],
+                     );
++                    crate::begonia_disp(0);
+                     device.cmd_dispatch(raw, *groups, 1, 1);
+                 }
+             }
+--- a/crates/metal2vulkan-runtime/src/depth_copy.rs
++++ b/crates/metal2vulkan-runtime/src/depth_copy.rs
+@@ -550,6 +550,7 @@
+         device.cmd_bind_pipeline(raw, compute, self.kernel.pipeline);
+         device.cmd_bind_descriptor_sets(raw, compute, self.kernel.layout, 0, &[self.set], &[]);
+         let [x, y, z] = self.groups;
++        crate::begonia_disp(1);
+         device.cmd_dispatch(raw, x, y, z);
+     }
+ }
+--- a/crates/metal2vulkan-runtime/src/device/prime.rs
++++ b/crates/metal2vulkan-runtime/src/device/prime.rs
+@@ -919,6 +919,7 @@
+             self.made(Call::CmdBindDescriptorSets);
+             device.cmd_push_constants(recorded, layout, vk::ShaderStageFlags::COMPUTE, 0, &[0; 4]);
+             self.made(Call::CmdPushConstants);
++            crate::begonia_disp(2);
+             device.cmd_dispatch(recorded, 1, 1, 1);
+             self.made(Call::CmdDispatch);
+             // An emulated mesh command's dispatch from its scan's arguments.
+--- a/crates/metal2vulkan-runtime/src/generated_execute.rs
++++ b/crates/metal2vulkan-runtime/src/generated_execute.rs
+@@ -596,6 +596,7 @@
+                 &push,
+             );
+             let [x, y, z] = group_count;
++            crate::begonia_disp(3);
+             raw.cmd_dispatch(command_buffer, x, y, z);
+         }
+     });
+--- a/crates/metal2vulkan-runtime/src/index_bounds.rs
++++ b/crates/metal2vulkan-runtime/src/index_bounds.rs
+@@ -400,6 +400,7 @@
+         // command buffer completes, and the fill's dispatch arguments lie in the words, which the
+         // plan writes before the barrier between the two.
+         unsafe {
++            crate::begonia_disp(4);
+             raw.cmd_dispatch(command_buffer, 1, 1, 1);
+             Barrier::everything().record(raw, command_buffer);
+         }
+--- a/crates/metal2vulkan-runtime/src/index_rewrite.rs
++++ b/crates/metal2vulkan-runtime/src/index_rewrite.rs
+@@ -469,6 +469,7 @@
+                     sets,
+                     &[],
+                 );
++                crate::begonia_disp(5);
+                 raw.cmd_dispatch(command_buffer, phase.workgroups(&self.pass), 1, 1);
+             }
+         }
+--- a/crates/metal2vulkan-runtime/src/linear_merge.rs
++++ b/crates/metal2vulkan-runtime/src/linear_merge.rs
+@@ -401,6 +401,7 @@
+                     0,
+                     &dispatch.shape,
+                 );
++                crate::begonia_disp(6);
+                 device.cmd_dispatch(raw, dispatch.groups, 1, 1);
+             }
+         }
+--- a/crates/metal2vulkan-runtime/src/mipmap_filter.rs
++++ b/crates/metal2vulkan-runtime/src/mipmap_filter.rs
+@@ -308,6 +308,7 @@
+                         std::slice::from_ref(set),
+                         &[],
+                     );
++                    crate::begonia_disp(7);
+                     device.cmd_dispatch(command_buffer, *x, *y, 1);
+                     Barrier::everything().record(device, command_buffer);
+                 }
+--- a/crates/metal2vulkan-runtime/src/pending_dispatch.rs
++++ b/crates/metal2vulkan-runtime/src/pending_dispatch.rs
+@@ -112,6 +112,7 @@
+                     ),
+                     (None, None) => {
+                         let [x, y, z] = *groups;
++                        crate::begonia_disp(8);
+                         raw.cmd_dispatch(command_buffer, x, y, z);
+                     }
+                 }
+--- a/crates/metal2vulkan-runtime/src/predication.rs
++++ b/crates/metal2vulkan-runtime/src/predication.rs
+@@ -695,6 +695,7 @@
+                     0,
+                     &push,
+                 );
++                crate::begonia_disp(9);
+                 raw.cmd_dispatch(command_buffer, 1, 1, 1);
+                 Barrier::between_dispatches().record(raw, command_buffer);
+             }
+--- a/crates/metal2vulkan-runtime/src/render/capture.rs
++++ b/crates/metal2vulkan-runtime/src/render/capture.rs
+@@ -580,6 +580,7 @@
+                             std::slice::from_ref(set),
+                             &[],
+                         );
++                        crate::begonia_disp(10);
+                         raw.cmd_dispatch(command_buffer, groups, 1, 1);
+                     }
+                     Barrier::everything().record(raw, command_buffer);
+--- a/crates/metal2vulkan-runtime/src/render/extended_shadow.rs
++++ b/crates/metal2vulkan-runtime/src/render/extended_shadow.rs
+@@ -361,6 +361,7 @@
+                     device.cmd_bind_pipeline(raw, compute, kernel.pipeline);
+                     device.cmd_bind_descriptor_sets(raw, compute, kernel.layout, 0, &[*set], &[]);
+                     let [x, y] = *groups;
++                    crate::begonia_disp(11);
+                     device.cmd_dispatch(raw, x, y, 1);
+                 }
+             }
+--- a/crates/metal2vulkan-runtime/src/render/mesh.rs
++++ b/crates/metal2vulkan-runtime/src/render/mesh.rs
+@@ -746,6 +746,7 @@
+             bind(pipeline.raw);
+             // SAFETY: as the caller states.
+             unsafe {
++                crate::begonia_disp(12);
+                 raw.cmd_dispatch(command_buffer, *x, *y, *z);
+                 Barrier::everything().record(raw, command_buffer);
+             }
+@@ -762,6 +763,7 @@
+                     &scan.sets,
+                     &[],
+                 );
++                crate::begonia_disp(13);
+                 raw.cmd_dispatch(command_buffer, 1, 1, 1);
+                 Barrier::everything().record(raw, command_buffer);
+             }
+--- a/crates/metal2vulkan-runtime/src/render/tile_dispatch.rs
++++ b/crates/metal2vulkan-runtime/src/render/tile_dispatch.rs
+@@ -238,6 +238,7 @@
+                 for (stages, offset, bytes) in push {
+                     raw.cmd_push_constants(command_buffer, self.layout, *stages, *offset, bytes);
+                 }
++                crate::begonia_disp(14);
+                 raw.cmd_dispatch(command_buffer, *x, *y, *z);
+             }
+             Barrier::everything().record(raw, command_buffer);
+--- a/crates/metal2vulkan-runtime/src/render/unused_bits_load.rs
++++ b/crates/metal2vulkan-runtime/src/render/unused_bits_load.rs
+@@ -626,6 +626,7 @@
+                     std::slice::from_ref(set),
+                     &[],
+                 );
++                crate::begonia_disp(15);
+                 raw.cmd_dispatch(command_buffer, *groups, 1, 1);
+                 Barrier::everything().record(raw, command_buffer);
+                 copies.back(raw, command_buffer, raw_scratch, b);
+--- a/crates/metal2vulkan-runtime/src/rotated.rs
++++ b/crates/metal2vulkan-runtime/src/rotated.rs
+@@ -348,6 +348,7 @@
+                 &[set],
+                 &[],
+             );
++            crate::begonia_disp(16);
+             device.cmd_dispatch(command_buffer, step.groups[0], step.groups[1], 1);
+             Barrier::everything().record(device, command_buffer);
+             if into {
+--- a/crates/metal2vulkan-runtime/src/sample_interleave.rs
++++ b/crates/metal2vulkan-runtime/src/sample_interleave.rs
+@@ -1173,6 +1173,7 @@
+                             &[],
+                         );
+                         let [x, y, z] = *groups;
++                        crate::begonia_disp(17);
+                         raw.cmd_dispatch(command_buffer, x, y, z);
+                     }
+                     Recorded::Merge {
+--- a/crates/metal2vulkan-runtime/src/sample_planes.rs
++++ b/crates/metal2vulkan-runtime/src/sample_planes.rs
+@@ -1234,6 +1234,7 @@
+                         &[],
+                     );
+                     let [x, y, z] = *groups;
++                    crate::begonia_disp(18);
+                     raw.cmd_dispatch(command_buffer, x, y, z);
+                 }
+                 Recorded::Merge {
+--- a/crates/metal2vulkan-runtime/src/shadow_merge.rs
++++ b/crates/metal2vulkan-runtime/src/shadow_merge.rs
+@@ -293,6 +293,7 @@
+                     0,
+                     &shape,
+                 );
++                crate::begonia_disp(19);
+                 device.cmd_dispatch(command_buffer, groups, 1, 1);
+             }
+             Barrier::everything().record(device, command_buffer);
+--- a/crates/metal2vulkan-runtime/src/stencil_copy.rs
++++ b/crates/metal2vulkan-runtime/src/stencil_copy.rs
+@@ -952,6 +952,7 @@
+             &[],
+         );
+         let groups = [width.div_ceil(local), height.div_ceil(local), self.samples];
++        crate::begonia_disp(20);
+         device.cmd_dispatch(raw, groups[0], groups[1], groups[2]);
+     }
+ 
+--- a/crates/metal2vulkan-runtime/src/texture/decoded_twin.rs
++++ b/crates/metal2vulkan-runtime/src/texture/decoded_twin.rs
+@@ -956,6 +956,7 @@
+                 let set = std::slice::from_ref(&step.set);
+                 device.cmd_bind_descriptor_sets(raw, compute, self.layout, 0, set, &[]);
+                 let [x, y, z] = step.groups;
++                crate::begonia_disp(21);
+                 device.cmd_dispatch(raw, x, y, z);
+                 Barrier::everything().record(device, raw);
+                 let texels = std::slice::from_ref(&step.texels);
+--- a/crates/metal2vulkan-runtime/src/texture/heap_tiled.rs
++++ b/crates/metal2vulkan-runtime/src/texture/heap_tiled.rs
+@@ -1353,6 +1353,7 @@
+                 &[set],
+                 &[],
+             );
++            crate::begonia_disp(22);
+             device.cmd_dispatch(command_buffer, step.groups[0], step.groups[1], 1);
+             Barrier::everything().record(device, command_buffer);
+         }
+--- a/crates/metal2vulkan-runtime/src/texture/heap_two_planes.rs
++++ b/crates/metal2vulkan-runtime/src/texture/heap_two_planes.rs
+@@ -331,6 +331,7 @@
+                 &[set],
+                 &[],
+             );
++            crate::begonia_disp(23);
+             device.cmd_dispatch(command_buffer, step.groups[0], step.groups[1], 1);
+             Barrier::everything().record(device, command_buffer);
+             if into {
+--- a/crates/metal2vulkan-runtime/src/two_planes.rs
++++ b/crates/metal2vulkan-runtime/src/two_planes.rs
+@@ -413,6 +413,7 @@
+                             std::slice::from_ref(set),
+                             &[],
+                         );
++                        crate::begonia_disp(24);
+                         device.cmd_dispatch(command_buffer, *groups, 1, 1);
+                         if into_texture {
+                             Barrier::everything().record(device, command_buffer);
+@@ -723,6 +724,7 @@
+                         std::slice::from_ref(set),
+                         &[],
+                     );
++                    crate::begonia_disp(25);
+                     device.cmd_dispatch(command_buffer, *groups, 1, 1);
+                 }
+                 Barrier::everything().record(device, command_buffer);
+--- a/crates/metal2vulkan-runtime/src/two_planes/heap_bytes.rs
++++ b/crates/metal2vulkan-runtime/src/two_planes/heap_bytes.rs
+@@ -409,6 +409,7 @@
+                         std::slice::from_ref(set),
+                         &[],
+                     );
++                    crate::begonia_disp(26);
+                     device.cmd_dispatch(command_buffer, *groups, 1, 1);
+                 }
+                 Barrier::everything().record(device, command_buffer);
+--- a/crates/metal2vulkan-runtime/src/visibility.rs
++++ b/crates/metal2vulkan-runtime/src/visibility.rs
+@@ -1021,6 +1021,7 @@
+                             std::slice::from_ref(set),
+                             &[],
+                         );
++                        crate::begonia_disp(27);
+                         raw.cmd_dispatch(command_buffer, groups, 1, 1);
+                     }
+                 }
+--- a/crates/metal2vulkan-runtime/src/ycbcr.rs
++++ b/crates/metal2vulkan-runtime/src/ycbcr.rs
+@@ -572,6 +572,7 @@
+                 &self.sets.sets,
+                 &[],
+             );
++            crate::begonia_disp(28);
+             device.cmd_dispatch(command_buffer, self.groups[0], self.groups[1], 1);
+         }
+     }
+@@ -741,6 +742,7 @@
+                 &self.sets.sets,
+                 &[],
+             );
++            crate::begonia_disp(29);
+             device.cmd_dispatch(command_buffer, self.groups[0], self.groups[1], 1);
+             Barrier::everything().record(device, command_buffer);
+             device.cmd_copy_buffer(command_buffer, staging, source, &self.back);
+--- a/crates/metal2vulkan-runtime/src/lib.rs
++++ b/crates/metal2vulkan-runtime/src/lib.rs
+@@ -327,3 +327,11 @@
+ pub(crate) fn begonia_site(which: usize) {
+     BEGONIA_SITES[which].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+ }
++
++/// begonia: how often each `cmd_dispatch` site ran (printed with the encoder line, `render.rs`).
++pub(crate) static BEGONIA_DISP: [std::sync::atomic::AtomicU64; 64] =
++    [const { std::sync::atomic::AtomicU64::new(0) }; 64];
++
++pub(crate) fn begonia_disp(which: usize) {
++    BEGONIA_DISP[which].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++}
+--- a/crates/metal2vulkan-runtime/src/render.rs
++++ b/crates/metal2vulkan-runtime/src/render.rs
+@@ -3111,6 +3111,13 @@
+                         DRAWS.load(Relaxed),
+                         crate::BEGONIA_SITES.iter().map(|s| s.load(Relaxed)).collect::<Vec<_>>()
+                     );
++                    let disp: Vec<(usize, u64)> = crate::BEGONIA_DISP
++                        .iter()
++                        .enumerate()
++                        .map(|(i, s)| (i, s.load(Relaxed)))
++                        .filter(|&(_, c)| c > 0)
++                        .collect();
++                    let _ = writeln!(console, "m2v: disp sites {disp:?}");
+                 }
+             }
+         }
