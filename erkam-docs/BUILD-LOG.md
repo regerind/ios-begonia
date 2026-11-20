@@ -204,3 +204,4 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y281 | 19:09 | kernel: BEGONIA MEM (serbest/aktif/pasif/wired sayfa) 5 sn'de bir: backboardd jetsam öldürmesi (ACIK-HATALAR 2b) için bellek eğilimi; seek betiği (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
 | y282 | 19:13 | kernel: en düşük serbest sayfa (MEM LOW notu), seek betiği; jetsam öldürmesi avı (ACIK-HATALAR 2b) tekrar 282 (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
 | y283 | 19:17 | kernel: en düşük serbest sayfa (MEM LOW notu), seek betiği; jetsam öldürmesi avı (ACIK-HATALAR 2b) tekrar 283 (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
+| y284 | 19:20 | kernel: en düşük serbest sayfa (MEM LOW notu), seek betiği; jetsam öldürmesi avı (ACIK-HATALAR 2b) tekrar 284 (`metal_tele=1 fb_gpuseq=1 metal_swapwait=0`) | |
