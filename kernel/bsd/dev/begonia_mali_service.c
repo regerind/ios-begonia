@@ -279,6 +279,76 @@ void hakios_mali_tag(uint64_t address,uint32_t kind,uint32_t width,uint32_t heig
  uint32_t format,uint32_t offset) {
  (void)address;(void)kind;(void)width;(void)height;(void)row;(void)format;(void)offset;
 }
+/*
+ * y292: the GPU's own counters (PRFCNT), boot-arg begonia_prfcnt=1. Where a pixel job's time goes is not seen from
+ * outside: cycles its cores execute, quads, texture stalls, beats read from and written to memory outside the GPU's
+ * caches. A page of the kernel is mapped for the GPU; between jobs (the GPU idle, this thread alone at its registers),
+ * at most five times a second, the counters are sampled into it, added up here and cleared. Said with the 5-second
+ * statistics: blocks J (job manager), T (tiler), M (MMU and L2), S (the shader cores, summed), 64 words each, the first
+ * four a header. Three samples that never complete turn it off.
+ */
+static uint32_t prf_on;static vm_offset_t prf_page;static uint64_t prf_phys,prf_va,prf_last;static int prf_state;
+static uint64_t prf_sum[4][64];static uint32_t prf_samples,prf_bad;
+static void prf_program(void) {
+ wr(0x68,0);
+ wr(0x60,(uint32_t)prf_va);wr(0x64,(uint32_t)(prf_va>>32));
+ wr(0x6c,0xffffffff);wr(0x70,0xffffffff);wr(0x7c,0xffffffff);wr(0x74,0xffffffff);
+ wr(0x68,1);
+ wr(0x30,3);
+}
+static void prf_start(void) {
+ prf_state=-1;
+ if(!PE_parse_boot_argn("begonia_prfcnt",&prf_on,sizeof prf_on) || !prf_on)return;
+ if(kmem_alloc(kernel_map,&prf_page,PAGE_SIZE,KMA_KOBJECT|KMA_ZERO|KMA_DATA,VM_KERN_MEMORY_DIAG)!=KERN_SUCCESS)return;
+ prf_phys=kvtophys(prf_page);
+ if(prf_phys<0x100000000ull || prf_phys>=0x1b7e00000ull){begonia_perf_note("BEGONIA GPU PRFCNT: page at %llx, not used",prf_phys);return;}
+ prf_va=mali_va_alloc(&addresses,4096,false);
+ if(!prf_va)return;
+ lck_mtx_lock(vm_lock);
+ int err=beg_gpu_vm_map(&space,prf_va,prf_phys);
+ flush_tables();
+ lck_mtx_unlock(vm_lock);
+ if(err){begonia_perf_note("BEGONIA GPU PRFCNT: map failed %d",err);return;}
+ prf_program();
+ prf_state=1;
+ begonia_perf_note("BEGONIA GPU PRFCNT: on, va %llx pa %llx",prf_va,prf_phys);
+}
+static void prf_sample(void) {
+ if(!prf_state)prf_start();
+ if(prf_state!=1)return;
+ uint64_t now=mach_absolute_time(),ns;
+ absolutetime_to_nanoseconds(now-prf_last,&ns);
+ if(prf_last && ns<200000000ull)return;
+ prf_last=now;
+ if((rd(0x68)&15)!=1){prf_program();return;}     /* after a reset of the GPU */
+ FlushPoC_DcacheRegion(prf_page,4096);
+ wr(0x24,1u<<16);
+ wr(0x30,4);
+ unsigned i;
+ for(i=0;i<2000;i++){if(rd(0x20)&(1u<<16))break;delay(5);}
+ wr(0x24,1u<<16);
+ if(i==2000) {
+  if(++prf_bad>=3){prf_state=-1;wr(0x68,0);begonia_perf_note("BEGONIA GPU PRFCNT: a sample never completed; off");}
+  return;
+ }
+ FlushPoC_DcacheRegion(prf_page,4096);
+ const volatile uint32_t *w=(const volatile uint32_t *)prf_page;
+ for(unsigned b=0;b<7;b++)for(unsigned c=0;c<64;c++)prf_sum[b<3?b:3][c]+=w[b*64+c];
+ prf_samples++;
+ wr(0x30,3);
+}
+static void prf_say(void) {
+ if(prf_state!=1 || !prf_samples)return;
+ static const char names[4]={'J','T','M','S'};
+ for(unsigned b=0;b<4;b++)for(unsigned c=4;c<64;c+=12) {
+  const uint64_t *v=prf_sum[b]+c;
+  printf("BEGONIA PRF %c%02u n%u: %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",names[b],c,prf_samples,
+   v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10],v[11]);
+ }
+ printf("BEGONIA PRF EN: J %llx T %llx M %llx S %llx\n",prf_sum[0][2],prf_sum[1][2],prf_sum[2][2],prf_sum[3][2]);
+ for(unsigned b=0;b<4;b++)for(unsigned c=0;c<64;c++)prf_sum[b][c]=0;
+ prf_samples=0;
+}
 static void say_submitters(void);
 static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queued,unsigned depth) {
  uint64_t took=ended-began,ns;
@@ -348,6 +418,12 @@ static void job_stats(uint64_t began,uint64_t ended,bool fragment,uint64_t queue
      for(int i=0;i<8;i++)if(va_proc[i].net>=(1<<20) && o<(int)sizeof(line)-50)
       o+=snprintf(line+o,sizeof(line)-o," %s[%d] %lld MB;",va_proc[i].name,va_proc[i].pid,(long long)(va_proc[i].net>>20));
      printf("%s\n",line); } }
+ { /* y292: what the pages are: file-backed and anonymous pageable ones, and what the compressor holds */
+   extern unsigned int vm_page_pageable_internal_count,vm_page_pageable_external_count;extern int32_t c_segment_pages_compressed;
+   printf("BEGONIA MEM KINDS: pageable anonymous %u, file-backed %u, held compressed %d (pages of 16 KB)
+",
+    vm_page_pageable_internal_count,vm_page_pageable_external_count,c_segment_pages_compressed); }
+ prf_say();
  for(unsigned k=0;k<16;k++)s1_types[k]=0;s1_chain_len_sum=0;
  for(unsigned k=0;k<3;k++)s1_kind_jobs[k]=s1_kind_us[k]=0;
  stat_jobs=stat_fragment=stat_busy=stat_longest=stat_waited=stat_deepest=0;stat_since=ended;
@@ -429,6 +505,7 @@ static int run_job(uint64_t chain,bool fragment,uint64_t seq,uint64_t queued,uns
  { uint64_t ended=mach_absolute_time();gap_last_end=ended;{extern unsigned int vm_page_free_count;unsigned f=vm_page_free_count;if(f<mem_min_free)mem_min_free=f;}if(fragment && success)note_slow(chain,ended-began);
    if(!fragment && success){unsigned k=chain_kind(chain);uint64_t us;absolutetime_to_nanoseconds(ended-began,&us);s1_kind_jobs[k]++;s1_kind_us[k]+=us/1000;}
    job_stats(began,ended,fragment,queued,depth); }
+ prf_sample();
  return success;
 }
 /*
