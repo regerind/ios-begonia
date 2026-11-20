@@ -432,12 +432,10 @@ static void prf_say(unsigned slice) {
   printf("BEGONIA PRF P s%u n%u blk%llx g%llu j%llu/%llu c%llu ta%llu f%llu q%llu x%llu i%llu t%llu l%llu F%llu L%llu T%llu/%llu W%llu R%llu a%llu h%llu/%llu/%llu/%llu/%llu w%llu ws%llu",
   slice,prf_samples,present,j[6]>>20,j[10]>>20,j[18]>>20,j[63]>>10,t[4]>>20,s[4]>>20,s[11]>>20,s[26]>>20,s[28]>>20,s[43]>>20,
   (s[44]+s[45])>>20,s[55]>>20,s[57]>>20,s[58]>>20,s[59]>>20,s[62]>>20,m[32]>>20,m[33]>>20,m[37]>>10,m[38]>>10,m[39]>>10,
-  m[40]>>10,m[41]>>10,m[47]>>20,m[48]>>20);printf("
-");
+  m[40]>>10,m[41]>>10,m[47]>>20,m[48]>>20);printf("%c",10);
  /* kept, in thousands: slot 0 jobs(1), waits flush/read/issue/depend/finish; slot 1 the same; compute active */
   printf("BEGONIA PRF W s%u js0 %llu %llu/%llu/%llu/%llu/%llu js1 %llu %llu/%llu/%llu/%llu/%llu ca%llu",slice,j[8],j[11]>>10,j[12]>>10,j[13]>>10,
-  j[14]>>10,j[15]>>10,j[16],j[19]>>10,j[20]>>10,j[21]>>10,j[22]>>10,j[23]>>10,s[22]>>10);printf("
-");
+  j[14]>>10,j[15]>>10,j[16],j[19]>>10,j[20]>>10,j[21]>>10,j[22]>>10,j[23]>>10,s[22]>>10);printf("%c",10);
  static const char names[4]={'J','T','M','S'};
  for(unsigned b=0;b<4;b++)for(unsigned c=4;c<64;c+=12) {
   const uint64_t *v=(b<3?prf_sum[b]:s)+c;
