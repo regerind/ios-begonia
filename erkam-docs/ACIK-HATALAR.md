@@ -353,3 +353,23 @@ Aşağısı araştırmanın kaydı.
   oturum bitmeden koşmadı; jetsam (2b) bu ayarla sınanmadı, bellek tarafında değişiklik yok (YCbCr atlama videoda her kare değiştiği için devreye girmez).
 - **Etkisiz çıkanlar (ölçüldü):** mipmap'leri blit ile üretmek (kaydırmada mip isteği yok denecek kadar az), 0020 INTERSECT, iki slotta eşleme.
 - Kapatma: önyükleme argümanı `beg_old=1` dört kazancı da kapatır (p14 davranışı).
+
+### Üçüncü tur (y300-y305, 2026-11-20 gece) ve p16
+- **İlk kullanım takılması: büyük ölçüde ÇÖZÜLDÜ (log ile).** Neden: backboardd'de oturum başına 89-108 render pipeline durumu, toplam 5.3-7.8 sn
+  (ortalama 60-72 ms, en uzun 125-146 ms), çizen iş parçacığında; ~%85'i Metal->SPIR-V çevirisi. Çalışma zamanının disk önbelleği vardı ama dizini
+  kalıcı bir yerde değildi (isabet 0). Dizin veri bölümüne alındı (ön yüz): y303/y304'te 580 kayıtla açıldı, isabet 52-73 / ıska 0-2, toplam
+  0.27-0.58 sn. Kalan şüphe: tek bir 146 ms'lik üretim (y303); yeni bir çalışma zamanı ikilisinde önbellek baştan dolar (ilk açılış yine yavaş).
+  Kullanıcı doğrulaması bekleniyor (p16).
+- **Blur'lu geçişler:** GPU'da pahalı değil (Ayarlar açılışında meşguliyet %2-22; mip üretimi 5 sn'de 11-15 ms). Takılma o geçişte ilk kez gereken
+  pipeline'ların üretimiydi; önbellekle birlikte düzelmesi beklenir, ayrıca ölçülmedi.
+- **Kaydırma: AÇIK (~27 fps, backboardd %96-103 CPU).** y304 profili (2494 örnek): çekirdek mesajları %15.8, `-[NBCommandBuffer commit]` içindeki ayna
+  dokusu özeti %8.3, dosya çağrıları %2.6, ayırıcı ~%3.6 (dağınık). Çekirdek sayımı: her commit'te ekran yüzeyi dokusu yeniden içe aktarılıp kapatılıyor
+  (5 sn'de surface 512-540 çağrı / 340-355 ms, close 256-270 / 48-50 ms, ~800 bin sayfa eşleme); iş gönderimi kare başına ~7.7.
+  Hazır ama ÖLÇÜLMEMİŞ iki inceltme ön yüzde duruyor (`beg_thin=1`): son 6 yüzey içe aktarmasını tutmak; yüklenmiş ayna dokusunu her ikinci commit'te
+  denetlemek. y305'te `--quartzcore` çöktüğü için etkileri görülemedi.
+- **`--quartzcore`: ÇÖKÜYOR.** Yama adresi doğru (host'ta ve cihazda doğrulandı), pipeline kütüphanesi açılıyor; sonra Apple'ın Metal çatısı kendi içinde
+  abort ediyor (yığın BUILD-LOG y305). Kullanılabilmesi için o doğrulamanın ne istediği bulunmalı.
+- **Videoda ileri sarınca 0.5-1 fps (kullanıcı, p15):** dört koşuda da betik yüzünden ölçülemedi (oturum betik saatiyle ~86 sn'de bitiyor, YouTube'un
+  yüklenmesi ~24 sn). AÇIK, nedeni bilinmiyor.
+- **Etkisiz / yanlış çıkanlar:** çekirdekte tampon yeniden kullanımı (`beg_park`: kare başına eşlenen 12.7 MB sürücünün tamponu değil, içe aktarılan
+  yüzey); mip-blit (kaydırmada mip isteği yok).
