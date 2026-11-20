@@ -60,3 +60,13 @@ Bu belge y249-y288 ölçümlerinin bütününe bakar. Telefon şarjdayken cihaza
 2. Sonuca göre: en ağır CA shader'larında (instr/cycle) çeviri sadeleştirmesi; ya da pass birleştirme.
 3. Jetsam: `fb_queue=1` ve yüzey sayısı denemesi; backboardd belleğinin dökümü.
 4. C ve E kapandı (bkz. tablo): tek Metal hattı, sıra A -> D -> B.
+
+## 8. Shader dağılımı (offline çeviri, 79 farklı CA pipeline anahtarı)
+- Ortalama gövde komutu 146 (SPIR-V, specialization katlanmadan önce). Ağır aile: **blur çekirdekleri**: `Tn27` 1263 komut (14 doku örneği, tap başına ~90),
+  `Tsb3` 461, `Tnb7` 445, `Tds4` 424, `Tmua` 391, `Timg` 278; hafif aileler 30-60 komut. Ağır tam ekran pass'lerin (12-19 ms) bu blur shader'ları olması çok olası.
+- **Dikkat:** sampler/doku bayrakları SPIR-V'de specialization constant (`OpSpecConstant`, `OpSelect` ~219 adet Tn27'de); PanVK/NIR bunları pipeline derlemesinde
+  katlıyor. Yani SPIR-V komut sayısı Bifrost komut sayısı DEĞİL (spirv-opt -O yalnız 126 -> 118). Gerçek sayı için `bifrost_debug=shaderdb` (y290) gerekli.
+- **Pass birleştirme (B) düşük potansiyel:** komut buffer'larında ekran pass'leri arasında hep farklı hedefli pass var (1082x2244 "own" ve 64x64), yani art arda aynı
+  hedefe yazan encoder çifti çok az. API düzeyinde birleştirme kazancı ~0 beklenir; B'yi A'nın arkasına bırakmak doğru.
+- İndexed draw'da kalan 1 compute (indirect helper) CPU'ya alınabilir ama direct yol indeks desteklemiyor (tiler `indices`, vertex aralığı, öznitelik yamaları
+  libpan'daki `panlib_patch_draw` mantığı); tahmini kazanç %5-8, çalışma büyük: sonraya.
