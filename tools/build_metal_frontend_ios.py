@@ -1036,6 +1036,34 @@ assert mtext.count(old)==1
 mtext=mtext.replace(old,old+' {static int nw=-1;if(nw<0){char args[1024]="";size_t size=sizeof(args)-1;\n'
  '   nw=strcmp(getprogname(),"backboardd")==0 && sysctlbyname("kern.bootargs",args,&size,NULL,0)==0 && strstr(args,"beg_nw=1")!=NULL;}\n'
  '  if(nw && planes>=2){refuseSurface(9,surface,d,plane,0,0);return nil;}}\n')
+# begonia (y308): the window server's committing thread (CoreAnimation's display thread: 82% of a processor, the limit of
+# the frame rate, y306/y307) onto an A76. XNU has every core as the same kind here, so a thread runs wherever there is
+# room, mostly on an A55 (kernel/bsd/dev/begonia_perf.c); the GL bridge bound its drawing thread to processor 6
+# (userland/patches/0006, gl_cpu), but with the window server on Metal that thread draws nothing and nobody bound the
+# one that does. Boot-args: beg_cpu=N (6; -1: not bound), beg_cps=1: bound in the odd 5 s of uptime only (a measurement).
+old='static int begThin(void);\nstatic void nbMirrorSync(NBTexture *t) {\n'
+assert mtext.count(old)==1
+mtext=mtext.replace(old,'static void begBindCpu(void) {\n'
+ ' static int mode=-2,cpu=6;static thread_local int now=-100;\n'
+ ' if(mode==-2){char args[1024]="";size_t size=sizeof(args)-1;int m=-1;\n'
+ '  if(strcmp(getprogname(),"backboardd")==0){m=0;\n'
+ '   if(sysctlbyname("kern.bootargs",args,&size,NULL,0)==0){const char *a=strstr(args,"beg_cpu=");if(a)cpu=atoi(a+8);if(strstr(args,"beg_cps=1"))m=1;}}\n'
+ '  mode=m;}\n'
+ ' if(mode<0)return;\n'
+ ' int want=cpu;\n'
+ ' if(mode==1){struct timespec ts;clock_gettime(CLOCK_UPTIME_RAW,&ts);if(!((ts.tv_sec/5)&1))want=-1;}\n'
+ ' if(want==now)return;\n'
+ ' char line[200]="";size_t n=sizeof(line)-1;\n'
+ ' static std::atomic<unsigned> said{0};\n'
+ ' const bool say=said++<6;\n'
+ ' if(say)sysctlbyname("kern.begonia_clocks",line,&n,NULL,0);\n'
+ ' int32_t v=want;const int failed=sysctlbyname("kern.begonia_bind_cpu",NULL,NULL,&v,sizeof(v));\n'
+ ' now=want;\n'
+ ' if(say)nbConsole([NSString stringWithFormat:@"tele cpu: the committing thread was on: %s; now bound to %d (%s)",line,want,failed?"refused":"ok"]);\n'
+ '}\n'+old)
+old=' if(nbMirrorOn() && !self.encodeFailure)for(id owner in [_resourceOwners copy])'
+assert mtext.count(old)==1
+mtext=mtext.replace(old,' begBindCpu();\n'+old)
 if '#include <time.h>' not in mtext:mtext=mtext.replace('#include <atomic>\n','#include <atomic>\n#include <time.h>\n',1)
 
 frontend = mtext
