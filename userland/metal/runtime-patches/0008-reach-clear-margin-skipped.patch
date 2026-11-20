@@ -1,0 +1,26 @@
+--- a/crates/metal2vulkan-runtime/src/clear_reach.rs
++++ b/crates/metal2vulkan-runtime/src/clear_reach.rs
+@@ -550,6 +550,23 @@
+                     }
+                 }
+             }
++            // begonia: in a pass with a draw call the clear reaches past the render area by the rounding up
++            // to whole tiles alone (under TILE pixels a side). Metal clears those texels, which no program
++            // can count on holding anything else; here the pass's own load-operation clear covers the render
++            // area (free on a tile renderer) and the margin is left, where a pass of its own would load and
++            // store the whole attachment for it (a full-screen target: 10 MB read and written, two barriers
++            // around it).
++            if tiles.is_none()
++                && called
++                && color.planes.is_none()
++                && !left_out.contains(&(index as u32))
++                && extent[0] >= area[0]
++                && extent[1] >= area[1]
++                && extent[0] - area[0] < TILE
++                && extent[1] - area[1] < TILE
++            {
++                continue;
++            }
+             let rects = tiles.map_or_else(|| vec![rect(extent)], |t| t.rects(extent));
+             let (pass, framebuffer, made) =
+                 render_target::reach_pass(device, &color.target, false, extent)?;
