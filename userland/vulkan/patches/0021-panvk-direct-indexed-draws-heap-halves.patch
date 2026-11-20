@@ -1,0 +1,126 @@
+--- a/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
++++ b/src/panfrost/vulkan/jm/panvk_vX_cmd_draw.c
+@@ -10,6 +10,7 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#include <time.h>
+ #include "genxml/gen_macros.h"
+ 
+ #include "panvk_buffer.h"
+@@ -91,9 +92,36 @@
+    } indirect_info;
+ };
+ 
++/* begonia: marks a draw data's indexed draw as direct (in info.indirect.stride, which a direct draw does not use) */
++#define BEGONIA_DIRECT_INDEXED 0xd12ec7ed
++
++/* begonia: PANVK_DIRECT: indexed draws directly; PANVK_DIRECT_SLICES: not in every fourth 5-second slice of the time
++ * since boot (a measurement: the slice's number modulo 4 is 0). */
++static bool
++begonia_direct_indexed(void)
++{
++   static int mode = -1;
++   if (mode < 0)
++      mode = getenv("PANVK_DIRECT_SLICES") ? 2 : getenv("PANVK_DIRECT") ? 1 : 0;
++   if (mode == 2) {
++      struct timespec ts;
++#ifdef __APPLE__
++      clock_gettime(CLOCK_UPTIME_RAW, &ts);
++#else
++      clock_gettime(CLOCK_MONOTONIC, &ts);
++#endif
++      return ((ts.tv_sec / 5) & 3) != 0;
++   }
++   return mode == 1;
++}
++
+ static bool
+ is_indirect_draw(const struct panvk_draw_data *draw)
+ {
++   /* begonia: an indexed draw whose lowest and highest index are known here is drawn directly (CmdDrawIndexed) */
++   if (draw->info.indirect.stride == BEGONIA_DIRECT_INDEXED)
++      return false;
++
+    return draw->info.indirect.buffer_dev_addr != 0 ||
+           draw->info.index.index_size != 0;
+ }
+@@ -411,6 +439,31 @@
+    if (result != VK_SUCCESS)
+       return result;
+ 
++   /* begonia: PANVK_HALVES: consecutive batches begin their polygon lists in the tiler heap's two halves in turn (every
++    * batch began at the heap's start, so a batch's tiler could not run while the batch before it was still drawn from
++    * its lists). The kernel's service reads the heap's base of a pixel job and of the chain behind it and runs them at
++    * once where they differ. Done once a batch: its template still has the whole heap. */
++   {
++      static int halves = -1;
++      static uint32_t batches;
++      struct panvk_device *dev = to_panvk_device(cmdbuf->vk.base.device);
++      const uint64_t whole = pan_kmod_bo_size(dev->tiler_heap->bo);
++      if (halves < 0)
++         halves = getenv("PANVK_HALVES") != NULL;
++      pan_unpack(&batch->tiler.heap_templ, TILER_HEAP, heap);
++      if (halves && batch->tiler.heap_desc.cpu && heap.size == whole) {
++         const uint64_t half = whole / 2;
++         const uint64_t at = dev->tiler_heap->addr.dev + (p_atomic_inc_return(&batches) & 1) * half;
++         pan_pack(&batch->tiler.heap_templ, TILER_HEAP, cfg) {
++            cfg.size = half;
++            cfg.base = at;
++            cfg.bottom = at;
++            cfg.top = at + half;
++         }
++         memcpy(batch->tiler.heap_desc.cpu, &batch->tiler.heap_templ, sizeof(batch->tiler.heap_templ));
++      }
++   }
++
+    draw->tiler_ctx = &batch->tiler.ctx;
+    return VK_SUCCESS;
+ }
+@@ -953,6 +1006,14 @@
+       /* In case of indirect draw, the descriptor will be patched at runtime */
+       cfg.index_count = is_indirect_draw(draw) ? 1 : draw->info.vertex.count;
+ 
++      /* begonia: what the draw helper's job writes for an indexed draw (libpan/draw_helper.cl, panlib_patch_draw) */
++      if (draw->info.index.index_size && !is_indirect_draw(draw)) {
++         cfg.indices = draw->info.index.buffer_dev_addr +
++                       (uint64_t)draw->info.index.offset * draw->info.index.index_size;
++         cfg.base_vertex_offset =
++            (int64_t)draw->info.vertex.base - draw->info.vertex.raw_offset;
++      }
++
+       cfg.low_depth_cull = cfg.high_depth_cull =
+          vk_rasterization_state_depth_clip_enable(rs);
+ 
+@@ -1918,6 +1979,31 @@
+       },
+    };
+ 
++   /* begonia: with the lowest and highest index known (found above on the CPU) nothing of the draw is left for the GPU
++    * to work out: drawn directly, as a draw without indices is, with the vertex job over the indices' range and the
++    * tiler reading the indices. No helper job (a compute job a draw), and no varyings in the device's one buffer for
++    * indirect draws. */
++   if (draw.cpu_minmax.valid && begonia_direct_indexed()) {
++      const uint32_t range = draw.cpu_minmax.max - draw.cpu_minmax.min + 1;
++      struct panvk_draw_data direct = {
++         .info = {
++            .index = panvk_draw_info_index(cmdbuf, firstIndex),
++            .vertex.base = vertexOffset,
++            .vertex.raw_offset = (int32_t)draw.cpu_minmax.min + vertexOffset,
++            .vertex.count = indexCount,
++            .instance.base = firstInstance,
++            .instance.count = instanceCount,
++            .indirect.stride = BEGONIA_DIRECT_INDEXED,
++            .prim = panvk_get_client_prim(cmdbuf),
++         },
++         .vertex_range = range,
++         .padded_vertex_count = padded_vertex_count(cmdbuf, range, instanceCount),
++      };
++
++      panvk_cmd_draw(cmdbuf, &direct);
++      return;
++   }
++
+    panvk_cmd_draw_indirect(cmdbuf, &draw);
+ }
+ 

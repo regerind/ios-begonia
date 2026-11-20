@@ -633,6 +633,34 @@ static bool draws_only(uint64_t chain) {
  lck_mtx_unlock(vm_lock);
  return tiler && !chain;
 }
+/* The tiler heap's base a pixel job reads its polygon lists from (its framebuffer descriptor's tiler context: +56; the
+ * context's heap: +24; the heap's base: +8) and the one a chain's first tiler job writes them to (its tiler context:
+ * +72). The pair runs at once only where both are known and differ -- which a PanVK with PANVK_HALVES arranges for
+ * consecutive batches and nothing else does -- or the pixel job has no lists at all. vm_lock taken here. */
+static uint64_t word64(uint64_t va) {
+ uint64_t at=va?beg_gpu_vm_translate(&space,va):0;
+ return at?(ml_phys_read_word_64(at)|((uint64_t)ml_phys_read_word_64(at+4)<<32)):0;
+}
+static bool heaps_differ(uint64_t fchain,uint64_t vchain) {
+ uint64_t fbase=0,vbase=0;bool lists=false;
+ lck_mtx_lock(vm_lock);
+ uint64_t fbd=word64(fchain+40)&~63ull,ctx=fbd?word64(fbd+56):0,heap=ctx?word64(ctx+24):0;
+ lists=ctx!=0;
+ fbase=heap?word64(heap+8):0;
+ for(unsigned n=0;vchain && n<96 && !vbase;n++) {
+  uint64_t at=beg_gpu_vm_translate(&space,vchain);
+  if(!at)break;
+  if(((ml_phys_read_word_64(at+16)>>1)&0x7f)==7) {
+   ctx=word64(vchain+72);heap=ctx?word64(ctx+24):0;vbase=heap?word64(heap+8):0;
+   break;
+  }
+  vchain=ml_phys_read_word_64(at+24)|((uint64_t)ml_phys_read_word_64(at+28)<<32);
+ }
+ lck_mtx_unlock(vm_lock);
+ if(!vbase)return false;
+ if(!lists)return true;
+ return fbase && fbase!=vbase;
+}
 static void start_slot(unsigned slot,uint64_t chain,uint32_t config) {
  unsigned base=0x1800+slot*0x80;
  wr(base+0x40,(uint32_t)chain);wr(base+0x44,(uint32_t)(chain>>32));
@@ -711,7 +739,8 @@ static void job_thread(void *argument,wait_result_t result) {
    bool fragment2=queue[(queue_head+1)%JOB_QUEUE].fragment;uint64_t queued2=queue[(queue_head+1)%JOB_QUEUE].queued;
    bool may=queue[(queue_head+1)%JOB_QUEUE].halves || queue[(queue_head+1)%JOB_QUEUE].pid!=queue[queue_head%JOB_QUEUE].pid;
    lck_mtx_unlock(queue_lock);
-   if(!fragment2 && may && draws_only(chain2)) {
+   (void)may;
+   if(!fragment2 && draws_only(chain2) && heaps_differ(chain,chain2)) {
     paired=true;
     success=run_pair(chain,seq,queued,chain2,seq2,queued2,depth);
     seq=seq2;
