@@ -96,7 +96,7 @@
      /// The planes it converts, and the bytes of their buffer they lie in.
      pub(super) fn source(&self) -> (YCbCrPlanes, Range<u64>) {
          (self.source.0, self.source.1.clone())
-@@ -544,6 +616,46 @@
+@@ -544,6 +616,48 @@
          command_buffer: vk::CommandBuffer,
          source: vk::Buffer,
      ) {
@@ -135,8 +135,10 @@
 +            let converted = BEGONIA_YCBCR[1].fetch_add(1, Relaxed) + 1;
 +            if converted % 64 == 0 {
 +                eprintln!(
-+                    "m2v: begonia: ycbcr conversions recorded {converted}, not recorded (bytes unchanged) {}",
-+                    BEGONIA_YCBCR[0].load(Relaxed)
++                    "m2v: begonia: ycbcr conversions recorded {converted}, not recorded (bytes unchanged) {}; this one: groups {:?}, {} bytes of planes",
++                    BEGONIA_YCBCR[0].load(Relaxed),
++                    self.groups,
++                    self.source.1.end - self.source.1.start
 +                );
 +            }
 +        }
@@ -157,7 +159,7 @@
              source: ShadowSource::Converted {
 --- a/crates/metal2vulkan-runtime/src/mipmap_filter.rs
 +++ b/crates/metal2vulkan-runtime/src/mipmap_filter.rs
-@@ -85,6 +85,16 @@
+@@ -85,6 +85,27 @@
          ) {
              return Ok(false);
          }
@@ -167,7 +169,18 @@
 +        // blur at every frame.
 +        {
 +            static CELL: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-+            if super::ycbcr::begonia_switch(&CELL, "M2V_MIPBLIT", 2) {
++            static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++            let calls = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
++            let blit = super::ycbcr::begonia_switch(&CELL, "M2V_MIPBLIT", 2);
++            if calls % 128 == 0 {
++                eprintln!(
++                    "m2v: begonia: mipmaps asked {calls} times; this one: {:?} {:?}, {} levels, by blit {blit}",
++                    record.pixel_format,
++                    record.extent(),
++                    record.level_count
++                );
++            }
++            if blit {
 +                return Ok(false);
 +            }
 +        }
