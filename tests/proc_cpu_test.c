@@ -171,6 +171,50 @@ sym_of(int p, uint64_t pc)
 	return NULL;
 }
 
+/* y302: backboardd's samples that are in mach_msg2_trap (y299, y301: its most frequent place, a tenth to a fifth of its
+ * running samples) by who called: the four callers above the message's own functions, by phase (the window sets it). */
+enum { MSGS = 96 };
+static struct { char key[150]; unsigned n; } msgs[2][MSGS];
+static volatile int msg_phase = -1;
+static struct sym *sym_of(int p, uint64_t pc);
+static void
+msg_callers(int p, const uint64_t *pcs, int n)
+{
+	int ph = msg_phase;
+	if (p != 1 || ph < 0 || n < 3) {
+		return;
+	}
+	struct sym *leaf = sym_of(p, pcs[0]);
+	if (leaf == NULL || strncmp(leaf->name, "mach_msg2_trap", 14) != 0) {
+		return;
+	}
+	char key[150];
+	int o = 0, took = 0;
+	key[0] = 0;
+	for (int i = 1; i < n && took < 4; i++) {
+		struct sym *s = sym_of(p, pcs[i]);
+		if (s == NULL || strncmp(s->name, "mach_msg", 8) == 0) {
+			continue;
+		}
+		o += snprintf(key + o, sizeof(key) - (size_t)o, "%s%.34s", took ? "<" : "", s->name);
+		took++;
+		if (o > (int)sizeof(key) - 40) {
+			break;
+		}
+	}
+	for (int k = 0; k < MSGS; k++) {
+		if (msgs[ph][k].key[0] == 0) {
+			memcpy(msgs[ph][k].key, key, sizeof(key));
+			msgs[ph][k].n = 1;
+			return;
+		}
+		if (strcmp(msgs[ph][k].key, key) == 0) {
+			msgs[ph][k].n++;
+			return;
+		}
+	}
+}
+
 static void
 sample_task(int p, task_t task)
 {
@@ -233,6 +277,7 @@ sample_task(int p, task_t task)
 		}
 		pthread_mutex_lock(&sym_lock);
 		samples[p]++;
+		msg_callers(p, pcs, n);
 		const void *seen[13];
 		int ns = 0;
 		for (int i = 0; i < n; i++) {
@@ -332,7 +377,7 @@ sample_window(int w, char hist[NS][4000])
 			enum { TOT = 400 };
 			static struct { char name[48]; unsigned leaf, in; } tot[2][TOT];
 			static unsigned tot_n[2];
-			int t = w * 3, ph = t >= 46 && t < 64 ? 0 : t >= 65 && t < 90 ? 1 : -1;   /* y301's script (its times are about 11 s behind this clock): swipes 34-52, the blurred transitions 54-76 */
+			int t = w * 3, ph = t >= 40 && t < 52 ? 0 : t >= 76 ? 1 : -1;   /* y301's script (its times are about 11 s behind this clock): swipes 34-52, the blurred transitions 54-76 */
 			if (ph >= 0) {
 				tot_n[ph] += samples[p];
 				for (int i = 0; i < SYMS; i++) {
@@ -361,16 +406,22 @@ sample_window(int w, char hist[NS][4000])
 						tot[ph][at].in += s->in;
 					}
 				}
+			}
+			msg_phase = ph;
+			for (int say = 0; say < 2; say++) {
+				if (!tot_n[say]) {
+					continue;
+				}
 				for (int pass = 0; pass < 2; pass++) {
 					char out[1500];
 					unsigned char used[TOT];
-					int oo = snprintf(out, sizeof(out), "PROFILE BB %c %s n=%u:", "AB"[ph], pass ? "IN" : "LEAF", tot_n[ph]);
+					int oo = snprintf(out, sizeof(out), "PROFILE BB %c %s n=%u:", "AB"[say], pass ? "IN" : "LEAF", tot_n[say]);
 					memset(used, 0, sizeof(used));
 					for (int k = 0; k < (pass ? 14 : 22); k++) {
 						int best = -1;
-						for (int i = 0; i < TOT && tot[ph][i].name[0]; i++) {
-							unsigned v = pass ? tot[ph][i].in : tot[ph][i].leaf;
-							if (!used[i] && v && (best < 0 || v > (pass ? tot[ph][best].in : tot[ph][best].leaf))) {
+						for (int i = 0; i < TOT && tot[say][i].name[0]; i++) {
+							unsigned v = pass ? tot[say][i].in : tot[say][i].leaf;
+							if (!used[i] && v && (best < 0 || v > (pass ? tot[say][best].in : tot[say][best].leaf))) {
 								best = i;
 							}
 						}
@@ -378,11 +429,31 @@ sample_window(int w, char hist[NS][4000])
 							break;
 						}
 						used[best] = 1;
-						oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " %.44s %u;", tot[ph][best].name,
-						    pass ? tot[ph][best].in : tot[ph][best].leaf);
+						oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " %.44s %u;", tot[say][best].name,
+						    pass ? tot[say][best].in : tot[say][best].leaf);
 					}
-					printf("%s\n", out);
+					printf("%s
+", out);
 				}
+				char out[1500];
+				unsigned char used[MSGS];
+				int oo = snprintf(out, sizeof(out), "PROFILE BB %c MSG:", "AB"[say]);
+				memset(used, 0, sizeof(used));
+				for (int k = 0; k < 9; k++) {
+					int best = -1;
+					for (int i = 0; i < MSGS && msgs[say][i].key[0]; i++) {
+						if (!used[i] && (best < 0 || msgs[say][i].n > msgs[say][best].n)) {
+							best = i;
+						}
+					}
+					if (best < 0 || oo > (int)sizeof(out) - 170) {
+						break;
+					}
+					used[best] = 1;
+					oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " [%s] %u;", msgs[say][best].key, msgs[say][best].n);
+				}
+				printf("%s
+", out);
 			}
 		}
 		char line[700], brief[300];
