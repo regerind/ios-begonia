@@ -65,4 +65,5 @@ Her build bir satır. **Sonuç** sütunu oturum bitince doldurulur. y94'ten önc
 | y147 | 05:1x | y146 + profiler (her 3 sn sıkıştırıcı modu ve tuttuğu MB) | Sıkıştırıcı mod 2'de çalışıyor: YouTube başlayınca 33 → 169 MB sıkıştırılmış tutuldu; hiç "exit" yok. Kalıcı yapıldı: cihaz ağacında `/defaults kern.vm_compressor = 2` |
 | y148 | 05:2x | Boot argümanı olmadan (cihaz ağacından) sıkıştırıcı; sarma testi + profiler | Cihaz ağacından çalışıyor (mod 2), panik yok, hiç "exit" yok. Kareler yarısı 20–22 ms |
 | p8 | 03:27 | Kalıcı imaj adayı: p7 + sıkıştırıcı (cihaz ağacı). **Flaşlanmadı**; p7'nin yerine | SHA256 fd831ed1…1d3e |
-| y149 | 03:3x | Bugün paneli: 76. sn ortadan sağa kaydırma (0,3 → 0,9, 350 ms), 80. sn çekim; sıkıştırıcı açık | (sonuç bekleniyor) |
+| y149 | 03:3x | Bugün paneli: 76. sn ortadan sağa kaydırma (0,3 → 0,9, 350 ms), 80. sn çekim; sıkıştırıcı açık | Bugün paneli açılmadı (ilk sayfa); otomatik sağa kaydırma işlemiyor |
+| y150 | 03:4x | Bugün paneli: 76. sn yavaş sürükleme (0,1 → 0,95, 600 ms), 80. sn çekim | (sonuç bekleniyor) |
