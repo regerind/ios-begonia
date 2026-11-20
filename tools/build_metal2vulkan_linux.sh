@@ -50,8 +50,8 @@ printf '#!/bin/bash\nexec "%s" -arch arm64 -isysroot "%s" "$@"\n' "$CC" "$SDK" >
 # Built for size by default (out/metal2vulkan-target-ios-small): the boot partition has no room for the faster
 # build (y21 did not fit). M2V_FULL=1: the faster one, into out/metal2vulkan-target-ios.
 if [ "${M2V_FULL:-0}" = 1 ]; then T=$R/out/metal2vulkan-target-ios; else
-	T=$R/out/metal2vulkan-target-ios-small
-	export CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+	T=$R/out/metal2vulkan-target-ios-small${M2V_OPT:+-o$M2V_OPT}
+	export CARGO_PROFILE_RELEASE_OPT_LEVEL=${M2V_OPT:-s} CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 fi
 export CARGO_TARGET_DIR=$T SDKROOT=$SDK IPHONEOS_DEPLOYMENT_TARGET=16.5
 export CARGO_TARGET_AARCH64_APPLE_IOS_LINKER=$linker CC_aarch64_apple_ios=$linker AR_aarch64_apple_ios=llvm-ar
