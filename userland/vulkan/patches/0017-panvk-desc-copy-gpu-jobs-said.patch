@@ -1,0 +1,17 @@
+--- a/src/panfrost/vulkan/bifrost/panvk_vX_meta_desc_copy.c
++++ b/src/panfrost/vulkan/bifrost/panvk_vX_meta_desc_copy.c
+@@ -579,6 +579,14 @@
+                               attrib_buf_idx_offset))
+       return VK_SUCCESS;
+ 
++   {
++      /* begonia: copy jobs that still go to the GPU (the CPU copy refused or off), said with the CPU copy's counters */
++      static unsigned gpu_jobs;
++      if ((++gpu_jobs & 1023) == 1 && getenv("PANVK_CPU_DESC_COPY_STATS"))
++         fprintf(stderr, "panvk desc copy on the GPU: %u jobs so far (stage with %u descriptors)\n", gpu_jobs,
++                 copy_info.desc_copy.limits[PANVK_BIFROST_DESC_TABLE_COUNT - 1]);
++   }
++
+    uint64_t desc_copy_rsd = panvk_meta_desc_copy_rsd(dev);
+    if (!desc_copy_rsd)
+       return VK_ERROR_OUT_OF_DEVICE_MEMORY;
