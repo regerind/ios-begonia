@@ -384,7 +384,7 @@ threads_of(int pid, struct thr *s)
 }
 
 #define MAXP 1024
-struct proc { int pid; uint64_t t; char name[32]; };
+struct proc { int pid; uint64_t t, s; char name[32]; };   /* s: of t, in the kernel (y172) */
 
 static int
 take(struct proc *p)
@@ -398,6 +398,7 @@ take(struct proc *p)
 		}
 		p[k].pid = pids[i];
 		p[k].t = ti.pti_total_user + ti.pti_total_system;   /* mach absolute time units */
+		p[k].s = ti.pti_total_system;
 		p[k].name[0] = 0;
 		proc_name(pids[i], p[k].name, sizeof(p[k].name));
 		k++;
@@ -492,17 +493,19 @@ main(int argc, char **argv)
 		}
 		/* the top five of this window */
 		int top[5] = { -1, -1, -1, -1, -1 };
-		double pct[MAXP];
+		double pct[MAXP], kpct[MAXP];
 		double all = 0;
 		for (int j = 0; j < nb; j++) {
-			uint64_t before = b[j].t;               /* new process: counted from now */
+			uint64_t before = b[j].t, sbefore = b[j].s;     /* new process: counted from now */
 			for (int i = 0; i < na; i++) {
 				if (a[i].pid == b[j].pid) {
 					before = a[i].t;
+					sbefore = a[i].s;
 				}
 			}
 			double ns = (double)(b[j].t - before) * tbase.numer / tbase.denom;
 			pct[j] = 100.0 * ns / 3e9;
+			kpct[j] = 100.0 * (double)(b[j].s - sbefore) * tbase.numer / tbase.denom / 3e9;
 			all += pct[j];
 			for (int s = 0; s < 5; s++) {
 				if (top[s] < 0 || pct[j] > pct[top[s]]) {
@@ -526,7 +529,9 @@ main(int argc, char **argv)
 		    (unsigned long long)(vmbytes >> 20));
 		for (int s = 0; s < 5 && top[s] >= 0; s++) {
 			if (pct[top[s]] >= 2.0) {
-				o += snprintf(line + o, sizeof(line) - (size_t)o, " %s %.0f%%;", b[top[s]].name, pct[top[s]]);
+				/* (y172: and how much of it in the kernel, "kN": WebKit.Networking at 86-111% in y171) */
+				o += snprintf(line + o, sizeof(line) - (size_t)o, " %s %.0f%% k%.0f;", b[top[s]].name, pct[top[s]],
+				    kpct[top[s]]);
 			}
 		}
 		(void)0;
