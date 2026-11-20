@@ -166,3 +166,17 @@ instance sayısı), 0006 (her render-pass başlangıç noktası sayacı), 0007 (
 **Kalan şüphe:** Metal payı temizler, biz bırakıyoruz; payın içeriği hiçbir program tarafından sayılamaz ama atlas gibi alt-dikdörtgen
 çizimlerinde komşu texel'ler artık temizlenmiyor (Metal'de siliniyordu). Resim şu ana kadar bozulmadı; Today/YouTube doğrulaması sürüyor.
 Not: m2v konsol satırları her satır iki kez iç içe basılıyor ("33283328" = 3328).
+
+## CPU ve GPU sırayla çalışıyordu: swap beklemesi çekirdeğe taşındı (2026-11-20, y260-y267)
+**Sorun:** Metal yolunda GPU hep ~%50 meşguldü (iş başına ~640 us "ölü zaman"). Kernel tanılaması (BEGONIA GPU GAPS): iş öncesi hazırlık
+6-8 us, kuyruk doluyken işler arası 54-183 us (toplam ~0.2-0.7 sn/5 sn); asıl boşluk (~2.3 sn/5 sn) kuyruk BOŞKEN: GPU iş bekliyor.
+**Kök neden:** ön yüz (build_metal_frontend_ios.py, y205) backboardd'de çizim yapan command buffer'ın GPU'da TAMAMLANMASINI waitUntilScheduled
+içinde CPU'da bekliyordu (siyah kare önlemek için: çekirdek swap'ı GPU bitmeden gösteriyordu çünkü Metal yolu yüzeyi "çizildi" diye
+işaretlemiyor). Sonuç: CPU bir sonraki kareyi ancak GPU bitince kodlamaya başlıyor, CPU süresi + GPU süresi toplanıyor.
+**Çözüm:** `patches/0023-framebuffer-wait-for-gpu-seq.patch` (boot-arg `fb_gpuseq=1`): SwapEnd'de çekirdek GPU servisinin son iş numarasını
+(`hakios_mali_submitted_seq`, kernel/bsd/dev/begonia_mali_service.c) alır; ekran sürücüsünün sunum iş parçacığı o numaraya kadar
+bekleyip kareyi gösterir (SWAP_GPU_MS=500). Ön yüzün CPU beklemesi `metal_swapwait=0` ile kapatılır (zaten vardı). İkisi birlikte kullanılmalı.
+**Doğrulama:** log + resim. Seek betiği (aynı betik, y263 -> y264): 5 sn de 33-41 -> 57-60 kare (6-8 -> 11-12 fps), GPU meşgul %50 -> %75-84.
+YouTube (y256 -> y266): 44-56 -> 55-67 kare, GPU %85. Control Center (y265), YouTube (y266), Today (y267) resimleri doğru, "shown as it is" yok.
+**Kalan şüphe:** swap'ın beklediği numara SwapEnd anındaki global son iş; başka bir sürecin (WebKit) işleri de beklenir (sıralı kuyruk, zarar yok
+ama gecikme). Süreç dışında yüzey işaretlemesi yapılmadı. Sürücü GPU'ya 500 ms'den fazla cevap vermezse kare "olduğu gibi" gösterilir.

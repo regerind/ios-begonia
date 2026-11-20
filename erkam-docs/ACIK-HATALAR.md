@@ -285,3 +285,5 @@ Aşağısı araştırmanın kaydı.
     bindirmek (servis şu an her işi tek tek bitirip sonrakini veriyor) kör bir değişiklikle GÜVENLİ DEĞİL: compute işi önceki fragment
     çıktısını okuyabilir. Slot 1 süresi ~810-850 ms/5 sn (%17), fragment ~1.7 sn (%35), GPU %50 meşgul. İş dışı zaman iş başına ~640 us.
     y262 bu boşluğun iş öncesi hazırlıkta mı, işler arası döngüde mi olduğunu ölçüyor.
+  - **Güncelleme (y264-y267):** CPU/GPU sıralılığı giderildi (`fb_gpuseq=1 metal_swapwait=0`, bkz. NASIL-COZDUK). Seek betiği 6-8 -> 11-12 fps, YouTube
+    ~11-13 fps. GPU artık %75-85 meşgul: kalan darboğaz GPU işi (tam ekran blur/backdrop pass'leri 12-19 ms). GL yolunun 45-60 fps'ine hâlâ uzak.
