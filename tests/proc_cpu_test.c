@@ -174,7 +174,7 @@ sym_of(int p, uint64_t pc)
 /* y302: backboardd's samples that are in mach_msg2_trap (y299, y301: its most frequent place, a tenth to a fifth of its
  * running samples) by who called: the four callers above the message's own functions, by phase (the window sets it). */
 enum { MSGS = 96 };
-static struct { char key[150]; unsigned n; } msgs[2][MSGS];
+static struct { char key[200]; unsigned n; } msgs[4][MSGS];   /* phase * 2 + kind (0 messages, 1 memory) */
 static volatile int msg_phase = -1;
 static struct sym *sym_of(int p, uint64_t pc);
 static void
@@ -185,20 +185,31 @@ msg_callers(int p, const uint64_t *pcs, int n)
 		return;
 	}
 	struct sym *leaf = sym_of(p, pcs[0]);
-	if (leaf == NULL || strncmp(leaf->name, "mach_msg2_trap", 14) != 0) {
+	if (leaf == NULL) {
 		return;
 	}
-	char key[150];
+	/* y304: and the samples in the allocator and in copying or clearing memory, by who asked (kind 1) */
+	int kind = strncmp(leaf->name, "mach_msg2_trap", 14) == 0 ? 0 :
+	    (strncmp(leaf->name, "libsystem_malloc", 16) == 0 || strncmp(leaf->name, "_platform_mem", 13) == 0 ||
+	    strcmp(leaf->name, "free") == 0 || strcmp(leaf->name, "malloc") == 0 || strcmp(leaf->name, "calloc") == 0 ||
+	    strncmp(leaf->name, "_malloc", 7) == 0 || strncmp(leaf->name, "nanov2", 6) == 0) ? 1 : -1;
+	if (kind < 0) {
+		return;
+	}
+	ph = ph * 2 + kind;
+	char key[200];
 	int o = 0, took = 0;
 	key[0] = 0;
-	for (int i = 1; i < n && took < 4; i++) {
+	for (int i = 1; i < n && took < 5; i++) {
 		struct sym *s = sym_of(p, pcs[i]);
-		if (s == NULL || strncmp(s->name, "mach_msg", 8) == 0) {
+		if (s == NULL || strncmp(s->name, "mach_msg", 8) == 0 || strncmp(s->name, "libsystem_malloc", 16) == 0 ||
+		    strncmp(s->name, "_malloc", 7) == 0 || strcmp(s->name, "malloc") == 0 || strcmp(s->name, "calloc") == 0 ||
+		    strcmp(s->name, "free") == 0 || strncmp(s->name, "nanov2", 6) == 0) {
 			continue;
 		}
 		o += snprintf(key + o, sizeof(key) - (size_t)o, "%s%.34s", took ? "<" : "", s->name);
 		took++;
-		if (o > (int)sizeof(key) - 40) {
+		if (o > (int)sizeof(key) - 42) {
 			break;
 		}
 	}
@@ -260,12 +271,12 @@ sample_task(int p, task_t task)
 			st = us.ts_64;
 		}
 		dbg[p][4]++;
-		uint64_t pcs[13];
+		uint64_t pcs[20];
 		int n = 0;
 		pcs[n++] = __darwin_arm_thread_state64_get_pc(st);
 		pcs[n++] = __darwin_arm_thread_state64_get_lr(st);
 		uint64_t fp = __darwin_arm_thread_state64_get_fp(st);
-		while (n < 13 && fp != 0 && (fp & 7) == 0) {
+		while (n < 20 && fp != 0 && (fp & 7) == 0) {
 			uint64_t frame[2];
 			mach_vm_size_t got = 0;
 			if (mach_vm_read_overwrite(task, fp, sizeof(frame), (mach_vm_address_t)frame, &got) != KERN_SUCCESS ||
@@ -278,7 +289,7 @@ sample_task(int p, task_t task)
 		pthread_mutex_lock(&sym_lock);
 		samples[p]++;
 		msg_callers(p, pcs, n);
-		const void *seen[13];
+		const void *seen[20];
 		int ns = 0;
 		for (int i = 0; i < n; i++) {
 			struct sym *s = sym_of(p, pcs[i]);
@@ -378,7 +389,7 @@ sample_window(int w, char hist[NS][4000])
 			enum { TOT = 400 };
 			static struct { char name[48]; unsigned leaf, in; } tot[2][TOT];
 			static unsigned tot_n[2];
-			int t = w * 3, ph = t >= 78 ? 0 : t >= 64 && t < 76 ? 1 : -1;   /* y303: the video and its seeks (B), then the swipes (A) */   /* y301's script (its times are about 11 s behind this clock): swipes 34-52, the blurred transitions 54-76 */
+			int t = w * 3, ph = t >= 42 ? 0 : -1;   /* y304: the swipes, the whole session */   /* y301's script (its times are about 11 s behind this clock): swipes 34-52, the blurred transitions 54-76 */
 			if (ph >= 0) {
 				tot_n[ph] += samples[p];
 				for (int i = 0; i < SYMS; i++) {
@@ -435,24 +446,27 @@ sample_window(int w, char hist[NS][4000])
 					}
 					puts(out);
 				}
-				char out[1500];
-				unsigned char used[MSGS];
-				int oo = snprintf(out, sizeof(out), "PROFILE BB %c MSG:", "AB"[say]);
-				memset(used, 0, sizeof(used));
-				for (int k = 0; k < 9; k++) {
-					int best = -1;
-					for (int i = 0; i < MSGS && msgs[say][i].key[0]; i++) {
-						if (!used[i] && (best < 0 || msgs[say][i].n > msgs[say][best].n)) {
-							best = i;
+				for (int kind = 0; kind < 2; kind++) {
+					char out[1900];
+					unsigned char used[MSGS];
+					int row = say * 2 + kind;
+					int oo = snprintf(out, sizeof(out), "PROFILE BB %c %s:", "AB"[say], kind ? "MEM" : "MSG");
+					memset(used, 0, sizeof(used));
+					for (int k = 0; k < 9; k++) {
+						int best = -1;
+						for (int i = 0; i < MSGS && msgs[row][i].key[0]; i++) {
+							if (!used[i] && (best < 0 || msgs[row][i].n > msgs[row][best].n)) {
+								best = i;
+							}
 						}
+						if (best < 0 || oo > (int)sizeof(out) - 220) {
+							break;
+						}
+						used[best] = 1;
+						oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " [%s] %u;", msgs[row][best].key, msgs[row][best].n);
 					}
-					if (best < 0 || oo > (int)sizeof(out) - 170) {
-						break;
-					}
-					used[best] = 1;
-					oo += snprintf(out + oo, sizeof(out) - (size_t)oo, " [%s] %u;", msgs[say][best].key, msgs[say][best].n);
+					puts(out);
 				}
-				puts(out);
 			}
 		}
 		char line[700], brief[300];
